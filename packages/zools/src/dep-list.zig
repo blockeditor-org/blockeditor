@@ -16,7 +16,7 @@ pub fn main() !void {
     var stdout_writer = std.fs.File.stdout().writer(&buffer);
     const out = &stdout_writer.interface;
 
-    try out.writeAll("dependency: hash\n");
+    try out.writeAll("root:\n");
     try dumpDependenciesRecursive(out, gpa.allocator(), pkg_cache_dir, std.fs.cwd(), "build.zig.zon", 0);
 
     try out.flush();
@@ -42,7 +42,12 @@ fn dumpDependenciesRecursive(writer: *std.Io.Writer, gpa: std.mem.Allocator, pkg
         const sub_path = try std.fs.path.join(gpa, &.{ pkg_hash.hash, "build.zig.zon" });
         defer gpa.free(sub_path);
 
-        try dumpDependenciesRecursive(writer, gpa, pkg_cache_dir, if (pkg_hash.path) dir else pkg_cache_dir, sub_path, indent + 2);
+        var subdir = if (pkg_hash.path) dir.openDir(std.fs.path.dirname(path) orelse ".", .{}) catch |e| {
+            std.log.err("failed to open dir: {s}/{s}", .{ @errorName(e), std.fs.path.dirname(path) orelse "." });
+            return e;
+        } else pkg_cache_dir;
+        defer if (pkg_hash.path) subdir.close();
+        try dumpDependenciesRecursive(writer, gpa, pkg_cache_dir, subdir, sub_path, indent + 2);
     }
 }
 const SV = struct { hash: []const u8, path: bool };
@@ -132,6 +137,8 @@ fn getDependenciesFromBuildZon(gpa: std.mem.Allocator, dir: std.fs.Dir, path: []
 
                 continue :dep_list;
             }
+            std.log.warn("Failed to find info for dependency name: .{f}", .{std.zig.fmtId(dep_name)});
+            continue :dep_list;
         }
     }
 
