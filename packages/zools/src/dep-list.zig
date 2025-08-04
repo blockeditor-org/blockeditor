@@ -1,6 +1,9 @@
 //! dep-list.zig
 
 // adapted from https://ziggit.dev/t/simple-dependency-tree-printer/8185
+// ideally we would rewrite this and maybe make it print in reverse?
+// ie grapheme_break_test, depended on by unicode_segmentation_2, depended on by ...
+// or just make it print flat
 
 pub fn main() !void {
     if (@import("builtin").target.os.tag == .windows) {
