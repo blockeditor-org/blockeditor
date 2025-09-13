@@ -23,7 +23,7 @@ const mkconfig: Record<string, Omit<Config, "prec">>[] = [
     },
     {
         ",": {style: "join", joinTag: "sep"},
-        ";": {style: "join", joinTag: "sep_semi"},
+        ";": {style: "join", joinTag: "sep"},
         "\n": {style: "join", joinTag: "sep"},
     },
     {

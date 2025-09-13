@@ -13,6 +13,14 @@ function importFile(filename: string, contents: string) {
     console.log(renderTokenizedOutput(tokenized, sourceCode));
 }
 
+type Env = {
+    comptimeEnv: {
+        emitTarget: {
+            inComptime: boolean,
+        },
+    },
+};
+
 function analyzeContainer() {
     
 }
