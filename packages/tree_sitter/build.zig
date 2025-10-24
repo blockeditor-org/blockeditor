@@ -43,7 +43,14 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         });
         tree_sitter_translatec.addIncludePath(tree_sitter_dep.path("lib/include/tree_sitter"));
-        break :blk tree_sitter_translatec.addModule("tree_sitter_translatec");
+        break :blk b.addModule("tree_sitter_translatec", .{
+            .root_source_file = b.path("src/noworkaround.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nwh", .module = tree_sitter_translatec.createModule() },
+            },
+        });
     };
     tree_sitter_translatec_module.linkLibrary(tree_sitter_dep.artifact("tree-sitter"));
 
