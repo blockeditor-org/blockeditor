@@ -5,8 +5,8 @@
 
     .dependencies = .{
         .websocket_zig = .{
-            .url = "https://github.com/karlseguin/websocket.zig/archive/2d9ae9b0905c4f902dafabb073ebd54065e839b4.zip",
-            .hash = "websocket-0.1.0-ZPISdbxyAwB8d7my8K95rTDLQjbnw9LEycVFA5QjbW5t",
+            .url = "https://github.com/pfgithub/websocket.zig/archive/cd8fb5cca5ffbefc345d5d74fe466fe37edbeea7.zip",
+            .hash = "websocket-0.1.0-ZPISdRRzAwAiBH7sUAcCpTTT0nQ9f2ROfaN2n4N0lUqk",
         },
         .blocks = .{
             .path = "../blocks",
