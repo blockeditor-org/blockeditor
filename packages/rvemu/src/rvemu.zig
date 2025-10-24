@@ -569,9 +569,7 @@ const FmtReg = struct {
 
     pub fn format(
         self: @This(),
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
+        writer: *std.Io.Writer,
     ) !void {
         switch (self.bank) {
             .int => try writer.print("x{d}", .{self.reg}),

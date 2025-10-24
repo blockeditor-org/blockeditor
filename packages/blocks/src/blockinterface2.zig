@@ -2,10 +2,10 @@ const std = @import("std");
 const util = @import("anywhere").util;
 pub const text_component = @import("text_component.zig");
 
-pub const Alignment = 16;
-pub const AlignedArrayList = std.ArrayListAligned(u8, Alignment);
-pub const AlignedFbsReader = std.io.FixedBufferStream([]align(Alignment) const u8);
-pub const AlignedByteSlice = []align(Alignment) const u8;
+pub const Alignment: std.mem.Alignment = .fromByteUnits(16);
+pub const AlignedArrayList = std.array_list.AlignedManaged(u8, .fromByteUnits(Alignment.toByteUnits()));
+pub const AlignedFbsReader = std.Io.FixedBufferStream([]align(Alignment.toByteUnits()) const u8);
+pub const AlignedByteSlice = []align(Alignment.toByteUnits()) const u8;
 
 const BaseOperationWriter = struct {
     prefix: AlignedArrayList,
@@ -24,13 +24,13 @@ pub const OperationIterator = struct {
     content: AlignedByteSlice,
     pub fn next(self: *OperationIterator) DeserializeError!?AlignedByteSlice {
         if (self.content.len == 0) return null;
-        if (self.content.len < Alignment) return error.DeserializeError;
+        if (self.content.len < Alignment.toByteUnits()) return error.DeserializeError;
 
-        std.debug.assert(Alignment >= 8);
+        std.debug.assert(Alignment.toByteUnits() >= 8);
         const itm_len = std.mem.readInt(u64, self.content[0..8], .little);
-        const itm_len_aligned = std.mem.alignForward(u64, itm_len, Alignment);
+        const itm_len_aligned = std.mem.alignForward(u64, itm_len, Alignment.toByteUnits());
 
-        self.content = self.content[Alignment..];
+        self.content = @alignCast(self.content[Alignment.toByteUnits()..]);
 
         if (self.content.len < itm_len_aligned) return error.DeserializeError;
 
@@ -41,23 +41,23 @@ pub const OperationIterator = struct {
 };
 
 pub fn safeAlignForwards(al: *AlignedArrayList) void {
-    const target_len = std.mem.alignForward(usize, al.items.len, Alignment);
+    const target_len = std.mem.alignForward(usize, al.items.len, Alignment.toByteUnits());
     const diff = target_len - al.items.len;
     al.appendNTimes(0, diff) catch @panic("oom");
 }
 pub fn reserveLength(al: *AlignedArrayList) usize {
     const orig_len = al.items.len;
-    al.appendNTimes(0, Alignment) catch @panic("oom");
+    al.appendNTimes(0, Alignment.toByteUnits()) catch @panic("oom");
     assertAligned(al);
     return orig_len;
 }
 pub fn fillLengthAndAlignForwards(al: *AlignedArrayList, len_start: usize) void {
     std.debug.assert(al.items.len >= len_start);
-    std.mem.writeInt(u64, al.items[len_start..][0..8], al.items.len - len_start - Alignment, .little);
+    std.mem.writeInt(u64, al.items[len_start..][0..8], al.items.len - len_start - Alignment.toByteUnits(), .little);
     safeAlignForwards(al);
 }
 pub fn assertAligned(al: *AlignedArrayList) void {
-    std.debug.assert(al.items.len == std.mem.alignForward(usize, al.items.len, Alignment));
+    std.debug.assert(al.items.len == std.mem.alignForward(usize, al.items.len, Alignment.toByteUnits()));
 }
 pub fn appendPrefixedOperation(al: *AlignedArrayList, prefix: AlignedByteSlice, op: anytype) void {
     const reserved = reserveLength(al);
@@ -79,7 +79,7 @@ pub const AnyBlock = struct {
         if (std.debug.runtime_safety) {
             std.debug.assert(self.vtable.type_id == @typeName(T));
         }
-        return @alignCast(@ptrCast(self.data));
+        return @ptrCast(@alignCast(self.data));
     }
 
     pub fn from(comptime T: type, self: *T) AnyBlock {
@@ -169,7 +169,7 @@ pub const CounterComponent = struct {
         }
 
         fn deserialize(value: AlignedByteSlice) DeserializeError!Operation {
-            var fbs = std.io.fixedBufferStream(value);
+            var fbs = std.Io.fixedBufferStream(value);
             const values = fbs.reader().readStructEndian(operation_serialized, .little) catch return error.DeserializeError;
             if (fbs.pos != fbs.buffer.len) return error.DeserializeError;
             return switch (values.code) {
@@ -274,7 +274,7 @@ pub fn ComposedBlock(comptime id: u128, comptime ChildComponent: type) type {
             self.value.serialize(out);
         }
         pub fn deserialize(gpa: std.mem.Allocator, in: AlignedByteSlice) DeserializeError!AnyBlock {
-            var fbs = std.io.fixedBufferStream(in);
+            var fbs = std.Io.fixedBufferStream(in);
             const value = try ChildComponent.deserialize(gpa, &fbs);
             if (fbs.pos != fbs.buffer.len) return error.DeserializeError;
 

@@ -38,9 +38,9 @@ pub const RenderListCommand = struct {
 
 pub const RenderList = struct {
     gpa: std.mem.Allocator,
-    vertices: std.ArrayList(RenderListVertex),
-    indices: std.ArrayList(RenderListIndex),
-    commands: std.ArrayList(RenderListCommand),
+    vertices: std.array_list.Managed(RenderListVertex),
+    indices: std.array_list.Managed(RenderListIndex),
+    commands: std.array_list.Managed(RenderListCommand),
 
     pub fn init(gpa: std.mem.Allocator) RenderList {
         return .{

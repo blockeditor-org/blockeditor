@@ -31,7 +31,7 @@ pub fn main() !u8 {
 
     var success: bool = true;
 
-    var hashes_file_cont = std.ArrayList([]const u8).init(gpa);
+    var hashes_file_cont = std.array_list.Managed([]const u8).init(gpa);
     defer hashes_file_cont.deinit();
     defer for (hashes_file_cont.items) |ent| gpa.free(ent);
 
@@ -61,7 +61,7 @@ pub fn main() !u8 {
         var emu: rvemu.Emulator = .{ .memory = mem_ptr };
         try emu.loadElf(disk);
 
-        var snapshot_result = std.ArrayList(u8).init(gpa);
+        var snapshot_result = std.array_list.Managed(u8).init(gpa);
         defer snapshot_result.deinit();
 
         // start emu-lating
@@ -79,7 +79,7 @@ pub fn main() !u8 {
         try snapshot_result.writer().print("Exited with code {d}\n", .{env.exit_code});
 
         {
-            var apres = std.ArrayList(u8).init(gpa);
+            var apres = std.array_list.Managed(u8).init(gpa);
             defer apres.deinit();
             try apres.writer().print("{s}: {d}\n  {}\n  Features", .{ name, emu.cost, std.fmt.fmtSliceHexLower(&disk_hash) });
             for (0..std.meta.fields(rvemu.rvinstrs.InstrName).len) |i| {
@@ -104,7 +104,7 @@ pub fn main() !u8 {
 
     std.mem.sort([]const u8, hashes_file_cont.items, {}, strLessThan);
     {
-        var hashes_res = std.ArrayList(u8).init(gpa);
+        var hashes_res = std.array_list.Managed(u8).init(gpa);
         defer hashes_res.deinit();
         try hashes_res.appendSlice("# Hashes file. Changes when zig updates or cost calculation changes.\n\n");
         for (hashes_file_cont.items) |itm| try hashes_res.appendSlice(itm);
@@ -134,7 +134,7 @@ fn strLessThan(_: void, a: []const u8, b: []const u8) bool {
 }
 const Env = struct {
     emu: *rvemu.Emulator,
-    snapshot_result: *std.ArrayList(u8),
+    snapshot_result: *std.array_list.Managed(u8),
     exit_code: i32,
 };
 pub fn handleSyscall(env: *Env, kind: i32, args: [6]i32) !i32 {

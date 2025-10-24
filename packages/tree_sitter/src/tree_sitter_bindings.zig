@@ -12,7 +12,7 @@ pub const Input = struct {
             },
             .payload = @ptrCast(@constCast(payload)),
             .read = &struct {
-                fn read(data: ?*anyopaque, byte_offset: u32, point: Point, bytes_read: [*c]u32) callconv(.C) [*c]const u8 {
+                fn read(data: ?*anyopaque, byte_offset: u32, point: Point, bytes_read: [*c]u32) callconv(.c) [*c]const u8 {
                     const res = read_fn(@ptrCast(@alignCast(data)), byte_offset, point);
                     bytes_read.* = @intCast(res.len);
                     return res.ptr;
@@ -117,12 +117,12 @@ pub const Node = struct {
     }
 };
 pub const TreeCursor = struct {
-    stack: std.ArrayList(Node),
+    stack: std.array_list.Managed(Node),
     cursor: tree_sitter.TSTreeCursor,
     last_access: u32,
 
     pub inline fn init(gpa: std.mem.Allocator, root_node: Node) TreeCursor {
-        var res_stack = std.ArrayList(Node).init(gpa);
+        var res_stack = std.array_list.Managed(Node).init(gpa);
         res_stack.append(root_node) catch @panic("oom");
         return .{ .stack = res_stack, .cursor = tree_sitter.ts_tree_cursor_new(root_node.node_not_null), .last_access = 0 };
     }

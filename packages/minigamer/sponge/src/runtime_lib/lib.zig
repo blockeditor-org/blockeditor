@@ -67,7 +67,7 @@ pub const ImageSub = struct {
 };
 
 const NullErrorSet = error{};
-pub const StderrWriter = std.io.Writer(void, NullErrorSet, writeFn);
+pub const StderrWriter = std.Io.Writer(void, NullErrorSet, writeFn);
 fn writeFn(_: void, bytes: []const u8) NullErrorSet!usize {
     printAppend(bytes);
     return bytes.len;

@@ -223,9 +223,9 @@ fn renderLine_nocache(self: *LayoutCache, b2: *Beui.beui_experiment.Beui2, layou
 
     // TODO: find three tiers of good break points based on the target width
 
-    var vertices: std.ArrayList(rl.RenderListVertex) = .init(self.gpa);
+    var vertices: std.array_list.Managed(rl.RenderListVertex) = .init(self.gpa);
     defer vertices.deinit();
-    var indices: std.ArrayList(rl.RenderListIndex) = .init(self.gpa);
+    var indices: std.array_list.Managed(rl.RenderListIndex) = .init(self.gpa);
     defer indices.deinit();
 
     const line_state = self.gpa.alloc(LineCharState, line.text.len) catch @panic("oom");
@@ -331,7 +331,7 @@ pub fn layoutLine(self: *LayoutCache, b2: *Beui.beui_experiment.Beui2, line_text
         return gpres.value_ptr.*;
     }
 
-    var layout_result_al: std.ArrayList(LayoutItem) = .init(self.gpa);
+    var layout_result_al: std.array_list.Managed(LayoutItem) = .init(self.gpa);
     defer layout_result_al.deinit();
 
     gpres.value_ptr.* = layoutLine_internal(self, line_text, &layout_result_al);
@@ -342,7 +342,7 @@ pub fn layoutLine(self: *LayoutCache, b2: *Beui.beui_experiment.Beui2, line_text
 
     return gpres.value_ptr.*;
 }
-fn layoutLine_internal(self: *LayoutCache, line_text: []const u8, layout_result_al: *std.ArrayList(LayoutItem)) LayoutInfo {
+fn layoutLine_internal(self: *LayoutCache, line_text: []const u8, layout_result_al: *std.array_list.Managed(LayoutItem)) LayoutInfo {
     const tctx = tracy.trace(@src());
     defer tctx.end();
 
@@ -368,7 +368,7 @@ fn layoutLine_internal(self: *LayoutCache, line_text: []const u8, layout_result_
     // - maybe use libraqm. it should handle all of this except fallback characters
     // - alternatively, use pango. it handles fallback characters too, if we can get it to build.
 
-    var segments_al = std.ArrayList(ShapingSegment).init(self.gpa);
+    var segments_al = std.array_list.Managed(ShapingSegment).init(self.gpa);
     defer segments_al.deinit();
 
     segments_al.append(.{ .length = line_text.len }) catch @panic("oom");

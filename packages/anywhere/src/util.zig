@@ -41,7 +41,7 @@ pub const testing = struct {
             defer mutex.unlock();
 
             // needs update!
-            std.log.err("needs update:\n  module: \"{}\"\n  file: \"{}\"\n  pos: {d}:{d}", .{ std.zig.fmtEscapes(src.module), std.zig.fmtEscapes(src.file), src.line, src.column });
+            std.log.err("needs update:\n  module: \"{f}\"\n  file: \"{f}\"\n  pos: {d}:{d}", .{ std.zig.fmtString(src.module), std.zig.fmtString(src.file), src.line, src.column });
 
             return;
         }
@@ -82,7 +82,7 @@ pub const build = struct {
     pub fn find(dep: *std.Build.Dependency, comptime ty: type, name: []const u8) ty {
         const name_fmt = arbitraryName(dep.builder, name, ty);
         const modv = dep.builder.named_lazy_paths.get(name_fmt).?;
-        const anyptr: *const AnyPtr = @alignCast(@ptrCast(modv.cwd_relative.ptr));
+        const anyptr: *const AnyPtr = @ptrCast(@alignCast(modv.cwd_relative.ptr));
         std.debug.assert(anyptr.id == @typeName(ty));
         return anyptr.to(ty).*;
     }
@@ -149,12 +149,12 @@ pub fn DistinctUUID(comptime Distinct: type) type {
             }
         }
 
-        pub fn format(value: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(value: Self, writer: *std.Io.Writer) !void {
             const value_u128: u128 = @intFromEnum(value);
             comptime std.debug.assert(@import("builtin").target.cpu.arch.endian() == .little);
             const value_bytes = std.mem.sliceAsBytes(&[_]u128{value_u128});
-            var reader_fbs = std.io.fixedBufferStream(value_bytes);
-            var reader_bits = std.io.bitReader(.little, reader_fbs.reader());
+            var reader_fbs = std.Io.fixedBufferStream(value_bytes);
+            var reader_bits = @import("deprecated/bit_reader.zig").bitReader(.little, reader_fbs.reader());
             var result_buffer: [24]u8 = [_]u8{0} ** 24;
             result_buffer[0] = '-';
             result_buffer[23] = '-';
@@ -238,7 +238,7 @@ pub fn ThreadQueue(comptime T: type) type {
 }
 
 pub fn Queue(comptime T: type) type {
-    return std.fifo.LinearFifo(T, .Dynamic);
+    return @import("deprecated/fifo.zig").LinearFifo(T, .Dynamic);
 }
 
 pub fn Callback(comptime Arg_: type, comptime Ret_: type) type {
@@ -272,10 +272,10 @@ pub fn Callback(comptime Arg_: type, comptime Ret_: type) type {
 pub fn CallbackList(comptime cb_type: type) type {
     return struct {
         const Self = @This();
-        callbacks: std.ArrayList(cb_type),
+        callbacks: std.array_list.Managed(cb_type),
         pub fn init(alloc: std.mem.Allocator) Self {
             return .{
-                .callbacks = std.ArrayList(cb_type).init(alloc),
+                .callbacks = std.array_list.Managed(cb_type).init(alloc),
             };
         }
         pub fn deinit(self: *Self) void {
@@ -452,17 +452,17 @@ pub const SerializeDeserialize = struct {
     }
 };
 
-pub fn safeAlignCast(comptime alignment: u29, slice: []const u8) ![]align(alignment) const u8 {
+pub fn safeAlignCast(comptime alignment: std.mem.Alignment, slice: []const u8) ![]align(alignment.toByteUnits()) const u8 {
     const ptr_casted = try std.math.alignCast(alignment, slice.ptr);
     return ptr_casted[0..slice.len];
 }
-pub fn safeAlignCastMut(comptime alignment: u29, slice: []u8) ![]align(alignment) u8 {
+pub fn safeAlignCastMut(comptime alignment: std.mem.Alignment, slice: []u8) ![]align(alignment.toByteUnits()) u8 {
     const ptr_casted = try std.math.alignCast(alignment, slice.ptr);
     return ptr_casted[0..slice.len];
 }
 pub fn safePtrCast(comptime T: type, slice: []const u8) !*const T {
     // 1. aligncast
-    const aligned = try safeAlignCast(@alignOf(T), slice);
+    const aligned = try safeAlignCast(.of(T), slice);
     // 2. check size
     if (aligned.len != @sizeOf(T)) return error.BadSize;
     // 3. ok
@@ -470,7 +470,7 @@ pub fn safePtrCast(comptime T: type, slice: []const u8) !*const T {
 }
 pub fn safePtrCastMut(comptime T: type, slice: []u8) !*T {
     // 1. aligncast
-    const aligned = try safeAlignCastMut(@alignOf(T), slice);
+    const aligned = try safeAlignCastMut(.of(T), slice);
     // 2. check size
     if (aligned.len != @sizeOf(T)) return error.BadSize;
     // 3. ok
@@ -478,7 +478,7 @@ pub fn safePtrCastMut(comptime T: type, slice: []u8) !*T {
 }
 pub fn safeSliceCast(comptime T: type, slice: []const u8) ![]const T {
     // 1. aligncast
-    const aligned = try safeAlignCast(@alignOf(T), slice);
+    const aligned = try safeAlignCast(.of(T), slice);
     // 2. check size
     if (@rem(aligned.len, @sizeOf(T)) != 0) return error.BadSize;
     // 3. ok
@@ -486,7 +486,7 @@ pub fn safeSliceCast(comptime T: type, slice: []const u8) ![]const T {
 }
 pub fn safeStarSliceCast(comptime T: type, slice: []const u8) ![]const T {
     // 1. aligncast
-    const aligned = try safeAlignCast(@alignOf(T), slice);
+    const aligned = try safeAlignCast(.of(T), slice);
     // 2. fit size
     const new_size = @divFloor(aligned.len, @sizeOf(T)) * @sizeOf(T);
     // 3. ok

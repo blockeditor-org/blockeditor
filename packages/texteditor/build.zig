@@ -44,7 +44,6 @@ pub fn build(b: *std.Build) !void {
 
     const texteditor_test = b.addTest(.{
         .root_module = texteditor_mod,
-        .filter = b.option([]const u8, "filter", ""),
     });
 
     b.installArtifact(texteditor_test);

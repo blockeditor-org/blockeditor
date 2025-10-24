@@ -1,5 +1,9 @@
 const std = @import("std");
-const wuffs = @import("wuffs");
+const wuffs = blk: {
+    const v = @import("wuffs");
+    if (@hasDecl(v, "_wuffs_temp_fix")) break :blk v._wuffs_temp_fix;
+    break :blk v;
+};
 const log = std.log.scoped(.loadimage);
 
 pub const LoadedImage = struct {
@@ -20,7 +24,7 @@ fn allocDecoder(
     const init_fn = @field(wuffs, "wuffs_" ++ name ++ "__decoder__initialize");
     const upcast_fn = @field(wuffs, "wuffs_" ++ name ++ "__decoder__upcast_as__wuffs_base__image_decoder");
 
-    const decoder_raw = try gpa.alignedAlloc(u8, max_align, size);
+    const decoder_raw = try gpa.alignedAlloc(u8, .fromByteUnits(max_align), size);
     errdefer gpa.free(decoder_raw);
     for (decoder_raw) |*byte| byte.* = 0;
 
@@ -87,7 +91,7 @@ pub fn loadImage(gpa: std.mem.Allocator, file_cont: []const u8) !LoadedImage {
     const g_workbuf_slice = wuffs.wuffs_base__make_slice_u8(workbuf_data.ptr, workbuf_data.len);
 
     const num_pixels = @as(usize, g_width) * @as(usize, g_height);
-    const pixbuf_data = try gpa.alignedAlloc(u8, @alignOf(u32), num_pixels * 4);
+    const pixbuf_data = try gpa.alignedAlloc(u8, .of(u32), num_pixels * 4);
     errdefer gpa.free(pixbuf_data);
     for (pixbuf_data) |*itm| itm.* = 0;
     const g_pixbuf_slice = wuffs.wuffs_base__make_slice_u8(pixbuf_data.ptr, pixbuf_data.len);

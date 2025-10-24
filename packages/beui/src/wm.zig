@@ -70,7 +70,7 @@ pub const WM = struct {
         pub const not_set = FrameID{ .gen = 0, .ptr = .not_set };
         pub const top_level = FrameID{ .gen = 0, .ptr = .top_level };
 
-        pub fn format(value: FrameID, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(value: FrameID, writer: *std.Io.Writer) !void {
             try writer.print("@{d}.{d}", .{ value.gen, @intFromEnum(value.ptr) });
         }
         fn fromTest(a: u32, b: u32) FrameID {
@@ -389,7 +389,7 @@ pub const WM = struct {
         return parentmost;
     }
 
-    pub fn testingRenderToString(self: *WM, buf: *std.ArrayList(u8)) ![]const u8 {
+    pub fn testingRenderToString(self: *WM, buf: *std.array_list.Managed(u8)) ![]const u8 {
         buf.clearAndFree();
 
         for (self.top_level_windows.items) |tlw| {
@@ -405,22 +405,22 @@ pub const WM = struct {
         if (std.mem.endsWith(u8, buf.items, "\n")) return buf.items[0 .. buf.items.len - 1];
         return buf.items;
     }
-    fn _printIndent(out: *std.ArrayList(u8), indent: usize) !void {
+    fn _printIndent(out: *std.array_list.Managed(u8), indent: usize) !void {
         try out.append('\n');
         try out.appendNTimes(' ', indent * 4);
     }
-    fn _renderFrameToString(self: *WM, frame_id: FrameID, expect_parent: FrameID, out: *std.ArrayList(u8), indent: usize) !void {
+    fn _renderFrameToString(self: *WM, frame_id: FrameID, expect_parent: FrameID, out: *std.array_list.Managed(u8), indent: usize) !void {
         const frame = self.getFrame(frame_id);
         try std.testing.expectEqual(frame.id, frame_id);
         if (expect_parent != frame.parent) {
-            try out.writer().print("(expected parent = {}, got parent = {} for item {})", .{ expect_parent, frame.parent, frame_id });
+            try out.writer().print("(expected parent = {f}, got parent = {f} for item {f})", .{ expect_parent, frame.parent, frame_id });
         }
 
-        try out.writer().print("{}.{s}", .{ frame_id, @tagName(frame.self) });
+        try out.writer().print("{f}.{s}", .{ frame_id, @tagName(frame.self) });
         switch (frame.self) {
             .tabbed => |s| {
                 if (s.children.items.len < 2) unreachable;
-                try out.writer().print(": {}", .{s.current_tab});
+                try out.writer().print(": {f}", .{s.current_tab});
                 for (s.children.items) |child| {
                     try _printIndent(out, indent);
                     try self._renderFrameToString(child, frame_id, out, indent + 1);
@@ -453,7 +453,7 @@ test WM {
     var my_wm = WM.init(std.testing.allocator);
     defer my_wm.deinit();
 
-    var buf = std.ArrayList(u8).init(std.testing.allocator);
+    var buf = std.array_list.Managed(u8).init(std.testing.allocator);
     defer buf.deinit();
 
     try std.testing.expectEqualStrings("", try my_wm.testingRenderToString(&buf));

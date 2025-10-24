@@ -30,13 +30,13 @@ pub fn main() !void {
 
     // wait for enter key to be pressed
     while (true) {
-        const msg = try std.io.getStdIn().reader().readUntilDelimiterAlloc(gpa, '\n', std.math.maxInt(usize));
+        const msg = try std.Io.getStdIn().reader().readUntilDelimiterAlloc(gpa, '\n', std.math.maxInt(usize));
         defer gpa.free(msg);
         if (std.mem.eql(u8, msg, "") or std.mem.eql(u8, msg, "\r")) {
             // exit
             break;
         }
-        std.log.info("sending \"{}\"...", .{std.zig.fmtEscapes(msg)});
+        std.log.info("sending \"{f}\"...", .{std.zig.fmtString(msg)});
         try app.client.writeBin(msg);
         std.log.info("-> sent", .{});
     }
@@ -47,6 +47,6 @@ fn recvThread(self: *App) void {
         const msg = (self.client.read() catch return) orelse unreachable;
         defer self.client.done(msg);
 
-        std.log.info("received message: \"{}\"", .{std.zig.fmtEscapes(msg.data)});
+        std.log.info("received message: \"{f}\"", .{std.zig.fmtString(msg.data)});
     }
 }

@@ -11,7 +11,7 @@ fn autoVtable(comptime Vtable: type, comptime Src: type) *const Vtable {
             if (@hasDecl(Src, field.name)) {
                 @field(res, field.name) = &@field(Src, field.name);
             } else if (field.default_value_ptr) |default_v| {
-                @field(res, field.name) = @as(*const field.type, @alignCast(@ptrCast(default_v))).*;
+                @field(res, field.name) = @as(*const field.type, @ptrCast(@alignCast(default_v))).*;
             } else {
                 @compileError("vtable for " ++ @typeName(Src) ++ " missing required field: " ++ field.name);
             }
@@ -899,7 +899,7 @@ inline fn handleExpr_inner2(scope: *Scope, slot: Type, expr: parser.AstExpr) Err
             //   & skip showing them to the vtable
             // - the vtable has an easier time because it gets `[]MapEntry`
 
-            var ents: std.ArrayList(MapEnt) = .init(scope.env.arena);
+            var ents: std.array_list.Managed(MapEnt) = .init(scope.env.arena);
 
             var ch = scope.tree.firstChild(expr).?;
             while (scope.tree.tag(ch) != .srcloc) : (ch = scope.tree.next(ch).?) {
@@ -1033,7 +1033,7 @@ test "zig" {
     var tree = parser.parse(gpa, src_in);
     defer tree.deinit();
     if (tree.owner.has_errors) {
-        var out = std.ArrayList(u8).init(gpa);
+        var out = std.array_list.Managed(u8).init(gpa);
         defer out.deinit();
         std.log.err("has errors: `{s}`", .{try parser.testParser(&out, .{}, src_in)});
     }

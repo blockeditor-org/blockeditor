@@ -336,7 +336,7 @@ fn testHighlightOfsetted(context: *Highlighter, offset: usize, expected_value: [
     var hl = context.highlight();
     defer hl.deinit();
 
-    var actual = std.ArrayList(u8).init(std.testing.allocator);
+    var actual = std.array_list.Managed(u8).init(std.testing.allocator);
     defer actual.deinit();
 
     var prev_color_scope: Highlighter.SynHlColorScope = .invalid;

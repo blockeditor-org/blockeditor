@@ -57,7 +57,7 @@ const Handler = struct {
     }
 
     pub fn clientClose(self: *Handler, data: []const u8) !void {
-        std.log.info("client disconnected; \"{}\"", .{std.zig.fmtEscapes(data)});
+        std.log.info("client disconnected; \"{f}\"", .{std.zig.fmtString(data)});
         _ = self;
         // is this called if the client times out? hopefully
 
@@ -70,10 +70,10 @@ const Handler = struct {
     pub fn clientMessage(self: *Handler, data: []const u8, message_type: ws.MessageType) !void {
         if (message_type != .binary) return error.BadMessage;
         // simulate network latency
-        // std.time.sleep(300 * std.time.ns_per_ms);
+        // std.Thread.sleep(300 * std.time.ns_per_ms);
         // TODO better network latency sim
 
-        var fbs_backing = std.io.fixedBufferStream(data);
+        var fbs_backing = std.Io.fixedBufferStream(data);
         const fbs = fbs_backing.reader().any();
 
         while (fbs_backing.pos < fbs_backing.buffer.len) {
@@ -111,6 +111,6 @@ const Handler = struct {
 // init function.
 const App = struct {
     mutex: std.Thread.Mutex,
-    conn_to_watched_blocks_map: std.AutoArrayHashMap(*ws.Conn, std.ArrayList(shared.block_id_v1)),
+    conn_to_watched_blocks_map: std.AutoArrayHashMap(*ws.Conn, std.array_list.Managed(shared.block_id_v1)),
     block_to_watchers_map: std.AutoArrayHashMap(shared.block_id_v1, *ws.Conn),
 };

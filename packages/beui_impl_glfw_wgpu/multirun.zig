@@ -14,7 +14,7 @@ pub fn main() !u8 {
     const baseargs = try std.process.argsAlloc(gpa);
     defer std.process.argsFree(gpa, baseargs);
 
-    var proc_list: std.ArrayList(std.process.Child) = .init(gpa);
+    var proc_list: std.array_list.Managed(std.process.Child) = .init(gpa);
     defer proc_list.deinit();
     defer for (proc_list.items) |*proc| killProc(proc);
 

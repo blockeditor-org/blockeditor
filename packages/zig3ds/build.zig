@@ -4,8 +4,10 @@ const anywhere = @import("anywhere");
 fn addTool(b: *std.Build, dep: *std.Build.Dependency, tool_name: []const u8, files: []const []const u8) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
         .name = tool_name,
-        .target = b.resolveTargetQuery(.{}), // native
-        .optimize = .ReleaseSafe,
+        .root_module = b.createModule(.{
+            .target = b.resolveTargetQuery(.{}), // native
+            .optimize = .ReleaseSafe,
+        }),
     });
 
     exe.linkLibC();
@@ -175,8 +177,10 @@ pub fn build(b: *std.Build) !void {
     // libgloss_libsysbase
     const libgloss_libsysbase = b.addObject(.{
         .name = "sysbase",
-        .target = target_3ds,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target_3ds,
+            .optimize = optimize,
+        }),
     });
     libc_includer.applyTo(libgloss_libsysbase.root_module);
     libgloss_libsysbase.addIncludePath(b.path("src/config_fix"));
@@ -188,10 +192,13 @@ pub fn build(b: *std.Build) !void {
     });
 
     // newlib (libc)
-    const libc = b.addStaticLibrary(.{
+    const libc = b.addLibrary(.{
         .name = "c",
-        .target = target_3ds,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target_3ds,
+            .optimize = optimize,
+        }),
     });
     libc_includer.applyTo(libc.root_module);
     libc.addCSourceFiles(.{
@@ -214,10 +221,13 @@ pub fn build(b: *std.Build) !void {
     b.addNamedLazyPath("c", libc_file);
 
     // libm
-    const libm = b.addStaticLibrary(.{
+    const libm = b.addLibrary(.{
+        .linkage = .static,
         .name = "m",
-        .target = target_3ds,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target_3ds,
+            .optimize = optimize,
+        }),
     });
     libc_includer.applyTo(libm.root_module);
     libm.addCSourceFiles(.{
@@ -235,10 +245,13 @@ pub fn build(b: *std.Build) !void {
         },
     });
     libctru_includer.expose("ctru");
-    const libctru = b.addStaticLibrary(.{
+    const libctru = b.addLibrary(.{
         .name = "ctru",
-        .target = target_3ds,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target_3ds,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(libctru);
     {
@@ -256,10 +269,13 @@ pub fn build(b: *std.Build) !void {
         },
     });
     citro3d_includer.expose("citro3d");
-    const citro3d = b.addStaticLibrary(.{
+    const citro3d = b.addLibrary(.{
         .name = "citro3d",
-        .target = target_3ds,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target_3ds,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(citro3d);
     libc_includer.applyTo(citro3d.root_module);
@@ -275,10 +291,13 @@ pub fn build(b: *std.Build) !void {
         },
     });
     citro2d_includer.expose("citro2d");
-    const citro2d = b.addStaticLibrary(.{
+    const citro2d = b.addLibrary(.{
         .name = "citro2d",
-        .target = target_3ds,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target_3ds,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(citro2d);
     libc_includer.applyTo(citro2d.root_module);
@@ -294,8 +313,10 @@ pub fn build(b: *std.Build) !void {
 
         const elf = b.addExecutable(.{
             .name = example_name,
-            .target = target_3ds,
-            .optimize = optimize,
+            .root_module = b.createModule(.{
+                .target = target_3ds,
+                .optimize = optimize,
+            }),
         });
         build_helper.link(elf);
         build_helper.addDir(elf.root_module, examples_dep.path(example.root_dir));
@@ -400,7 +421,7 @@ pub const T3dsBuildHelper = struct {
     }
 
     fn dotToUnderscore(str: []const u8, alloc: std.mem.Allocator) []const u8 {
-        var res = std.ArrayList(u8).init(alloc);
+        var res = std.array_list.Managed(u8).init(alloc);
         defer res.deinit();
         for (str) |char| {
             switch (char) {
@@ -436,7 +457,7 @@ pub const T3dsBuildHelper = struct {
         var dir_target = std.fs.cwd().openDir(path, .{ .iterate = true }) catch return &.{};
         defer dir_target.close();
 
-        var res_paths = std.ArrayList([]const u8).init(alloc);
+        var res_paths = std.array_list.Managed([]const u8).init(alloc);
         defer res_paths.deinit();
 
         var dir_walker = dir_target.walk(alloc) catch @panic("walk error");
@@ -465,9 +486,9 @@ pub const T3dsBuildHelper = struct {
     /// in the future, this could add a custom step that does a directory scan to discover all the files
     pub fn addFiles(bh: *const T3dsBuildHelper, mod: *std.Build.Module, files_root: std.Build.LazyPath, files: []const []const u8) void {
         const b = bh.owner;
-        var c_source_files = std.ArrayList([]const u8).init(bh.owner.allocator);
+        var c_source_files = std.array_list.Managed([]const u8).init(bh.owner.allocator);
         defer c_source_files.deinit();
-        var s_source_files = std.ArrayList([]const u8).init(bh.owner.allocator);
+        var s_source_files = std.array_list.Managed([]const u8).init(bh.owner.allocator);
         defer s_source_files.deinit();
 
         for (files) |file| {
@@ -546,7 +567,7 @@ pub const T3dsExample = struct {
     dependencies: T3dsDep,
 
     pub fn name(self: *const T3dsExample, alloc: std.mem.Allocator) []const u8 {
-        var res_al = std.ArrayList(u8).init(alloc);
+        var res_al = std.array_list.Managed(u8).init(alloc);
         defer res_al.deinit();
 
         for (self.root_dir) |char| {

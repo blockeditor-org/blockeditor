@@ -42,7 +42,7 @@ pub const Image = struct {
             .id = @enumFromInt(_image_id),
             .size = size,
             .format = format,
-            .contents = gpa.alignedAlloc(u8, @alignOf(u32), npx) catch @panic("oom"),
+            .contents = gpa.alignedAlloc(u8, .of(u32), npx) catch @panic("oom"),
             .modified = false,
         };
         return image;

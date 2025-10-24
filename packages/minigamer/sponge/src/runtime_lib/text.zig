@@ -13,7 +13,7 @@ pub fn print(layer: u2, pos: @Vector(2, i32), comptime fmt: []const u8, args: an
 }
 
 const EmptyErrorSet = error{};
-const TextRenderWriter = std.io.Writer(*TextRenderer, EmptyErrorSet, TextRenderer.write);
+const TextRenderWriter = std.Io.Writer(*TextRenderer, EmptyErrorSet, TextRenderer.write);
 const TextRenderer = struct {
     layer: u2,
     pos: @Vector(2, i32),

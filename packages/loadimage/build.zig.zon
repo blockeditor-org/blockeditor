@@ -7,8 +7,8 @@
     },
     .dependencies = .{
         .wuffs = .{
-            .url = "https://github.com/allyourcodebase/wuffs/archive/3646d8efae3f042ccbf552263ac6b2af738bdaa7.zip",
-            .hash = "wuffs-0.4.0-alpha.9+3837.20240914-3CHJgWsPAADpG9AWvKJ8ZxQ-t2IcnPEYVi_FD_o-qxjD",
+            .url = "https://github.com/allyourcodebase/wuffs/archive/5822dc06c75b30d53082debf68c90193cb2b2608.zip",
+            .hash = "wuffs-0.4.0-alpha.9+3837.20240914-3CHJgcMFAACyPvxsC7b48pJv9dPkPa4pSrB2VFbCXTfK",
         },
     },
 }

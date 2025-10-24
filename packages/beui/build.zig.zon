@@ -10,8 +10,8 @@
             .path = "../loadimage",
         },
         .mach_freetype = .{
-            .url = "https://github.com/pfgithub/mach-freetype/archive/7a1cd79641c2b4bb8efa5c64ba53f1a6a7909425.zip",
-            .hash = "mach_freetype-0.0.0-MGgvcPAUAgBa6paVXDkJjb3GkknAnS0vgzwE4msoDgoT",
+            .url = "https://github.com/pfgithub/mach-freetype/archive/8b74ee7afbfa30c60594c6f215f48af5a2140eff.zip",
+            .hash = "mach_freetype-0.0.0-2WmHMYEVAgB4yNvU9_bolnJK7HCe7L5nYMYC5F5URxnh",
         },
         .fonts = .{
             .url = "https://github.com/pfgithub/fonts/archive/a34bfc717f5f2df359a4114d99be0eb5a2aeeadb.tar.gz",

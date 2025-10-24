@@ -44,14 +44,16 @@ pub fn build(b: *std.Build) !void {
 
     const elf = b.addExecutable(.{
         .name = "sponge_3ds",
-        .target = build_helper.target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = build_helper.target,
+            .optimize = optimize,
+        }),
     });
     elf.addCSourceFile(.{ .file = b.path("src/entry_3ds.c") });
     elf.addCSourceFile(.{ .file = swiz_c });
     elf.step.dependOn(&runswizzle.step);
     elf.addObject(zigpart);
-    elf.root_module.sanitize_c = false;
+    elf.root_module.sanitize_c = .off;
     build_helper.link(elf);
 
     libc_includer.applyTo(elf.root_module);

@@ -2,9 +2,9 @@ https://blockeditor.pfg.pw
 
 # Building
 
-Requires zig `0.15.0-dev.151+6e8493daa`
+Requires zig `0.15.2`
 
-Recommended to use zls commit `59585858fdcd2f1163ca080c0fa709b711212f20`
+Recommended to use zls commit `ce6c8f02c78e622421cfc2405c67c5222819ec03`
 
 ## Zig setup:
 
@@ -63,3 +63,17 @@ It is recommended to use `env ZIG_LOCAL_CACHE_DIR=../../.zig-cache/ zig build` w
 - Update zig version in `.github/workflows/main.yml`
 - Update zls commit hash in `packages/texteditor/build.zig.zon` (and remove `.hash = ` to allow zig to download and provide the new hash)
 - Fix any issues (`zig build run` / `zig test`)
+
+For updating dependencies:
+
+Initialize a git repo in `zig env`.global_cache_dir/p. Add gitignore:
+
+```
+*
+!*/
+!*.zig
+!/.gitignore
+.zig-cache
+```
+
+Add all & commit. Then you can make any edits needed to packages and the diff will be available. Then you can apply all the diffs.

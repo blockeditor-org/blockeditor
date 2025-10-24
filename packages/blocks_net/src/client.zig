@@ -117,7 +117,7 @@ pub const TcpSync = struct {
 
             switch (msg.type) {
                 .text, .binary => {
-                    log.info("received: \"{}\"", .{std.zig.fmtEscapes(msg.data)});
+                    log.info("received: \"{f}\"", .{std.zig.fmtString(msg.data)});
                     // self.write_mutex.lock(); defer self.write_mutex.unlock(); try self.client.?.write(msg.data);
                 },
                 .ping => {
@@ -198,7 +198,7 @@ pub const TcpSync = struct {
 };
 
 const CombinedMessageBuilder = struct {
-    message: std.ArrayList(u8),
+    message: std.array_list.Managed(u8),
     client: *ws.Client,
     mutex: *std.Thread.Mutex,
 

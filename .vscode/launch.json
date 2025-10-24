@@ -21,7 +21,7 @@
             "allStopMode": true
         },
         {
-          "name": "Debug Blockedigtor (Mac)",
+          "name": "Debug Blockeditor (Mac)",
           "preLaunchTask": "Build blockeditor (Debug)",
           "type": "cppdbg",
           "request": "launch",
@@ -32,6 +32,16 @@
           "environment": [],
           "externalConsole": false,
           "MIMode": "lldb"
+        },
+        {
+            "name": "Debug Blockeditor (Windows)",
+            "preLaunchTask": "Build blockeditor (Debug)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\zig-out\\bin\\blockeditor.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": true
         },
         {
             "name": "Profile Blockeditor",

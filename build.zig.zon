@@ -2,6 +2,7 @@
     .name = .blockeditor_packages,
     .fingerprint = 0x1b05669ae26134e0,
     .version = "0.1.0",
+    .minimum_zig_version = "0.15.1",
     .paths = .{
         "",
     },

@@ -18,7 +18,7 @@ const math = std.math;
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
-const zgui = @import("zgui");
+// const zgui = @import("zgui");
 const zm = @import("zmath");
 
 pub const std_options = if (@hasDecl(App, "std_options")) App.std_options else std.Options{};
@@ -39,7 +39,7 @@ const window_title = "zig-gamedev: textured quad (wgpu)";
 
 pub const anywhere_cfg: anywhere.AnywhereCfg = .{
     .tracy = if (build_options.enable_tracy) @import("tracy__impl") else null,
-    .zgui = zgui,
+    // .zgui = zgui,
 };
 
 const wgsl_common = (
@@ -202,26 +202,26 @@ fn fn_getTime() f64 {
     return zglfw.getTime();
 }
 fn fn_getFramebufferSize(window: ?*const anyopaque) [2]u32 {
-    const one, const two = zglfw.Window.getFramebufferSize(@constCast(@ptrCast(window)));
+    const one, const two = zglfw.Window.getFramebufferSize(@ptrCast(@constCast(window)));
     return .{ @intCast(one), @intCast(two) };
 }
-fn fn_getWin32Window(window: *const anyopaque) ?*anyopaque {
-    return @ptrCast(zglfw.getWin32Window(@constCast(@ptrCast(window))));
+fn fn_getWin32Window(window: *const anyopaque) callconv(.c) *anyopaque {
+    return @ptrCast(zglfw.getWin32Window(@ptrCast(@constCast(window))));
 }
-fn fn_getX11Display() ?*anyopaque {
+fn fn_getX11Display() callconv(.c) *anyopaque {
     return @ptrCast(zglfw.getX11Display());
 }
-fn fn_getX11Window(window: *const anyopaque) u32 {
-    return zglfw.getX11Window(@constCast(@ptrCast(window)));
+fn fn_getX11Window(window: *const anyopaque) callconv(.c) u32 {
+    return zglfw.getX11Window(@ptrCast(@constCast(window)));
 }
-fn fn_getWaylandDisplay() ?*anyopaque {
+fn fn_getWaylandDisplay() callconv(.c) *anyopaque {
     return @ptrCast(zglfw.getWaylandDisplay());
 }
-fn fn_getWaylandSurface(window: ?*const anyopaque) ?*anyopaque {
-    return @ptrCast(zglfw.getWaylandWindow(@constCast(@ptrCast(window))));
+fn fn_getWaylandSurface(window: ?*const anyopaque) callconv(.c) *anyopaque {
+    return @ptrCast(zglfw.getWaylandWindow(@ptrCast(@constCast(window))));
 }
-fn fn_getCocoaWindow(window: ?*const anyopaque) ?*anyopaque {
-    return @ptrCast(zglfw.getCocoaWindow(@constCast(@ptrCast(window))));
+fn fn_getCocoaWindow(window: ?*const anyopaque) callconv(.c) *anyopaque {
+    return @ptrCast(zglfw.getCocoaWindow(@ptrCast(@constCast(window))));
 }
 
 fn create(gpa: std.mem.Allocator, window: *zglfw.Window) !*DemoState {
@@ -317,12 +317,13 @@ fn destroy(allocator: std.mem.Allocator, demo: *DemoState) void {
 }
 
 fn update(demo: *DemoState) void {
-    zgui.backend.newFrame(
-        demo.gctx.swapchain_descriptor.width,
-        demo.gctx.swapchain_descriptor.height,
-    );
+    // zgui.backend.newFrame(
+    //     demo.gctx.swapchain_descriptor.width,
+    //     demo.gctx.swapchain_descriptor.height,
+    // );
 
-    _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
+    // _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
+    _ = demo;
 }
 
 fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, frame_timer: *std.time.Timer, last_frame_time: *u64, add_us: u64) void {
@@ -548,7 +549,7 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
                 pass.release();
             }
 
-            zgui.backend.draw(pass);
+            // zgui.backend.draw(pass);
         }
 
         break :commands encoder.finish(null);
@@ -612,7 +613,7 @@ const callbacks = struct {
         }
     }
 
-    fn keyCallback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.C) void {
+    fn keyCallback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
         const b2 = window.getUserPointer(B2.Beui2).?;
         const beui = b2.persistent.beui1;
 
@@ -627,7 +628,7 @@ const callbacks = struct {
         beui.frame.has_events = true;
         handleKeyWithAction(beui, beui_key, action);
     }
-    fn charCallback(window: *zglfw.Window, codepoint: u32) callconv(.C) void {
+    fn charCallback(window: *zglfw.Window, codepoint: u32) callconv(.c) void {
         const b2 = window.getUserPointer(B2.Beui2).?;
         const beui = b2.persistent.beui1;
         const codepoint_u21 = std.math.cast(u21, codepoint) orelse {
@@ -639,14 +640,14 @@ const callbacks = struct {
         beui.frame.text_input = printed;
     }
 
-    fn scrollCallback(window: *zglfw.Window, xoffset: f64, yoffset: f64) callconv(.C) void {
+    fn scrollCallback(window: *zglfw.Window, xoffset: f64, yoffset: f64) callconv(.c) void {
         const b2 = window.getUserPointer(B2.Beui2).?;
         const beui = b2.persistent.beui1;
         if (!beui.frame.frame_cfg.?.can_capture_mouse) return;
         beui.frame.has_events = true;
         beui.frame.scroll_px += @floatCast(@Vector(2, f64){ xoffset, yoffset } * @Vector(2, f64){ 48, 48 });
     }
-    fn cursorPosCallback(window: *zglfw.Window, xpos: f64, ypos: f64) callconv(.C) void {
+    fn cursorPosCallback(window: *zglfw.Window, xpos: f64, ypos: f64) callconv(.c) void {
         const b2 = window.getUserPointer(B2.Beui2).?;
         const beui = b2.persistent.beui1;
         if (!beui.frame.frame_cfg.?.can_capture_mouse) {
@@ -665,7 +666,7 @@ const callbacks = struct {
             beui.frame.mouse_offset += beui.persistent.mouse_pos - prev_pos;
         }
     }
-    fn cursorEnterCallback(window: *zglfw.Window, entered: i32) callconv(.C) void {
+    fn cursorEnterCallback(window: *zglfw.Window, entered: i32) callconv(.c) void {
         _ = window;
         _ = entered; // why is it i32 now
         // if (entered == zglfw.TRUE) {
@@ -674,7 +675,7 @@ const callbacks = struct {
         //     // left
         // }
     }
-    fn mouseButtonCallback(window: *zglfw.Window, button: zglfw.MouseButton, action: zglfw.Action, mods: zglfw.Mods) callconv(.C) void {
+    fn mouseButtonCallback(window: *zglfw.Window, button: zglfw.MouseButton, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
         const b2 = window.getUserPointer(B2.Beui2).?;
         const beui = b2.persistent.beui1;
 
@@ -716,7 +717,7 @@ const BeuiVtable = struct {
         const self = cfg.castUserData(BeuiVtable);
         self.window.setClipboardString(text_utf8);
     }
-    fn getClipboard(cfg: *const Beui.FrameCfg, clipboard_contents: *std.ArrayList(u8)) void {
+    fn getClipboard(cfg: *const Beui.FrameCfg, clipboard_contents: *std.array_list.Managed(u8)) void {
         const self = cfg.castUserData(BeuiVtable);
         clipboard_contents.appendSlice(self.window.getClipboardString() orelse "") catch @panic("oom");
     }
@@ -785,6 +786,7 @@ pub fn main() !void {
         const scale = window.getContentScale();
         break :scale_factor @max(scale[0], scale[1]);
     };
+    _ = scale_factor;
 
     var cursors = Beui.EnumArray(Beui.Cursor, ?*zglfw.Cursor).init(null);
     for (&cursors.values, 0..) |*c, i| {
@@ -801,24 +803,24 @@ pub fn main() !void {
     defer for (cursors.values) |c| if (c) |d| d.destroy();
     var current_cursor: Beui.Cursor = .arrow;
 
-    zgui.init(gpa);
-    defer zgui.deinit();
+    // zgui.init(gpa);
+    // defer zgui.deinit();
 
-    zgui.backend.init(
-        window,
-        demo.gctx.device,
-        @intFromEnum(zgpu.GraphicsContext.swapchain_format),
-        @intFromEnum(wgpu.TextureFormat.undef),
-    );
-    defer zgui.backend.deinit();
+    // zgui.backend.init(
+    //     window,
+    //     demo.gctx.device,
+    //     @intFromEnum(zgpu.GraphicsContext.swapchain_format),
+    //     @intFromEnum(wgpu.TextureFormat.undef),
+    // );
+    // defer zgui.backend.deinit();
 
-    zgui.io.setConfigFlags(.{
-        .nav_enable_keyboard = true,
-        .dock_enable = true,
-        .dpi_enable_scale_fonts = true,
-    });
+    // zgui.io.setConfigFlags(.{
+    //     .nav_enable_keyboard = true,
+    //     .dock_enable = true,
+    //     .dpi_enable_scale_fonts = true,
+    // });
 
-    zgui.getStyle().scaleAllSizes(scale_factor);
+    // zgui.getStyle().scaleAllSizes(scale_factor);
 
     var draw_list = draw_lists.RenderList.init(gpa);
     defer draw_list.deinit();
@@ -829,6 +831,7 @@ pub fn main() !void {
     var last_frame_time: u64 = 0;
 
     var reduce_latency_target: u64 = target_none;
+    _ = &reduce_latency_target;
 
     while (!window.shouldClose()) {
         var add_us: u64 = 0;
@@ -838,7 +841,7 @@ pub fn main() !void {
             defer b2ft.end();
 
             add_us = frame_timer.read();
-            std.time.sleep(reduce_input_latency);
+            std.Thread.sleep(reduce_input_latency);
             frame_timer.reset();
         }
 
@@ -849,8 +852,8 @@ pub fn main() !void {
 
         var beui_vtable: BeuiVtable = .{ .window = window };
         beui.newFrame(.{
-            .can_capture_keyboard = !zgui.io.getWantCaptureKeyboard(),
-            .can_capture_mouse = !zgui.io.getWantCaptureMouse(),
+            .can_capture_keyboard = true, // !zgui.io.getWantCaptureKeyboard(),
+            .can_capture_mouse = true, // !zgui.io.getWantCaptureMouse(),
             .arena = arena,
             .now_ms = std.time.milliTimestamp(),
             .user_data = @ptrCast(@alignCast(&beui_vtable)),
@@ -867,7 +870,7 @@ pub fn main() !void {
             // skip this frame
             // eventually we could even ignore frames that have a mouse move event but there is no
             // beui2 item that asks for the mouse position event
-            std.time.sleep(std.time.ns_per_ms * 4);
+            std.Thread.sleep(std.time.ns_per_ms * 4);
             continue;
         }
         if (beui.isKeyHeld(.escape)) {
@@ -925,15 +928,15 @@ pub fn main() !void {
 
             if (using_zgui) {
                 // can't call zglfw setCursor because it gets immediately overwritten by dear imgui glfw backend
-                if (beui.frame.cursor != .arrow) zgui.setMouseCursor(switch (beui.frame.cursor) {
-                    .arrow => .arrow,
-                    .pointer => .hand,
-                    .text_input => .text_input,
-                    .resize_nw_se => .resize_nwse,
-                    .resize_ns => .resize_ns,
-                    .resize_ne_sw => .resize_nesw,
-                    .resize_ew => .resize_ew,
-                });
+                // if (beui.frame.cursor != .arrow) zgui.setMouseCursor(switch (beui.frame.cursor) {
+                //     .arrow => .arrow,
+                //     .pointer => .hand,
+                //     .text_input => .text_input,
+                //     .resize_nw_se => .resize_nwse,
+                //     .resize_ns => .resize_ns,
+                //     .resize_ne_sw => .resize_nesw,
+                //     .resize_ew => .resize_ew,
+                // });
             } else {
                 if (beui.frame.cursor != current_cursor) {
                     current_cursor = beui.frame.cursor;
@@ -956,27 +959,27 @@ pub fn main() !void {
             }
         }
 
-        zgui.showDemoWindow(null);
+        // zgui.showDemoWindow(null);
 
-        zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .first_use_ever });
-        zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
+        // zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .first_use_ever });
+        // zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
 
-        if (zgui.begin("Demo Settings", .{})) {
-            zgui.text(
-                "Average : {d:.3} ms/frame ({d:.1} fps)",
-                .{ demo.gctx.stats.average_cpu_time, demo.gctx.stats.fps },
-            );
-            zgui.text("draw_list items: {d} / {d}", .{ draw_list.vertices.items.len, draw_list.indices.items.len });
-            zgui.text("click_count: {d}", .{beui.leftMouseClickedCount()});
-            zgui.text("frame non-wait time: {d}", .{std.fmt.fmtDuration(last_frame_time)});
-            zgui.text("ns per vertex: {d:0.3}", .{@as(f64, @floatFromInt(last_frame_time)) / @as(f64, @floatFromInt(draw_list.vertices.items.len))});
-            zgui.text("reduce latency: {d}", .{std.fmt.fmtDuration(reduce_input_latency)});
-            if (zgui.radioButton("none", .{ .active = reduce_latency_target == target_none })) reduce_latency_target = target_none;
-            if (zgui.radioButton("60hz", .{ .active = reduce_latency_target == target_60hz })) reduce_latency_target = target_60hz;
-            if (zgui.radioButton("239.75hz", .{ .active = reduce_latency_target == target_239_75hz })) reduce_latency_target = target_239_75hz;
-            _ = zgui.checkbox("Update tex", .{ .v = &demo.update_tex });
-        }
-        zgui.end();
+        // if (zgui.begin("Demo Settings", .{})) {
+        //     zgui.text(
+        //         "Average : {d:.3} ms/frame ({d:.1} fps)",
+        //         .{ demo.gctx.stats.average_cpu_time, demo.gctx.stats.fps },
+        //     );
+        //     zgui.text("draw_list items: {d} / {d}", .{ draw_list.vertices.items.len, draw_list.indices.items.len });
+        //     zgui.text("click_count: {d}", .{beui.leftMouseClickedCount()});
+        //     zgui.text("frame non-wait time: {d}", .{std.fmt.fmtDuration(last_frame_time)});
+        //     zgui.text("ns per vertex: {d:0.3}", .{@as(f64, @floatFromInt(last_frame_time)) / @as(f64, @floatFromInt(draw_list.vertices.items.len))});
+        //     zgui.text("reduce latency: {d}", .{std.fmt.fmtDuration(reduce_input_latency)});
+        //     if (zgui.radioButton("none", .{ .active = reduce_latency_target == target_none })) reduce_latency_target = target_none;
+        //     if (zgui.radioButton("60hz", .{ .active = reduce_latency_target == target_60hz })) reduce_latency_target = target_60hz;
+        //     if (zgui.radioButton("239.75hz", .{ .active = reduce_latency_target == target_239_75hz })) reduce_latency_target = target_239_75hz;
+        //     _ = zgui.checkbox("Update tex", .{ .v = &demo.update_tex });
+        // }
+        // zgui.end();
 
         draw(demo, &draw_list, &b2, &frame_timer, &last_frame_time, add_us);
         frame_num += 1;

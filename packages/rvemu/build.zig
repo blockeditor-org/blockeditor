@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) !void {
         var tests_dir = try std.fs.cwd().openDir(b.path("tests").getPath(b), .{ .iterate = true });
         defer tests_dir.close();
 
-        var exe_bins = std.ArrayList(struct { std.Build.LazyPath, std.Build.LazyPath }).init(b.allocator);
+        var exe_bins = std.array_list.Managed(struct { std.Build.LazyPath, std.Build.LazyPath }).init(b.allocator);
 
         var it = tests_dir.iterateAssumeFirstIteration();
         while (try it.next()) |ent| {

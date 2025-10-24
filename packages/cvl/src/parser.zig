@@ -116,7 +116,7 @@ fn flipResult(tags: []AstNode.Tag, values: []AstNode.Value, src_index: usize, sh
     return ch_len;
 }
 
-fn dumpAstNodes(tags: []const AstNode.Tag, values: []const AstNode.Value, w: std.io.AnyWriter) !void {
+fn dumpAstNodes(tags: []const AstNode.Tag, values: []const AstNode.Value, w: std.Io.AnyWriter) !void {
     for (tags, values) |tag, value| {
         try w.print("[{s} {x}]", .{ @tagName(tag), if (tag.isAtom()) value.atom_value else value.expr_len });
     }
@@ -127,7 +127,7 @@ fn orderU32(context: u32, item: u32) std.math.Order {
 
 const Printer = struct {
     tree: *const AstTree,
-    w: std.io.AnyWriter,
+    w: *std.Io.Writer,
     is_err: bool = false,
     indent: usize = 0,
 
@@ -137,7 +137,7 @@ const Printer = struct {
         };
     }
     fn newline(p: *Printer) void {
-        p.w.writeByteNTimes(' ', 4 * p.indent) catch {
+        p.w.splatByteAll(' ', 4 * p.indent) catch {
             p.is_err = true;
         };
     }
@@ -169,7 +169,7 @@ const Printer = struct {
     }
 };
 
-fn dumpAst(tree: *const AstTree, root: AstExpr, w: std.io.AnyWriter, positions: []const u32, skip_outer: bool) !void {
+fn dumpAst(tree: *const AstTree, root: AstExpr, w: std.Io.AnyWriter, positions: []const u32, skip_outer: bool) !void {
     // custom value handling
     switch (tree.tag(root)) {
         .srcloc => {
@@ -207,7 +207,7 @@ fn dumpAst(tree: *const AstTree, root: AstExpr, w: std.io.AnyWriter, positions: 
                         std.debug.assert(fch != null);
                         std.debug.assert(tree.tag(fch.?) == .string_len);
                         const str_len = tree.atomValue(.string_len, fch.?);
-                        try w.print("\"{}\"", .{std.zig.fmtEscapes(tree.string_buf[str_offset..][0..str_len])});
+                        try w.print("\"{f}\"", .{std.zig.fmtString(tree.string_buf[str_offset..][0..str_len])});
                     },
                     else => {
                         // default handling
@@ -373,7 +373,7 @@ const Tokenizer = struct {
     pub const State = enum { root, inside_string };
     fn next(self: *Tokenizer, state: State) void {
         defer {
-            // std.log.err("tkz: {s} \"{}\"", .{ @tagName(self.token), std.zig.fmtEscapes(self.slice()) });
+            // std.log.err("tkz: {s} \"{f}\"", .{ @tagName(self.token), std.zig.fmtString(self.slice()) });
         }
         if (state == .inside_string) std.debug.assert(self.in_string);
         while (true) {
@@ -855,7 +855,7 @@ const Parser = struct {
         }
     }
     fn tryParseExprWithSuffixes(p: *Parser) bool {
-        var symbols = std.ArrayList(struct { start_node: usize, src: u32 }).init(p.gpa);
+        var symbols = std.array_list.Managed(struct { start_node: usize, src: u32 }).init(p.gpa);
         defer symbols.deinit();
         if (p.tokenizer.token == .symbols) {
             const h = p.here();
@@ -998,7 +998,7 @@ const Parser = struct {
             if (p.tokenizer.token != .symbols) break;
 
             if (!std.mem.eql(u8, sym, p.tokenizer.slice())) {
-                p.wrapErr(begin.node, begin.src, "mixed infix exprs not allowed. first operator: '{'}' ({d}), this operator: '{'}'", .{ std.zig.fmtEscapes(sym), sym_here.src, std.zig.fmtEscapes(p.tokenizer.slice()) });
+                p.wrapErr(begin.node, begin.src, "mixed infix exprs not allowed. first operator: \"{f}\" ({d}), this operator: \"{f}\"", .{ std.zig.fmtString(sym), sym_here.src, std.zig.fmtString(p.tokenizer.slice()) });
             }
             p.tokenizer.next(.root);
         }
@@ -1118,13 +1118,13 @@ pub fn parse(gpa: std.mem.Allocator, src: []const u8) AstTree {
         .newline_not_allowed_in_string => p.wrapErr(start.node, tkz_err.pos, "Newline not allowed inside string", .{}),
         .invalid_identifier => p.wrapErr(start.node, tkz_err.pos, "Invalid identifier", .{}),
         .invalid_byte => if (tkz_err.byte >= ' ' and tkz_err.byte < 0x7F) {
-            p.wrapErr(start.node, tkz_err.pos, "Invalid character: '{'}'", .{std.zig.fmtEscapes(&.{tkz_err.byte})});
+            p.wrapErr(start.node, tkz_err.pos, "Invalid character: \"{f}\"", .{std.zig.fmtString(&.{tkz_err.byte})});
         } else if (tkz_err.byte >= 0x80) {
             p.wrapErr(start.node, tkz_err.pos, "Unicode characters are not allowed outside of strings", .{});
         } else {
             p.wrapErr(start.node, tkz_err.pos, "Invalid byte in file: 0x{X:0>2}", .{tkz_err.byte});
         },
-        .char_not_allowed_in_indent => p.wrapErr(start.node, tkz_err.pos, "Character '{'}' not allowed in indent", .{std.zig.fmtEscapes(&.{tkz_err.byte})}),
+        .char_not_allowed_in_indent => p.wrapErr(start.node, tkz_err.pos, "Character \"{f}\" not allowed in indent", .{std.zig.fmtString(&.{tkz_err.byte})}),
         .indent_must_be_in_fours => p.wrapErr(start.node, tkz_err.pos, "Indentation must be in fours", .{}),
         .indent_wrong => p.wrapErr(start.node, tkz_err.pos, "Wrong level of indentation", .{}),
     };
@@ -1136,11 +1136,11 @@ pub fn parse(gpa: std.mem.Allocator, src: []const u8) AstTree {
     return tree;
 }
 
-pub fn testParser(out: *std.ArrayList(u8), opt: struct { no_lines: bool = false }, src_in: []const u8) ![]const u8 {
+pub fn testParser(out: *std.array_list.Managed(u8), opt: struct { no_lines: bool = false }, src_in: []const u8) ![]const u8 {
     const gpa = out.allocator;
-    var src = std.ArrayList(u8).init(gpa);
+    var src = std.array_list.Managed(u8).init(gpa);
     defer src.deinit();
-    var positions = std.ArrayList(u32).init(gpa);
+    var positions = std.array_list.Managed(u32).init(gpa);
     defer positions.deinit();
     if (!opt.no_lines) {
         var src_rem = src_in;
@@ -1179,36 +1179,36 @@ pub fn testParser(out: *std.ArrayList(u8), opt: struct { no_lines: bool = false 
     try out.appendSlice(fmt_buf.items);
     return out.items;
 }
-fn testPrinter(out: *std.ArrayList(u8), _: struct {}, src_in: []const u8) ![]const u8 {
+fn testPrinter(out: *std.array_list.Managed(u8), _: struct {}, src_in: []const u8) ![]const u8 {
     const gpa = out.allocator;
 
     var tree = parse(gpa, src_in);
     defer tree.deinit();
 
-    var fmt_buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer fmt_buf.deinit(gpa);
+    var fmt_buf: std.Io.Writer.Allocating = .init(gpa);
+    defer fmt_buf.deinit();
 
     if (tree.owner.has_fatal_error) |fe| {
         if (fe == .oom) return error.OutOfMemory;
-        try fmt_buf.appendSlice(gpa, @tagName(fe));
+        try fmt_buf.writer.writeAll(@tagName(fe));
     } else if (tree.tags.len > 0) {
         const node: AstExpr = tree.root();
         var printer: Printer = .{
             .tree = &tree,
-            .w = fmt_buf.writer(gpa).any(),
+            .w = &fmt_buf.writer,
         };
         printer.printAst(node);
         if (printer.is_err) return error.OutOfMemory;
     }
 
     out.clearRetainingCapacity();
-    try out.appendSlice(fmt_buf.items);
+    try out.appendSlice(fmt_buf.written());
     return out.items;
 }
 
 const snap = @import("anywhere").util.testing.snap;
 fn doTestParser(gpa: std.mem.Allocator) !void {
-    var out = std.ArrayList(u8).init(gpa);
+    var out = std.array_list.Managed(u8).init(gpa);
     defer out.deinit();
     try snap(@src(),
         \\[string "Hello, world!" @0] @0

@@ -5,8 +5,8 @@
     .paths = .{""},
     .dependencies = .{
         .zg = .{
-            .url = "https://codeberg.org/atman/zg/archive/v0.13.5.tar.gz",
-            .hash = "zg-0.13.5-oGqU3I6Z7QLV3PcngiIPop2sAiHj740sK36VsXmYUMAp",
+            .url = "https://codeberg.org/atman/zg/archive/749197a3f9d25e211615960c02380a3d659b20f9.tar.gz",
+            .hash = "zg-0.15.1-oGqU3M0-tALZCy7boQS86znlBloyKx6--JriGlY0Paa9",
         },
         .grapheme_break_test = .{
             .url = "https://gist.github.com/pfgithub/3ef5cf73a0bd4ab131556ef693f7b55b/archive/5d3e74f38bc785eebf6e670ba2e766eff201e80d.zip",

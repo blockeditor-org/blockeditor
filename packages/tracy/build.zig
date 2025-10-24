@@ -3,7 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const profiler_optimize = std.builtin.Mode.ReleaseSafe;
+    const profiler_optimize = std.builtin.OptimizeMode.ReleaseSafe;
 
     const fmt_step = b.addFmt(.{ .paths = &.{ "src", "build.zig", "build.zig.zon" } });
     b.getInstallStep().dependOn(&fmt_step.step);
@@ -12,10 +12,13 @@ pub fn build(b: *std.Build) !void {
 
     const tracy_dep = b.dependency("tracy", .{});
 
-    const tracy_lib = b.addStaticLibrary(.{
+    const tracy_lib = b.addLibrary(.{
         .name = "tracy_lib",
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(tracy_lib);
     tracy_lib.addIncludePath(tracy_dep.path("."));
@@ -55,8 +58,10 @@ pub fn build(b: *std.Build) !void {
     const zglfw = b.dependency("zglfw", .{ .target = target, .optimize = profiler_optimize });
     const tracy_exe = b.addExecutable(.{
         .name = "tracy",
-        .target = target,
-        .optimize = profiler_optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = profiler_optimize,
+        }),
     });
     tracy_exe.linkLibrary(zglfw.artifact("glfw"));
     tracy_exe.addIncludePath(b.path("src"));

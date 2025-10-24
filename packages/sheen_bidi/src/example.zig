@@ -6,7 +6,7 @@ test "sheen_bidi" {
     const bidi_text: []const u8 = "یہ ایک )car( ہے۔";
     const codepoint_sequence: sb.SBCodepointSequence = .{
         .stringEncoding = sb.SBStringEncodingUTF8,
-        .stringBuffer = @constCast(@ptrCast(bidi_text.ptr)),
+        .stringBuffer = @ptrCast(@constCast(bidi_text.ptr)),
         .stringLength = bidi_text.len,
     };
 
@@ -38,7 +38,7 @@ test "sheen_bidi" {
     const mirror_locator: sb.SBMirrorLocatorRef = sb.SBMirrorLocatorCreate();
     defer sb.SBMirrorLocatorRelease(mirror_locator);
 
-    sb.SBMirrorLocatorLoadLine(mirror_locator, paragraph_line, @constCast(@ptrCast(bidi_text.ptr)));
+    sb.SBMirrorLocatorLoadLine(mirror_locator, paragraph_line, @ptrCast(@constCast(bidi_text.ptr)));
     const mirror_agent: *const sb.SBMirrorAgent = sb.SBMirrorLocatorGetAgent(mirror_locator);
 
     // Log the details of each mirror in the line.
