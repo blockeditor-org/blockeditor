@@ -28,6 +28,7 @@ pub fn createApp(name: []const u8, self_dep: *std.Build.Dependency, app_mod: *st
                 .{ .name = "build_options", .module = build_options.createModule() },
             },
         }),
+        .use_llvm = true,
     });
 
     if (enable_tracy) {
