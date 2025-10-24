@@ -9,7 +9,7 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    var output = std.io.getStdOut();
+    var output = std.fs.File.stdout();
 
     for (args[1..]) |arg| {
         try output.writeAll(arg);

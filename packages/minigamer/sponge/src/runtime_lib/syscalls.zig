@@ -6,8 +6,7 @@ pub fn syscall0(number: constants.SYS) usize {
     return asm volatile ("ecall"
         : [ret] "={x10}" (-> usize),
         : [number] "{x17}" (@intFromEnum(number)),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub fn syscall1(number: constants.SYS, arg1: usize) usize {
@@ -15,8 +14,7 @@ pub fn syscall1(number: constants.SYS, arg1: usize) usize {
         : [ret] "={x10}" (-> usize),
         : [number] "{x17}" (@intFromEnum(number)),
           [arg1] "{x10}" (arg1),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub fn syscall2(number: constants.SYS, arg1: usize, arg2: usize) usize {
@@ -25,8 +23,7 @@ pub fn syscall2(number: constants.SYS, arg1: usize, arg2: usize) usize {
         : [number] "{x17}" (@intFromEnum(number)),
           [arg1] "{x10}" (arg1),
           [arg2] "{x11}" (arg2),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub fn syscall3(number: constants.SYS, arg1: usize, arg2: usize, arg3: usize) usize {
@@ -36,8 +33,7 @@ pub fn syscall3(number: constants.SYS, arg1: usize, arg2: usize, arg3: usize) us
           [arg1] "{x10}" (arg1),
           [arg2] "{x11}" (arg2),
           [arg3] "{x12}" (arg3),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub fn syscall4(number: constants.SYS, arg1: usize, arg2: usize, arg3: usize, arg4: usize) usize {
@@ -48,8 +44,7 @@ pub fn syscall4(number: constants.SYS, arg1: usize, arg2: usize, arg3: usize, ar
           [arg2] "{x11}" (arg2),
           [arg3] "{x12}" (arg3),
           [arg4] "{x13}" (arg4),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub fn syscall5(number: constants.SYS, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize) usize {
@@ -61,8 +56,7 @@ pub fn syscall5(number: constants.SYS, arg1: usize, arg2: usize, arg3: usize, ar
           [arg3] "{x12}" (arg3),
           [arg4] "{x13}" (arg4),
           [arg5] "{x14}" (arg5),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub fn syscall6(number: constants.SYS, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize, arg6: usize) usize {
@@ -75,6 +69,5 @@ pub fn syscall6(number: constants.SYS, arg1: usize, arg2: usize, arg3: usize, ar
           [arg4] "{x13}" (arg4),
           [arg5] "{x14}" (arg5),
           [arg6] "{x15}" (arg6),
-        : "memory"
-    );
+        : .{ .memory = true });
 }

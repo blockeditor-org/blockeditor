@@ -16,7 +16,7 @@ pub const App = struct {
 };
 
 const _targethack = struct {
-    var th: std.ArrayList(std.Build.ResolvedTarget) = undefined;
+    var th: std.array_list.Managed(std.Build.ResolvedTarget) = undefined;
     var th_rev: std.StringArrayHashMap(usize) = undefined;
     var th_initialized = false;
     fn minit(b: *std.Build) void {
@@ -73,7 +73,13 @@ pub const AppOpts = struct {
     android: ?beui_impl_android.BuildCache = null,
 
     pub fn passIn(self: *const AppOpts, b: *std.Build) []const u8 {
-        return std.json.stringifyAlloc(b.allocator, self, .{}) catch @panic("oom");
+        var w = std.Io.Writer.Allocating.init(b.allocator);
+        defer w.deinit();
+        std.json.Stringify.value(self, .{ .whitespace = .indent_4 }, &w.writer) catch |e| {
+            std.log.warn("failed to stringify json: {s}", .{@errorName(e)});
+            @panic("failure");
+        };
+        return w.toOwnedSlice() catch @panic("oom");
     }
     pub fn target(self: AppOpts, b: *std.Build) std.Build.ResolvedTarget {
         return getTargetHack(b, self.target_hack);

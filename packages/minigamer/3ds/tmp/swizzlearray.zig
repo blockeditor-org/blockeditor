@@ -36,7 +36,7 @@ pub fn main() !void {
     }
     std.log.info("validated.", .{});
 
-    var carr = std.ArrayList(u8).init(gpa);
+    var carr = std.array_list.Managed(u8).init(gpa);
     defer carr.deinit();
 
     try carr.appendSlice("#include <3ds.h>\n");

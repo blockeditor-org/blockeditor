@@ -31,12 +31,12 @@ clipboard_cache: ?struct {
     }
 },
 undo: TextStack,
-undo_tokens: std.ArrayList(UndoTokenValue),
+undo_tokens: std.array_list.Managed(UndoTokenValue),
 redo: TextStack,
-redo_tokens: std.ArrayList(UndoTokenValue),
+redo_tokens: std.array_list.Managed(UndoTokenValue),
 last_undo_token_classification: UndoTokenClassification,
 
-cursor_positions: std.ArrayList(CursorPosition),
+cursor_positions: std.array_list.Managed(CursorPosition),
 
 config: EditorConfig = .{
     .indent_with = .{ .spaces = 4 },
@@ -484,7 +484,7 @@ pub fn executeCommand(self: *Core, command: EditorCommand) void {
 
                 const line_start = self.getLineStart(pos_len.pos);
 
-                var temp_insert_slice = std.ArrayList(u8).init(self.gpa);
+                var temp_insert_slice = std.array_list.Managed(u8).init(self.gpa);
                 defer temp_insert_slice.deinit();
 
                 const line_indent_count = self.measureIndent(line_start);
@@ -538,7 +538,7 @@ pub fn executeCommand(self: *Core, command: EditorCommand) void {
                         .right => line_indent_count.indents + 1,
                     };
 
-                    var temp_insert_slice = std.ArrayList(u8).init(self.gpa);
+                    var temp_insert_slice = std.array_list.Managed(u8).init(self.gpa);
                     defer temp_insert_slice.deinit();
                     temp_insert_slice.appendNTimes(self.config.indent_with.char(), usi(self.config.indent_with.count() * new_indent_count)) catch @panic("oom");
 
@@ -563,7 +563,7 @@ pub fn executeCommand(self: *Core, command: EditorCommand) void {
                 const start_byte = block.docbyteFromPosition(start_line);
                 const end_byte = block.docbyteFromPosition(end_line);
 
-                var dupe_al: std.ArrayList(u8) = .init(self.gpa);
+                var dupe_al: std.array_list.Managed(u8) = .init(self.gpa);
                 defer dupe_al.deinit();
                 block.readSlice(start_line, dupe_al.addManyAsSlice(@intCast(end_byte - start_byte)) catch @panic("oom"));
                 switch (dupe_cmd.direction) {
@@ -735,7 +735,7 @@ pub fn executeCommand(self: *Core, command: EditorCommand) void {
 pub const CopyMode = enum { copy, cut };
 /// returned string is utf-8 encoded. caller owns the returned string and must copy it to the clipboard
 pub fn copyAllocUtf8(self: *Core, alloc: std.mem.Allocator, mode: CopyMode) []const u8 {
-    var result_str = std.ArrayList(u8).init(alloc);
+    var result_str = std.array_list.Managed(u8).init(alloc);
     defer result_str.deinit();
 
     self.copyArrayListUtf8(&result_str, mode);
@@ -743,7 +743,7 @@ pub fn copyAllocUtf8(self: *Core, alloc: std.mem.Allocator, mode: CopyMode) []co
     return result_str.toOwnedSlice() catch @panic("oom");
 }
 /// written string is utf-8 encoded and does not include any null bytes
-pub fn copyArrayListUtf8(self: *Core, result_str: *std.ArrayList(u8), mode: CopyMode) void {
+pub fn copyArrayListUtf8(self: *Core, result_str: *std.array_list.Managed(u8), mode: CopyMode) void {
     self.normalizeCursors();
     defer self.normalizeCursors();
 
@@ -1318,17 +1318,17 @@ const DocumentDocument = struct {
     }
 };
 
-pub fn SliceStackAligned(comptime T: type, comptime alignment: ?u29) type {
+pub fn SliceStackAligned(comptime T: type, comptime alignment: ?std.mem.Alignment) type {
     if (alignment) |a| {
-        if (a == @alignOf(T)) {
+        if (a == std.mem.Alignment.of(T)) {
             return SliceStackAligned(T, null);
         }
     }
     return struct {
         const Range = struct { start: usize, end: if (alignment) |_| usize else void };
         const SSA = @This();
-        values: std.ArrayListAligned(T, alignment),
-        headers: std.ArrayList(Header),
+        values: std.array_list.AlignedManaged(T, alignment),
+        headers: std.array_list.Managed(Header),
         const Header = struct {
             last_item_end: if (alignment) |_| usize else void,
             this_item_start: usize,
@@ -1347,10 +1347,10 @@ pub fn SliceStackAligned(comptime T: type, comptime alignment: ?u29) type {
             self.headers.clearRetainingCapacity();
         }
 
-        pub fn begin(self: *TextStack) !*std.ArrayListAligned(T, alignment) {
+        pub fn begin(self: *TextStack) !*std.array_list.AlignedManaged(T, alignment) {
             const last_item_end = self.values.items.len;
             if (alignment) |a| {
-                const aligned_len = std.mem.alignForward(usize, last_item_end, a);
+                const aligned_len = std.mem.alignForward(usize, last_item_end, a.toByteUnits());
                 try self.values.resize(aligned_len);
             }
             const this_item_start = self.values.items.len;
@@ -1372,7 +1372,7 @@ pub fn SliceStackAligned(comptime T: type, comptime alignment: ?u29) type {
             try al.appendSlice(value);
         }
         /// pointer is only valid until next add(), begin(), or deinit() call.
-        pub fn take(self: *TextStack) ?(if (alignment) |a| []align(a) T else []T) {
+        pub fn take(self: *TextStack) ?(if (alignment) |a| []align(a.toByteUnits()) T else []T) {
             if (self.headers.items.len == 0) return null;
 
             const header = self.headers.pop().?;
@@ -1448,7 +1448,7 @@ pub const CursorPosRes = struct {
 pub const CursorPositions = struct {
     idx: usize,
     count: f32,
-    positions: std.ArrayList(PositionItem),
+    positions: std.array_list.Managed(PositionItem),
     last_query: u64,
     last_query_result: ?CursorPosRes,
 
@@ -1521,7 +1521,7 @@ pub const CursorPositions = struct {
 fn testEditorContent(expected: []const u8, editor: *Core) !void {
     const actual = &editor.document;
     const gpa = std.testing.allocator;
-    var rendered = std.ArrayList(u8).init(gpa);
+    var rendered = std.array_list.Managed(u8).init(gpa);
     defer rendered.deinit();
     try rendered.ensureUnusedCapacity(usi(actual.value.length() + 1));
     rendered.appendNTimesAssumeCapacity(undefined, usi(actual.value.length()));
@@ -1530,7 +1530,7 @@ fn testEditorContent(expected: []const u8, editor: *Core) !void {
 
     var positions = editor.getCursorPositions();
     defer positions.deinit();
-    var rendered2 = std.ArrayList(u8).init(gpa);
+    var rendered2 = std.array_list.Managed(u8).init(gpa);
     defer rendered2.deinit();
     for (rendered.items, 0..) |char, i| {
         const pos_info = positions.advanceAndRead(i);
@@ -1600,7 +1600,7 @@ fn testFindStops(expected: []const u8, stop_type: CursorLeftRightStop) !void {
     return testFindStops_withOption(expected, stop_type, .{ .count_soft_tab_as_grapheme_cluster = 0 });
 }
 fn testFindStops_withOption(expected: []const u8, stop_type: CursorLeftRightStop, cfg: StopCfg) !void {
-    var test_src = std.ArrayList(u8).init(std.testing.allocator);
+    var test_src = std.array_list.Managed(u8).init(std.testing.allocator);
     defer test_src.deinit();
     for (expected) |char| {
         switch (char) {
@@ -1611,7 +1611,7 @@ fn testFindStops_withOption(expected: []const u8, stop_type: CursorLeftRightStop
     var test_src_doc_itm = seg_dep.SliceDocument{ .slice = test_src.items };
     const test_src_doc = test_src_doc_itm.doc();
 
-    var test_res = std.ArrayList(u8).init(std.testing.allocator);
+    var test_res = std.array_list.Managed(u8).init(std.testing.allocator);
     defer test_res.deinit();
     for (0..test_src.items.len + 1) |i| {
         const hs_res = blk: {

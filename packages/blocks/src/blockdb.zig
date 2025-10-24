@@ -48,7 +48,7 @@ pub const BlockDB = struct {
 
     path_to_blockref_map: std.AutoArrayHashMap(bi.BlockID, *BlockRef),
 
-    waiting_send_queue: std.ArrayList(ThreadInstruction),
+    waiting_send_queue: std.array_list.Managed(ThreadInstruction),
     send_queue: util.ThreadQueue(ThreadInstruction),
     recv_queue: util.ThreadQueue(ToApplyInstruction),
 
@@ -122,7 +122,7 @@ pub const BlockDB = struct {
 
         // blockrefs have a reference to the block interface so they better be gone
         for (self.path_to_blockref_map.values()) |ref| {
-            std.log.err("leaked block: {}", .{ref.id});
+            std.log.err("leaked block: {f}", .{ref.id});
         }
         std.debug.assert(self.path_to_blockref_map.values().len == 0);
         self.path_to_blockref_map.deinit();
@@ -170,7 +170,7 @@ pub const BlockDB = struct {
                     if (self.path_to_blockref_map.get(op.block)) |block_ref| {
                         if (block_ref.contents()) |contents| {
                             if (contents.server()) |_| {
-                                std.log.info("discarded load_block operation as server is already filled for block {}", .{op.block});
+                                std.log.info("discarded load_block operation as server is already filled for block {f}", .{op.block});
                             } else {
                                 const dsrlz = contents.vtable.deserialize(self.gpa, op.value_owned) catch {
                                     std.log.err("recieved invalid block from server", .{});
@@ -252,7 +252,7 @@ pub const BlockDB = struct {
     /// call this after the operation has been applied to client_value and added to the queue
     /// to save it.
     fn submitOperation(self: *BlockDB, block: *BlockRef, op_unowned: bi.AlignedByteSlice) void {
-        const op_owned = self.gpa.alignedAlloc(u8, 16, op_unowned.len) catch @panic("oom");
+        const op_owned = self.gpa.alignedAlloc(u8, .fromByteUnits(16), op_unowned.len) catch @panic("oom");
         @memcpy(op_owned, op_unowned);
 
         self.waiting_send_queue.append(.{ .apply_operation = .{ .block_id = block.id, .operation_owned = op_owned } }) catch @panic("oom");
@@ -390,7 +390,7 @@ pub const BlockRef = struct {
         const content: *BlockRefContents = self.contents() orelse @panic("cannot apply operation on a block that has not yet loaded");
 
         // clone operation (can't use dupe because it has to stay aligned)
-        const op_clone = self.unapplied_operations_queue.allocator.alignedAlloc(u8, 16, ops.len) catch @panic("oom");
+        const op_clone = self.unapplied_operations_queue.allocator.alignedAlloc(u8, .fromByteUnits(16), ops.len) catch @panic("oom");
         @memcpy(op_clone, ops);
 
         // apply it to client contents and tell owning BlockDBInterface about the operation to eventually get it into server value

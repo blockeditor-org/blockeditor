@@ -30,11 +30,11 @@ fn lightness(color_u32: u32) f32 {
     return (result + 1.0) * a;
 }
 
-fn formatColor(color_u32: u32, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+fn formatColor(color_u32: u32, writer: *std.Io.Writer) !void {
     const color_u8: @Vector(4, u8) = @bitCast(color_u32);
     try writer.print("\x1b[48;2;{[r]d};{[g]d};{[b]d}m{[a]X:0>2}\x1b[m", .{ .r = color_u8[0], .g = color_u8[1], .b = color_u8[2], .a = color_u8[3] });
 }
-pub fn fmtColor(color: u32) std.fmt.Formatter(formatColor) {
+pub fn fmtColor(color: u32) std.fmt.Formatter(u32, formatColor) {
     return .{ .data = color };
 }
 
@@ -51,10 +51,10 @@ pub fn makeassets(gpa: std.mem.Allocator, args: []const [:0]const u8) !void {
     const out_dir = try gpa.dupe(u8, tmp);
     defer gpa.free(out_dir);
 
-    var res_deps = std.ArrayList(u8).init(gpa);
+    var res_deps = std.array_list.Managed(u8).init(gpa);
     defer res_deps.deinit();
 
-    var res_zig_src = std.ArrayList(u8).init(gpa);
+    var res_zig_src = std.array_list.Managed(u8).init(gpa);
     defer res_zig_src.deinit();
     const res_zig_src_writer = res_zig_src.writer();
 
@@ -87,7 +87,7 @@ pub fn makeassets(gpa: std.mem.Allocator, args: []const [:0]const u8) !void {
         if (palette.keys().len > 8) {
             std.log.err("Image `{s}` has more than 8 colors:\n", .{dest_name});
             for (palette.keys(), 0..) |color, color_i| {
-                std.log.err("- {[i]}: {[color]}", .{ .i = color_i, .color = fmtColor(color) });
+                std.log.err("- {}: {f}", .{ color_i, fmtColor(color) });
             }
             return error.TooManyColors; // todo dithering
         }
@@ -109,8 +109,8 @@ pub fn makeassets(gpa: std.mem.Allocator, args: []const [:0]const u8) !void {
         try out_dir_ent.writeFile(.{ .sub_path = output_file_name, .data = converted.rgba });
 
         // write output zig
-        try res_zig_src_writer.print("pub const {} = struct {{\n", .{std.zig.fmtId(dest_name)});
-        try res_zig_src_writer.print("    const u8_slice = @embedFile(\"{}\");\n", .{std.zig.fmtEscapes(output_file_name)});
+        try res_zig_src_writer.print("pub const {f} = struct {{\n", .{std.zig.fmtId(dest_name)});
+        try res_zig_src_writer.print("    const u8_slice = @embedFile(\"{f}\");\n", .{std.zig.fmtString(output_file_name)});
         try res_zig_src_writer.print("    const u8_aligned align(@alignOf(u32)) = u8_slice.ptr[0..u8_slice.len].*;\n", .{});
         try res_zig_src_writer.print("    const u32_slice: []const u32 = @as([*]const u32, @ptrCast(&u8_aligned))[0 .. u8_aligned.len / 4];\n", .{});
         try res_zig_src_writer.print("    pub const data = u32_slice;\n", .{});

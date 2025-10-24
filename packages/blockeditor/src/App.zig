@@ -482,7 +482,7 @@ fn render__block(self: *App, arg: WM.Manager.RenderBlockArg) *B2.RepositionableD
             return render__bounceBall(ui.sub(@src()));
         },
         bi.DebugWMViewer.uuid => {
-            var al = std.ArrayList(u8).init(self.gpa);
+            var al = std.array_list.Managed(u8).init(self.gpa);
             defer al.deinit();
             const msg = if (self.wm.wm.testingRenderToString(&al)) |val| val else |e| @errorName(e);
             const rdl = ui.id.b2.draw();
@@ -578,7 +578,7 @@ fn render__tree__child_onClick(data: *render__tree__child_onClick_data, b2: *B2.
         // what's the reason to require double click again? so you can select a file without opening it in order to rename it
         // or something like that?
         // if (ui.id.b2.persistent.beui1.leftMouseClickedCount() == 2) {
-        var file_path = std.ArrayList(u8).init(b2.frame.arena);
+        var file_path = std.array_list.Managed(u8).init(b2.frame.arena);
         tree.getPath(tree_node, &file_path);
         if (std.fs.cwd().readFileAlloc(b2.frame.arena, file_path.items, std.math.maxInt(usize))) |file_cont| {
             data.app.wm.wm.moveFrameNewWindow(data.app.wm.wm.addFrame(.{ .final = .{ .ref = data.app.addTab(file_cont) } }));
@@ -682,8 +682,8 @@ const FsTree2 = struct {
     root_dir_owned: []const u8,
     root_node: ?*Node,
     node_pool: std.heap.ArenaAllocator,
-    all_nodes: std.ArrayList(*Node),
-    deleted_nodes: std.ArrayList(*Node),
+    all_nodes: std.array_list.Managed(*Node),
+    deleted_nodes: std.array_list.Managed(*Node),
 
     pub const Index = struct {
         // pointer stays valid because we never delete nodes. if they are to be reused, they stay valid until
@@ -769,7 +769,7 @@ const FsTree2 = struct {
         });
     }
 
-    pub fn getPath(self: *FsTree2, dir: *Node, result: *std.ArrayList(u8)) void {
+    pub fn getPath(self: *FsTree2, dir: *Node, result: *std.array_list.Managed(u8)) void {
         if (dir.parent) |parent| {
             self.getPath(parent, result);
         } else {
@@ -784,11 +784,11 @@ const FsTree2 = struct {
     pub fn expand(self: *FsTree2, dir: *Node) !void {
         if (dir.opened) return;
 
-        var whole_path = std.ArrayList(u8).init(self.all_nodes.allocator);
+        var whole_path = std.array_list.Managed(u8).init(self.all_nodes.allocator);
         defer whole_path.deinit();
         self.getPath(dir, &whole_path);
 
-        var res_children = std.ArrayList(*Node).init(self.all_nodes.allocator);
+        var res_children = std.array_list.Managed(*Node).init(self.all_nodes.allocator);
         defer res_children.deinit();
         errdefer for (res_children.items) |item| self._removeNode(item);
 
@@ -847,7 +847,7 @@ const FsTree2 = struct {
         // newly overwritten node.
         if (!dir.opened) return;
         dir.opened = false;
-        var new_children: std.ArrayList(*Node) = .init(self.all_nodes.allocator);
+        var new_children: std.array_list.Managed(*Node) = .init(self.all_nodes.allocator);
         defer new_children.deinit();
         for (dir.children_owned) |child| {
             if (child.opened) {

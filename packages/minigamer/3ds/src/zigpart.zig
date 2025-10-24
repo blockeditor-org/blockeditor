@@ -21,7 +21,7 @@ const FrameOut = [constants.EMU_SCREEN_DATA_SIZE_U32 * constants.EMU_SCREEN_NLAY
 const OffsetsOut = [constants.EMU_SCREEN_NLAYERS]@Vector(2, i8);
 
 const NullErrorSet = error{};
-pub const PrintfWriter = std.io.Writer(void, NullErrorSet, writeFn);
+pub const PrintfWriter = std.Io.GenericWriter(void, NullErrorSet, writeFn);
 fn writeFn(_: void, bytes: []const u8) NullErrorSet!usize {
     _ = std.c.printf("%.*s", @as(c_int, @intCast(bytes.len)), bytes.ptr);
     return bytes.len;

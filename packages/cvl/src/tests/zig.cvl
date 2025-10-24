@@ -32,7 +32,7 @@ render__tree__child_onClick :: (data: *render__tree__child_onClick_data, b2: *B2
     tree_node :: data.tree_node;
     
     _if(tree_node.node_type == .file) {
-        file_path :: *std.ArrayList(u8): .new_stack: std.ArrayList(u8).init(b2.frame.arena);
+        file_path :: *std.array_list.Managed(u8): .new_stack: std.array_list.Managed(u8).init(b2.frame.arena);
         tree.getPath(tree_node, file_path);
         _if(std.fs.cwd().readFileAlloc(b2.frame.arena, file_path.items, std.math.maxInt(usize))) {(file_cont) {
             data.app.wm.wm.moveFrameNewWindow(data.app.wm.wm.addFrame(( .final = ( .ref = data.app.addTab(final_cont) ) )));

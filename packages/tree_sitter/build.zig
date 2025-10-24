@@ -1,10 +1,13 @@
 const std = @import("std");
 
 pub fn addLanguage(b: *std.Build, language_name: []const u8, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, src_path: std.Build.LazyPath, source_files: []const []const u8) *std.Build.Step.Compile {
-    const language_support_obj = b.addStaticLibrary(.{
+    const language_support_obj = b.addLibrary(.{
         .name = b.fmt("tree_sitter_{s}", .{language_name}),
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     language_support_obj.linkLibC();
     language_support_obj.addCSourceFiles(.{ .root = src_path, .files = source_files });
@@ -40,7 +43,14 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         });
         tree_sitter_translatec.addIncludePath(tree_sitter_dep.path("lib/include/tree_sitter"));
-        break :blk tree_sitter_translatec.addModule("tree_sitter_translatec");
+        break :blk b.addModule("tree_sitter_translatec", .{
+            .root_source_file = b.path("src/noworkaround.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nwh", .module = tree_sitter_translatec.createModule() },
+            },
+        });
     };
     tree_sitter_translatec_module.linkLibrary(tree_sitter_dep.artifact("tree-sitter"));
 

@@ -9,6 +9,7 @@ type Config = {
     close?: string,
     autoOpen?: boolean,
     setMode?: TokenizerMode,
+    joinTag?: string,
 };
 
 const mkconfig: Record<string, Omit<Config, "prec">>[] = [
@@ -21,21 +22,21 @@ const mkconfig: Record<string, Omit<Config, "prec">>[] = [
         "]": {style: "close"},
     },
     {
-        "::": {style: "join"},
+        ",": {style: "join", joinTag: "sep"},
+        ";": {style: "join", joinTag: "sep"},
+        "\n": {style: "join", joinTag: "sep"},
+    },
+    {
+        "::": {style: "join", joinTag: "bind"},
     },
     {
         "=>": {style: "join"},
     },
     {
-        ",": {style: "join"},
-        ";": {style: "join"},
-        "\n": {style: "join"},
-    },
-    {
         ":": {style: "open"},
     },
     {
-        "=": {style: "join"},
+        "=": {style: "join", joinTag: "assign"},
     },
     {
         ".": {style: "close", autoOpen: true},
@@ -159,6 +160,7 @@ interface BinaryExpressionToken {
     kind: "binary";
     pos: TokenPosition;
     prec: number;
+    tag: string;
     items: SyntaxNode[];
 }
 
@@ -178,10 +180,11 @@ interface TokenizerStackItem {
     opSupVal?: SyntaxNode[];
     prec: number;
     autoClose?: boolean;
+    tag?: string;
 }
 
 type TokenizationErrorEntry = {
-    pos: TokenPosition,
+    pos?: TokenPosition,
     style: "note" | "error",
     message: string,
 };
@@ -348,6 +351,19 @@ export function tokenize(source: Source): TokenizationResult {
                 const lastStackItem = parseStack[parseStack.length - 1]!;
 
                 if (lastStackItem.prec === operatorPrecedence) {
+                    if (lastStackItem.tag !== cfg.joinTag) {
+                        errors.push({
+                            entries: [{
+                                message: "mixing operators disallowed",
+                                style: "error",
+                                pos: start,
+                            }, {
+                                message: "previous operator here",
+                                style: "note",
+                            }],
+                            trace: [...referenceTrace],
+                        });
+                    }
                     targetCommaBlock = lastStackItem;
                     break;
                 } else if (lastStackItem.prec < operatorPrecedence) {
@@ -368,6 +384,7 @@ export function tokenize(source: Source): TokenizationResult {
                         indent: lastStackItem.indent,
                         autoClose: true,
                         prec: operatorPrecedence,
+                        tag: cfg.joinTag ?? "",
                     };
                     parseStack.push(targetCommaBlock);
                     lastStackItem.val.splice(valStartIdx, lastStackItem.val.length, {
@@ -375,6 +392,7 @@ export function tokenize(source: Source): TokenizationResult {
                         pos: start,
                         prec: operatorPrecedence,
                         items: opSupVal,
+                        tag: cfg.joinTag ?? "",
                     });
                     break;
                 } else {
@@ -616,20 +634,19 @@ function prettyPrintErrors(source: Source, errors: TokenizationError[]): string 
             const color = style === 'error' ? colors.red : colors.blue;
             const bold = style === 'error' ? colors.bold : "";
 
-            output += `${pos.fyl}:${pos.lyn}:${pos.col}: ${color}${bold}${style}${colors.reset}: ${message}${colors.reset}\n`;
-
-            if (pos.fyl !== source.filename) continue;
-            const line = sourceLines[pos.lyn - 1];
+            output += `${pos?.fyl ?? "??"}:${pos?.lyn ?? "??"}:${pos?.col ?? "??"}: ${color}${bold}${style}${colors.reset}: ${message}${colors.reset}\n`;
+            
+            const line = pos?.fyl === source.filename ? sourceLines[pos.lyn - 1] : "";
             if (line === undefined) continue;
 
-            const lineNumberStr = String(pos.lyn);
+            const lineNumberStr = `${pos?.lyn ?? "??"}`;
             const gutterWidth = lineNumberStr.length;
             const emptyGutter = ` ${" ".repeat(gutterWidth)} ${colors.blue}|${colors.reset}`;
             const lineGutter = ` ${colors.cyan}${lineNumberStr}${colors.reset} ${colors.blue}|${colors.reset}`;
 
             output += `${lineGutter} ${line}\n`;
 
-            const pointer = ' '.repeat(pos.col - 1) + '^';
+            const pointer = ' '.repeat((pos?.col ?? 1) - 1) + '^';
             output += `${emptyGutter} ${color}${colors.bold}${pointer}${colors.reset}\n`;
         }
         if (error.trace.length > 0) {

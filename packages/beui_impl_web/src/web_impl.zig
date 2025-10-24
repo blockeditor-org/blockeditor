@@ -19,7 +19,7 @@ pub fn webLog(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    var res_al = std.ArrayList(u8).init(std.heap.c_allocator);
+    var res_al = std.array_list.Managed(u8).init(std.heap.c_allocator);
     defer res_al.deinit();
 
     const writer = res_al.writer();
@@ -47,7 +47,7 @@ const BeuiVtable = struct {
     fn setClipboard(_: *const Beui.FrameCfg, _: [:0]const u8) void {
         std.log.info("TODO setClipboard", .{});
     }
-    fn getClipboard(_: *const Beui.FrameCfg, _: *std.ArrayList(u8)) void {
+    fn getClipboard(_: *const Beui.FrameCfg, _: *std.array_list.Managed(u8)) void {
         std.log.info("TODO getClipboard", .{});
     }
     pub const vtable: *const Beui.FrameCfgVtable = &.{

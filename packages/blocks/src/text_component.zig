@@ -34,7 +34,7 @@ fn BalancedBinaryTree(comptime Data: type) type {
             none = 0,
             root = std.math.maxInt(usize),
             _,
-            pub fn format(value: NodeIndex, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(value: NodeIndex, writer: *std.Io.Writer) !void {
                 switch (value) {
                     .none => {
                         try writer.print("ø", .{});
@@ -429,10 +429,10 @@ fn BalancedBinaryTree(comptime Data: type) type {
             }
         };
 
-        pub fn format(value: *const BBT, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(value: *const BBT, writer: *std.Io.Writer) !void {
             try previewTreeRecursive(value, writer, value.root_node, .zero);
         }
-        fn previewTreeRecursive(tree: *const BBT, out: std.io.AnyWriter, current_node: NodeIndex, current_offset: Count) !void {
+        fn previewTreeRecursive(tree: *const BBT, out: std.Io.AnyWriter, current_node: NodeIndex, current_offset: Count) !void {
             const node_ptr = tree._getNodePtrConst(current_node) orelse {
                 try out.print("ø", .{});
                 return;
@@ -457,8 +457,8 @@ const SampleData = struct {
         }
         return res;
     }
-    pub fn format(value: SampleData, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("{s}\"{}\"", .{ if (value.deleted) "[d]" else "", std.zig.fmtEscapes(value.value) });
+    pub fn format(value: SampleData, writer: *std.Io.Writer) !void {
+        try writer.print("{s}\"{f}\"", .{ if (value.deleted) "[d]" else "", std.zig.fmtString(value.value) });
     }
 
     const Count = struct {
@@ -478,7 +478,7 @@ const SampleData = struct {
         pub fn eql(a: @This(), b: @This()) bool {
             return std.meta.eql(a, b);
         }
-        pub fn format(value: Count, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(value: Count, writer: *std.Io.Writer) !void {
             try writer.print("{d}", .{value.length});
         }
 
@@ -494,7 +494,7 @@ const SampleData = struct {
 };
 
 fn testPrintTree(tree: *BalancedBinaryTree(SampleData), expected_value: []const u8) !void {
-    var actual_value = std.ArrayList(u8).init(std.testing.allocator);
+    var actual_value = std.array_list.Managed(u8).init(std.testing.allocator);
     defer actual_value.deinit();
 
     var iter = tree.iterator(.{});
@@ -563,9 +563,7 @@ pub const SegmentID = enum(u64) {
     }
     pub fn format(
         self: *const @This(),
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
+        writer: *std.Io.Writer,
     ) !void {
         const num = @intFromEnum(self.*);
         if (num == 0) {
@@ -591,8 +589,7 @@ pub const MoveID = enum(u64) {
     pub fn format(
         self: *const @This(),
         comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
+        writer: *std.Io.Writer,
     ) !void {
         const num = @intFromEnum(self.*);
         const op_id = num >> 16;
@@ -621,15 +618,13 @@ pub const Position = struct {
 
     pub fn format(
         self: *const @This(),
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
+        writer: *std.Io.Writer,
     ) !void {
         if (self.id == .end) {
             try writer.print("E", .{});
             return;
         }
-        try writer.print("{}.{d}", .{ self.id, self.segbyte });
+        try writer.print("{f}.{d}", .{ self.id, self.segbyte });
     }
 };
 
@@ -703,7 +698,9 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
                 const tctx = anywhere.tracy.trace(@src());
                 defer tctx.end();
 
-                std.json.stringify(self, .{}, out.writer()) catch @panic("oom");
+                var w1 = out.writer();
+                var w2 = w1.adaptToNewApi(&.{});
+                std.json.Stringify.value(self, .{}, &w2.new_interface) catch @panic("oom");
             }
             pub fn deserialize(arena: std.mem.Allocator, slice: bi.AlignedByteSlice) !Operation {
                 const tctx = anywhere.tracy.trace(@src());
@@ -714,24 +711,22 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
 
             pub fn format(
                 self: *const @This(),
-                comptime _: []const u8,
-                _: std.fmt.FormatOptions,
-                writer: anytype,
+                writer: *std.Io.Writer,
             ) !void {
                 switch (self.*) {
                     .move => |mop| {
                         try writer.print("[M:{}:{d}->{}]", .{ mop.start, mop.len_within_segment, mop.end });
                     },
                     .insert => |iop| {
-                        try writer.print("[I:{}:\"{}\"->{}]", .{ iop.pos, std.zig.fmtEscapes(iop.text), iop.id });
+                        try writer.print("[I:{}:\"{f}\"->{}]", .{ iop.pos, std.zig.fmtString(iop.text), iop.id });
                     },
                     .replace_and_delete => |rdop| {
-                        try writer.print("[RD:{}:\"{}\"", .{ rdop.id, std.zig.fmtEscapes(rdop.replace_buffer) });
+                        try writer.print("[RD:{}:\"{f}\"", .{ rdop.id, std.zig.fmtString(rdop.replace_buffer) });
                         for (rdop.sorted_ranges) |sr| try writer.print(",{d}-{d}:.{s}", .{ sr.start_segbyte, sr.end_segbyte, @tagName(sr.mode) });
                         try writer.print("]", .{});
                     },
                     .extend => |xop| {
-                        try writer.print("[X:{}:{d}:\"{}\"]", .{ xop.id, xop.prev_len, std.zig.fmtEscapes(xop.text) });
+                        try writer.print("[X:{}:{d}:\"{f}\"]", .{ xop.id, xop.prev_len, std.zig.fmtString(xop.text) });
                     },
                 }
             }
@@ -747,7 +742,7 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
                 return self.bufbyte == null;
             }
 
-            pub fn format(value: Span, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(value: Span, writer: *std.Io.Writer) !void {
                 if (value.deleted()) {
                     try writer.print("-{d}", .{value.length});
                 } else {
@@ -792,7 +787,7 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
                 fn eql(a: Count, b: Count) bool {
                     return std.meta.eql(a, b);
                 }
-                pub fn format(value: Count, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                pub fn format(value: Count, writer: *std.Io.Writer) !void {
                     try writer.print("{d}", .{value.byte_count});
                 }
 
@@ -820,10 +815,10 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
         };
         const BBT = BalancedBinaryTree(Span);
         // this causes a noticable pause to deinit :/
-        const SegmentIDMap = std.AutoHashMap(SegmentID, std.ArrayList(BBT.NodeIndex)); // sorted so it can be binary searched
+        const SegmentIDMap = std.AutoHashMap(SegmentID, std.array_list.Managed(BBT.NodeIndex)); // sorted so it can be binary searched
         span_bbt: BBT, // must contain at least: @0 "\x00"
         segment_id_map: SegmentIDMap, // this could also be a tree sorted by SegmentID first and segbyte second
-        buffer: std.ArrayList(T),
+        buffer: std.array_list.Managed(T),
         allocator: std.mem.Allocator,
         panic_on_modify_segment_id_map: bool = false,
 
@@ -836,9 +831,7 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
 
         pub fn format(
             self: *const @This(),
-            comptime _: []const u8,
-            _: std.fmt.FormatOptions,
-            writer: anytype,
+            writer: *std.Io.Writer,
         ) !void {
             var it = self.span_bbt.iterator(.{});
             var i: usize = 0;
@@ -851,10 +844,10 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
                     try writer.print("E", .{});
                     continue;
                 }
-                try writer.print("{}.{d}", .{ span.id, span.start_segbyte });
+                try writer.print("{f}.{d}", .{ span.id, span.start_segbyte });
                 if (span.bufbyte) |bufbyte| {
                     const span_text = self.buffer.items[usi(bufbyte)..][0..usi(span.length)];
-                    try writer.print("\"{}\"", .{std.zig.fmtEscapes(span_text)});
+                    try writer.print("\"{f}\"", .{std.zig.fmtString(span_text)});
                 } else {
                     try writer.print("-{d}", .{span.length});
                 }
@@ -887,7 +880,7 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
             }
 
             // align
-            const aligned_length = std.mem.alignForward(usize, out.items.len, bi.Alignment);
+            const aligned_length = std.mem.alignForward(usize, out.items.len, bi.Alignment.toByteUnits());
             const align_diff = aligned_length - out.items.len;
             for (0..align_diff) |_| writer.writeByte('\x00') catch @panic("oom");
 
@@ -934,7 +927,7 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
             if (buffer_length > fbs.buffer[fbs.pos..].len) return error.DeserializeError;
             res.buffer.appendSlice(fbs.buffer[fbs.pos..][0..usi(buffer_length)]) catch @panic("oom");
             fbs.pos += usi(buffer_length);
-            fbs.pos = std.mem.alignForward(usize, fbs.pos, bi.Alignment);
+            fbs.pos = std.mem.alignForward(usize, fbs.pos, bi.Alignment.toByteUnits());
             if (fbs.pos > fbs.buffer.len) return error.DeserializeError;
 
             var bufbyte: u64 = 0;
@@ -1401,8 +1394,8 @@ pub fn Document(comptime T: type, comptime T_empty: T) type {
                     // sorted_ranges: []const Range,
                     // replace_buffer: []const T,
 
-                    var undo_op_res_ranges = std.ArrayList(Operation.Range).init(arena);
-                    var undo_op_res_text = std.ArrayList(T).init(arena);
+                    var undo_op_res_ranges = std.array_list.Managed(Operation.Range).init(arena);
+                    var undo_op_res_text = std.array_list.Managed(T).init(arena);
 
                     // validate op
                     if (rd_op.sorted_ranges.len == 0) return error.DeserializeError;
@@ -1736,11 +1729,11 @@ pub fn main() !void {
     var dur_measure = try std.time.Timer.start();
     const testres = try testDocument(gpa, testdocument_len, progress_node);
     const dur = dur_measure.read();
-    std.log.info("testDocument({d}) spans in in {d}", .{ testdocument_len, std.fmt.fmtDuration(dur) });
+    std.log.info("testDocument({d}) spans in in {D}", .{ testdocument_len, dur });
     // std.log.info("- nspans: {d}", .{testres.spans_len});
     std.log.info("- max len: {d}", .{testres.max_len});
     inline for (std.meta.fields(Timings)) |timing_field| {
-        std.log.info("- {s} dur: {d}", .{ timing_field.name, std.fmt.fmtDuration(@field(testres.timings, timing_field.name)) });
+        std.log.info("- {s} dur: {D}", .{ timing_field.name, @field(testres.timings, timing_field.name) });
     }
     std.log.info("- height: {d}", .{testres.final_height});
 }
@@ -1760,13 +1753,13 @@ test "undo problem" {
         // [I:E:"hello!"->@1]
         .insert = .{ .pos = .end, .id = @enumFromInt(1 << 16), .text = "hello!" },
     }, null);
-    try std.testing.expectEqualStrings("@1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{}", .{block}));
+    try std.testing.expectEqualStrings("@1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{f}", .{block}));
 
     try block.applyOperationStruct(arena, .{
         // [I:@1.0:"abcd!"->@2]
         .insert = .{ .pos = .{ .id = @enumFromInt(1 << 16), .segbyte = 0 }, .id = @enumFromInt(2 << 16), .text = "abcd!" },
     }, null);
-    try std.testing.expectEqualStrings("@2.0\"abcd!\" @1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{}", .{block}));
+    try std.testing.expectEqualStrings("@2.0\"abcd!\" @1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{f}", .{block}));
 
     try block.applyOperationStruct(arena, .{
         // [RD:@2:"",0-1:.delete]
@@ -1774,7 +1767,7 @@ test "undo problem" {
             .{ .start_segbyte = 0, .end_segbyte = 1, .mode = .delete },
         } },
     }, null);
-    try std.testing.expectEqualStrings("@2.0-1 @2.1\"bcd!\" @1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{}", .{block}));
+    try std.testing.expectEqualStrings("@2.0-1 @2.1\"bcd!\" @1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{f}", .{block}));
 
     try block.applyOperationStruct(arena, .{
         // [RD:@2:"a",0-1:.replace]
@@ -1782,7 +1775,7 @@ test "undo problem" {
             .{ .start_segbyte = 0, .end_segbyte = 1, .mode = .replace },
         } },
     }, null);
-    try std.testing.expectEqualStrings("@2.0\"a\" @2.1\"bcd!\" @1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{}", .{block}));
+    try std.testing.expectEqualStrings("@2.0\"a\" @2.1\"bcd!\" @1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{f}", .{block}));
 
     try block.applyOperationStruct(arena, .{
         // [RD:@2:"",0-5:.delete]
@@ -1790,7 +1783,7 @@ test "undo problem" {
             .{ .start_segbyte = 0, .end_segbyte = 5, .mode = .delete },
         } },
     }, null);
-    try std.testing.expectEqualStrings("@2.0-1 @2.1-4 @1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{}", .{block}));
+    try std.testing.expectEqualStrings("@2.0-1 @2.1-4 @1.0\"hello!\" E", try std.fmt.allocPrint(arena, "{f}", .{block}));
 }
 
 fn testSampleBlock(gpa: std.mem.Allocator) !void {
@@ -1801,7 +1794,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
     defer arena_backing.deinit();
     const arena = arena_backing.allocator();
 
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     var opgen_al: bi.AlignedArrayList = .init(gpa);
     defer opgen_al.deinit();
@@ -1811,7 +1804,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
     defer opgen.base.prefix.deinit();
 
     const b0 = block.positionFromDocbyte(0);
-    std.log.info("pos: {}", .{b0});
+    std.log.info("pos: {f}", .{b0});
     std.debug.assert(block.length() == 0);
 
     try block.applyOperationStruct(arena, .{
@@ -1822,7 +1815,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
         },
     }, null);
     try testBlockEquals(&block, "i held");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     try block.applyOperationStruct(arena, .{
         .insert = .{
@@ -1832,7 +1825,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
         },
     }, null);
     try testBlockEquals(&block, "i hello world");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
     try block.applyOperationStruct(arena, .{
         // deleting a range will generate multiple delete operations unfortunately
         .replace_and_delete = .{
@@ -1846,7 +1839,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
         },
     }, null);
     try testBlockEquals(&block, "hello world");
-    std.log.info("block: {d}[{}]", .{ block.length(), block });
+    std.log.info("block: {d}[{f}]", .{ block.length(), block });
     try block.applyOperationStruct(arena, .{
         .extend = .{
             .id = block.positionFromDocbyte(2).id,
@@ -1855,7 +1848,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
         },
     }, null);
     try testBlockEquals(&block, "hello worRld");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     try block.applyOperationStruct(arena, .{
         .extend = .{
@@ -1865,27 +1858,27 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
         },
     }, null);
     try testBlockEquals(&block, "hello worRld!");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     opgen_al.clearRetainingCapacity();
     block.genOperations(&opgen, .{ .position = block.positionFromDocbyte(0), .delete_len = 0, .insert_text = "Test\n" });
     var opgen_iter: bi.OperationIterator = .{ .content = opgen_al.items };
     while (try opgen_iter.next()) |op| {
-        std.log.info("  apply \"{}\"", .{std.zig.fmtEscapes(op)});
+        std.log.info("  apply \"{f}\"", .{std.zig.fmtString(op)});
         try block.applyOperation(arena, op, null);
     }
     try testBlockEquals(&block, "Test\nhello worRld!");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     opgen_al.clearRetainingCapacity();
     block.genOperations(&opgen, .{ .position = block.positionFromDocbyte(1), .delete_len = 18 - 2, .insert_text = "Cleared." });
     opgen_iter = .{ .content = opgen_al.items };
     while (try opgen_iter.next()) |op| {
-        std.log.info("  apply \"{}\"", .{std.zig.fmtEscapes(op)});
+        std.log.info("  apply \"{f}\"", .{std.zig.fmtString(op)});
         try block.applyOperation(arena, op, null);
     }
     try testBlockEquals(&block, "TCleared.!");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     // replace live text
     try block.applyOperationStruct(arena, .{
@@ -1900,7 +1893,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
         },
     }, null);
     try testBlockEquals(&block, "TReplaced!");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     // replace part of live text
     try block.applyOperationStruct(arena, .{
@@ -1915,7 +1908,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
         },
     }, null);
     try testBlockEquals(&block, "TRep!!!!d!");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     // bring back full dead text
     try block.applyOperationStruct(arena, .{
@@ -1930,7 +1923,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
         },
     }, null);
     try testBlockEquals(&block, "TRep!!!!dABCD!");
-    std.log.info("block: [{}]", .{block});
+    std.log.info("block: [{f}]", .{block});
 
     // bring back part of dead text
     if (false) {
@@ -1949,14 +1942,14 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
             },
         });
         try testBlockEquals(&block, "<todo>");
-        std.log.info("block: [{}]", .{block});
+        std.log.info("block: [{f}]", .{block});
     }
 
     var srlz_al = bi.AlignedArrayList.init(gpa);
     defer srlz_al.deinit();
     block.serialize(&srlz_al);
 
-    std.log.info("result: \"{}\"", .{std.zig.fmtEscapes(srlz_al.items)});
+    std.log.info("result: \"{f}\"", .{std.zig.fmtString(srlz_al.items)});
     std.log.info("actual len: {d}, minimum len: {d}, ratio: {d:.2}x more memory used to store spans", .{ srlz_al.items.len, block.length(), @as(f64, @floatFromInt(srlz_al.items.len)) / @as(f64, @floatFromInt(block.length())) });
     // currently each span costs 16 bytes when it could cost less
     // - span lengths can probably be u32? maybe not
@@ -1964,7 +1957,7 @@ fn testSampleBlock(gpa: std.mem.Allocator) !void {
     var dsrlz_fbs: bi.AlignedFbsReader = .{ .buffer = srlz_al.items, .pos = 0 };
     var deserialized = try TextDocument.deserialize(gpa, &dsrlz_fbs);
     defer deserialized.deinit();
-    std.log.info("deserialized block: {}", .{deserialized});
+    std.log.info("deserialized block: {f}", .{deserialized});
 
     var rsrlz_al = bi.AlignedArrayList.init(gpa);
     defer rsrlz_al.deinit();
@@ -1987,7 +1980,7 @@ test "document" {
 fn fuzzTest(_: void, input_misaligned: []const u8) anyerror!void {
     const gpa = std.testing.allocator;
 
-    const input_aligned = try gpa.alignedAlloc(u8, 16, input_misaligned.len);
+    const input_aligned = try gpa.alignedAlloc(u8, .fromByteUnits(16), input_misaligned.len);
     defer gpa.free(input_aligned);
     @memcpy(input_aligned, input_misaligned);
 
@@ -2070,13 +2063,13 @@ const Timings = struct {
 const BlockTester = struct {
     alloc: std.mem.Allocator,
     arena_backing: std.heap.ArenaAllocator,
-    simple: std.ArrayList(u8),
+    simple: std.array_list.Managed(u8),
     complex: TextDocument,
-    event_mirror: std.ArrayList(u8),
+    event_mirror: std.array_list.Managed(u8),
 
     timings: Timings,
 
-    rendered_result: std.ArrayList(u8),
+    rendered_result: std.array_list.Managed(u8),
     opgen_al: bi.AlignedArrayList,
     opgen: bi.OperationWriter(TextDocument.Operation),
 

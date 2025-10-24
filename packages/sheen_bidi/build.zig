@@ -10,10 +10,13 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&fmt.step);
 
     const sheen_bidi_dep = b.dependency("sheen_bidi", .{});
-    const sheen_bidi_lib = b.addStaticLibrary(.{
+    const sheen_bidi_lib = b.addLibrary(.{
         .name = "sheen_bidi",
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     sheen_bidi_lib.addCSourceFiles(.{
         .root = sheen_bidi_dep.path("."),

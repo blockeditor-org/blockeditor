@@ -28,6 +28,7 @@ pub fn createApp(name: []const u8, self_dep: *std.Build.Dependency, app_mod: *st
                 .{ .name = "build_options", .module = build_options.createModule() },
             },
         }),
+        .use_llvm = true,
     });
 
     if (enable_tracy) {
@@ -39,15 +40,16 @@ pub fn createApp(name: []const u8, self_dep: *std.Build.Dependency, app_mod: *st
         exe.root_module.addImport("tracy__impl", tracy_dep.module("tracy"));
     }
 
-    const zgui = b.dependency("zgui", .{
-        .backend = .glfw_wgpu,
-        .shared = false,
-        .with_implot = false,
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.root_module.addImport("zgui", zgui.module("root"));
-    exe.linkLibrary(zgui.artifact("imgui"));
+    // disabled https://github.com/zig-gamedev/zgui/issues/75
+    // const zgui = b.dependency("zgui", .{
+    //     .backend = .glfw_wgpu,
+    //     .shared = false,
+    //     .with_implot = false,
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
+    // exe.root_module.addImport("zgui", zgui.module("root"));
+    // exe.linkLibrary(zgui.artifact("imgui"));
 
     const zglfw = b.dependency("zglfw", .{ .target = target, .optimize = optimize });
     exe.root_module.addImport("zglfw", zglfw.module("root"));

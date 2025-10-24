@@ -1,0 +1,59 @@
+
+
+MemoryDB :: std.db [
+    // entries which cannot be referenced by any query are freed
+    root: [
+        users: []User,
+    ]
+
+    User :: [
+        email: std.db.string,
+    ]
+    Post :: [
+        author: User,
+    ]
+
+    unique [
+        User.email in User // this adds a map from email => user id, required to ensure the value is actually unique
+    ]
+]
+
+main :: () {
+    db = MemoryDB.init();
+    try db.transact {
+        db.add(MemoryDB.User, [.email = "abc"]);
+    }
+
+    // this adds the query 'get User [email]' to the queries list
+    // which causes the database to add a hashmap from (email) to (User)
+    // database functions are only compiled after the rest of the code is compiled.
+    // this code in the output is 'db.email_to_user_map.get("def")'
+    user :: db.get(MemoryDB.User, [.email = "def"]); // returns ?User. we know this because email is marked as 'unique'
+
+    // this adds the query 'all Post [author]' to the queries list
+    // which causes the database to add a field to User that is posts: ArrayList(Post) (there might be a better way to do this)
+    // whenever you add a post, it will also add it to the user's post list
+    // this code in the output is `db.data.users[user].posts.items`
+    posts :: db.all(MemoryDB.Post [.author = user]) // we can't use 'get' here because there isn't only one
+
+    // this code in the output is:
+    // - db.email_to_user_map.has("abc") ? std.db.errors.Unique
+    // - const usr = db.data.users.add([.email = "abc"])
+    // - db.email_to_user_map.put("abc", usr)
+    try db.transact {
+        db.add(MemoryDB.User, [.email = "abc"]);
+    } // errors with std.db.errors.Unique
+
+    // this code in the output is
+    // - const post = db.data.posts.add([.author = user])
+    // - user.posts.add(post)
+    try db.transact {
+        db.add(MemoryDB.Post, [.author = user]);
+    }
+    
+}
+
+// this is for an in-memory database that gets compiled down to optimal machine code
+// with O(1) accesses for all things and O(1) space usage for all things
+// if an O(1) access is impossible / O(1) space usage is impossible, it errors
+// it only adds things needed to make O(1) accesses possible, not every possible combination of things

@@ -68,7 +68,7 @@ pub fn setClipboard(self: *Beui, text_utf8: [:0]const u8) void {
     std.debug.assert(std.mem.indexOfScalar(u8, text_utf8, '\x00') == null);
     cfg.vtable.set_clipboard.?(cfg, text_utf8);
 }
-pub fn getClipboard(self: *Beui, value: *std.ArrayList(u8)) void {
+pub fn getClipboard(self: *Beui, value: *std.array_list.Managed(u8)) void {
     const cfg = &self.frame.frame_cfg.?;
     if (cfg.vtable.get_clipboard == null) {
         std.log.warn("Could not read from clipboard; no clipboard defined", .{});
@@ -188,7 +188,7 @@ pub const FrameCfg = struct {
 pub const FrameCfgVtable = struct {
     type_id: [*:0]const u8,
     set_clipboard: ?*const fn (frame_cfg: *const FrameCfg, text_utf8: [:0]const u8) void = null,
-    get_clipboard: ?*const fn (frame_cfg: *const FrameCfg, clipboard_contents: *std.ArrayList(u8)) void = null,
+    get_clipboard: ?*const fn (frame_cfg: *const FrameCfg, clipboard_contents: *std.array_list.Managed(u8)) void = null,
 };
 const PersistentEv = struct {
     config: struct {

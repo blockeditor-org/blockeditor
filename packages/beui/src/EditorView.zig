@@ -20,7 +20,7 @@ const EditorView = @This();
 gpa: std.mem.Allocator,
 core: Core,
 selecting: bool = false,
-_layout_temp_al: std.ArrayList(u8),
+_layout_temp_al: std.array_list.Managed(u8),
 mouse_info: struct {
     mouse_pos: @Vector(2, f32) = .{ -10, -10 },
     mouse_left_pressed_down_this_frame: bool = false,
@@ -237,7 +237,7 @@ pub fn gui(self: *EditorView, call_info: B2.StandardCallInfo, beui: *Beui) B2.St
         self.core.executeCommand(.{ .duplicate_line = .{ .direction = .down } });
     }
     if (beui.hotkey(.{ .ctrl_or_cmd = .yes }, &.{ .x, .c })) |hk| {
-        var copy_txt = std.ArrayList(u8).init(self.gpa);
+        var copy_txt = std.array_list.Managed(u8).init(self.gpa);
         defer copy_txt.deinit();
         self.core.copyArrayListUtf8(&copy_txt, switch (hk.key) {
             .x => .cut,
@@ -247,7 +247,7 @@ pub fn gui(self: *EditorView, call_info: B2.StandardCallInfo, beui: *Beui) B2.St
         beui.setClipboard(copy_txt.items[0 .. copy_txt.items.len - 1 :0]);
     }
     if (beui.hotkey(.{ .ctrl_or_cmd = .yes }, &.{.v})) |_| {
-        var paste_txt = std.ArrayList(u8).init(self.gpa);
+        var paste_txt = std.array_list.Managed(u8).init(self.gpa);
         defer paste_txt.deinit();
         beui.getClipboard(&paste_txt);
         self.core.executeCommand(.{ .paste = .{ .text = paste_txt.items } });
@@ -272,7 +272,7 @@ pub fn gui(self: *EditorView, call_info: B2.StandardCallInfo, beui: *Beui) B2.St
     // that way clicking halfway through works, last char works, top and bottom
     // select works implicitly, ...
     if (last_frame_state) |lfs| {
-        const data = lfs.cast(std.ArrayList(B2.ID));
+        const data = lfs.cast(std.array_list.Managed(B2.ID));
         for (data.items, 0..) |item, j| {
             const line_state = b2.getPrevFrameDrawListState(item).?; // it was posted last frame and we know because it's in the arraylist.
             const offset = line_state.offset_from_screen_ul - lfs.offset_from_screen_ul;
@@ -361,7 +361,7 @@ pub fn gui(self: *EditorView, call_info: B2.StandardCallInfo, beui: *Beui) B2.St
     var syn_hl = self.core.highlight();
     defer syn_hl.deinit();
 
-    const posted_state_ids_al = b2.frame.arena.create(std.ArrayList(B2.ID)) catch @panic("oom");
+    const posted_state_ids_al = b2.frame.arena.create(std.array_list.Managed(B2.ID)) catch @panic("oom");
     posted_state_ids_al.* = .init(b2.frame.arena);
 
     var ctx = GuiRenderLineCtx{
@@ -411,7 +411,7 @@ pub fn gui(self: *EditorView, call_info: B2.StandardCallInfo, beui: *Beui) B2.St
         .onMouseEvent = .from(self, handleMouseEvent),
     });
     self.mouse_info.mouse_left_pressed_down_this_frame = false;
-    rdl.addUserState(user_state_id, std.ArrayList(B2.ID), posted_state_ids_al);
+    rdl.addUserState(user_state_id, std.array_list.Managed(B2.ID), posted_state_ids_al);
     return .{ .rdl = rdl, .size = content_region_size };
 }
 
@@ -448,7 +448,7 @@ const GuiRenderLineCtx = struct {
     beui: *Beui,
     cursor_positions: *Core.CursorPositions,
     syn_hl: *Core.Highlighter.TreeSitterSyntaxHighlighter,
-    posted_state_ids: *std.ArrayList(B2.ID),
+    posted_state_ids: *std.array_list.Managed(B2.ID),
     replace: struct {
         space: ?u32,
         tab: ?u32,

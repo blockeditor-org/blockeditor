@@ -37,8 +37,6 @@ pub fn build(b: *std.Build) !void {
 
     const app_test = b.addTest(.{
         .root_module = app_mod,
-        .target = target,
-        .optimize = optimize,
     });
     if (opts.platform != .android) b.installArtifact(app_test);
 

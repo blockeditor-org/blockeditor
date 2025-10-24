@@ -57,7 +57,7 @@ pub const Program = struct {
         //  iterate over the whole tar file to find an element you want. at least you can seek
         //  a bunch. also maybe that's completely fine. we can use tar files.)
 
-        const mem_ptr = &(try gpa.alignedAlloc([constants.EMU_MEM_SIZE]u8, @alignOf(u128), 1))[0];
+        const mem_ptr = &(try gpa.alignedAlloc([constants.EMU_MEM_SIZE]u8, .of(u128), 1))[0];
         errdefer gpa.destroy(mem_ptr);
         for (mem_ptr) |*b| b.* = 0;
 
@@ -65,7 +65,7 @@ pub const Program = struct {
         errdefer gpa.destroy(gpu_ptr);
         gpu_ptr.* = .{};
 
-        const disk_aligned_mut = try gpa.alignedAlloc(u8, @alignOf(u128), file.len);
+        const disk_aligned_mut = try gpa.alignedAlloc(u8, .of(u128), file.len);
         defer gpa.free(disk_aligned_mut);
         @memcpy(disk_aligned_mut, file);
 
@@ -96,8 +96,8 @@ fn renderErrorScreen(output: FrameOutput, label: []const u8) void {
     _ = label;
 }
 
-// const stdout_writer = std.io.getStdOut().writer();
-// var stdout_buffer = std.io.bufferedWriter(stdout_writer);
+// const stdout_writer = std.Io.getStdOut().writer();
+// var stdout_buffer = std.Io.bufferedWriter(stdout_writer);
 // defer stdout_buffer.flush() catch {};
 // const stdout = stdout_buffer.writer();
 pub const Syscalls = struct {
@@ -135,7 +135,7 @@ pub const Syscalls = struct {
         const img_ptr: u32 = @bitCast(arg_1);
 
         const cmd_data = try util.safePtrCast(constants.DrawImageCmd, program.mem[cmd_ptr..][0..@sizeOf(constants.DrawImageCmd)]);
-        const img_data = std.mem.bytesAsSlice(u32, try util.safeAlignCastMut(@alignOf(u32), program.mem[img_ptr..][0 .. cmd_data.src.stride * std.math.lossyCast(u32, cmd_data.src.size[1]) * @sizeOf(u32)]));
+        const img_data = std.mem.bytesAsSlice(u32, try util.safeAlignCastMut(.of(u32), program.mem[img_ptr..][0 .. cmd_data.src.stride * std.math.lossyCast(u32, cmd_data.src.size[1]) * @sizeOf(u32)]));
 
         if (cmd_data.dest.layer >= constants.EMU_SCREEN_NLAYERS) return error.BadLayer;
         if (program.gpu.image_count >= constants.EMU_GPU_MAX_IMAGES) return error.MaxImagesReached;

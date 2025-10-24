@@ -1,5 +1,5 @@
 const std = @import("std");
-const grapheme = @import("grapheme");
+const Graphemes = @import("Graphemes");
 
 const UnicodeCategory = enum {
     extend,
@@ -132,7 +132,7 @@ pub const GenericDocument = struct {
     read: *const fn (self: GenericDocument, offset: u64, direction: GDirection) []const u8,
 
     pub fn from(comptime T: type, val: *const T, len: u64) GenericDocument {
-        return .{ .data = @constCast(@ptrCast(val)), .len = len, .read = &T.read };
+        return .{ .data = @ptrCast(@constCast(val)), .len = len, .read = &T.read };
     }
     pub fn cast(self: GenericDocument, comptime T: type) *T {
         return @ptrCast(@alignCast(self.data));
@@ -184,7 +184,7 @@ const Rule = enum {
 // [...] [left] [right] | <- iter pointer
 // https://unicode.org/reports/tr29/#GB1
 // TODO: we can test that it returns the right rule code if we want
-pub fn hasBoundary(doc: GenericDocument, start_idx: u64, data: *const grapheme.GraphemeData) Rule {
+pub fn hasBoundary(doc: GenericDocument, start_idx: u64, data: *const Graphemes) Rule {
     const extended = true;
 
     var iter_main: LeftCodepointIterator = .init(doc, start_idx);
@@ -316,13 +316,13 @@ test hasBoundary {
     const allocator = std.testing.allocator;
     const gd = loadGraphemeDataSingleton();
 
-    var out_codepoints = std.ArrayList(u8).init(allocator);
+    var out_codepoints = std.array_list.Managed(u8).init(allocator);
     defer out_codepoints.deinit();
-    var out_breaks = std.ArrayList(bool).init(allocator);
+    var out_breaks = std.array_list.Managed(bool).init(allocator);
     defer out_breaks.deinit();
-    var out_break_pos = std.ArrayList(usize).init(allocator);
+    var out_break_pos = std.array_list.Managed(usize).init(allocator);
     defer out_break_pos.deinit();
-    var out_break_idx = std.ArrayList(u64).init(allocator);
+    var out_break_idx = std.array_list.Managed(u64).init(allocator);
     defer out_break_idx.deinit();
     var line_iter = std.mem.splitScalar(u8, @embedFile("grapheme_break_test"), '\n');
     var line_no: usize = 0;
@@ -346,16 +346,14 @@ test hasBoundary {
         for (out_breaks.items, out_break_pos.items, out_break_idx.items) |should_break, out_break_pos_val, i| {
             const actual = hasBoundary(doc.doc(), i, gd);
             if (actual.shouldBreak() != should_break) {
-                std.log.err("grapheme_break_test:{d}:{d}: got {s}({s}), expected {s}:\n{s}\n{}^", .{ line_no, out_break_pos_val, @tagName(actual), if (actual.shouldBreak()) "B" else "n", if (should_break) "B" else "n", ReplaceUnicode{ .slice = line_full }, Indenter{ .value = out_break_pos_val } });
+                std.log.err("grapheme_break_test:{d}:{d}: got {s}({s}), expected {s}:\n{f}\n{f}^", .{ line_no, out_break_pos_val, @tagName(actual), if (actual.shouldBreak()) "B" else "n", if (should_break) "B" else "n", ReplaceUnicode{ .slice = line_full }, Indenter{ .value = out_break_pos_val } });
             }
         }
     }
 }
 const ReplaceUnicode = struct {
     slice: []const u8,
-    pub fn format(value: ReplaceUnicode, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: ReplaceUnicode, writer: *std.Io.Writer) !void {
         for (value.slice) |sli| {
             try writer.writeByte(switch (sli) {
                 '\t' => '.',
@@ -369,10 +367,8 @@ const ReplaceUnicode = struct {
 };
 const Indenter = struct {
     value: usize,
-    pub fn format(value: Indenter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
-        try writer.writeByteNTimes(' ', value.value);
+    pub fn format(value: Indenter, writer: *std.Io.Writer) !void {
+        try writer.splatByteAll(' ', value.value);
     }
 };
 
@@ -389,7 +385,7 @@ const GraphemeBreakTestTkz = struct {
         self.idx += 1;
         return byte;
     }
-    fn read(self: *GraphemeBreakTestTkz, out_codepoints: *std.ArrayList(u8), out_breaks: *std.ArrayList(bool), out_break_pos: *std.ArrayList(usize), out_break_idx: *std.ArrayList(u64)) void {
+    fn read(self: *GraphemeBreakTestTkz, out_codepoints: *std.array_list.Managed(u8), out_breaks: *std.array_list.Managed(bool), out_break_pos: *std.array_list.Managed(usize), out_break_idx: *std.array_list.Managed(u64)) void {
         defer std.debug.assert(self.idx == self.src.len);
         while (true) {
             const start = self.idx;
@@ -431,10 +427,10 @@ const GraphemeBreakTestTkz = struct {
 // zig fetch should support downloading that file i think. make sure to get a non-latest url though
 
 /// initializes a GraphemeData. if called multiple times, only initializes once. never freed. thread-safe.
-pub fn loadGraphemeDataSingleton() *const grapheme.GraphemeData {
+pub fn loadGraphemeDataSingleton() *const Graphemes {
     const Data = struct {
-        var grapheme_data: std.atomic.Value(?*const grapheme.GraphemeData) = .init(null);
-        var grapheme_data_value: grapheme.GraphemeData = undefined;
+        var grapheme_data: std.atomic.Value(?*const Graphemes) = .init(null);
+        var grapheme_data_value: Graphemes = undefined;
         var grapheme_data_mutex: std.Thread.Mutex = .{};
     };
     // I don't understand atomic orderings but the rest of this is in a mutex so it's probably to use unordered right?
@@ -453,7 +449,7 @@ pub fn loadGraphemeDataSingleton() *const grapheme.GraphemeData {
             _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
         }
         // initialize, under mutex
-        Data.grapheme_data_value = grapheme.GraphemeData.init(std.heap.page_allocator) catch @panic("oom");
+        Data.grapheme_data_value = Graphemes.init(std.heap.page_allocator) catch @panic("oom");
         Data.grapheme_data.store(&Data.grapheme_data_value, .unordered);
         return &Data.grapheme_data_value;
     }

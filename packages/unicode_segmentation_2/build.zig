@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    mod.addImport("grapheme", zg.module("grapheme"));
+    mod.addImport("Graphemes", zg.module("Graphemes"));
     mod.addImport("grapheme_break_test", b.createModule(.{ .root_source_file = grapheme_break_test.path("GraphemeBreakTest.txt") }));
 
     const tests = b.addTest(.{ .root_module = mod });

@@ -97,7 +97,7 @@ const StateValue = struct {
         std.debug.assert(self.type_id == @typeName(T));
         std.debug.assert(self.data.len == @sizeOf(T));
         std.debug.assert(self.log2_align == comptime std.math.log2_int(u64, @alignOf(T)));
-        return @alignCast(@ptrCast(self.data.ptr));
+        return @ptrCast(@alignCast(self.data.ptr));
     }
     fn deinit(self: StateValue, gpa: std.mem.Allocator) void {
         gpa.vtable.free(gpa.ptr, self.data, self.log2_align, @returnAddress());
@@ -109,10 +109,10 @@ const Beui2Persistent = struct {
     arenas: [2]std.heap.ArenaAllocator,
     current_arena: u1 = 0,
 
-    id_scopes: std.ArrayList(IDSegment),
-    draw_lists: std.ArrayList(*RepositionableDrawList),
-    last_frame_mouse_events: std.ArrayList(MouseEventEntry),
-    last_frame_mouse2_events: std.ArrayList(RepositionableDrawList.Mouse2),
+    id_scopes: std.array_list.Managed(IDSegment),
+    draw_lists: std.array_list.Managed(*RepositionableDrawList),
+    last_frame_mouse_events: std.array_list.Managed(MouseEventEntry),
+    last_frame_mouse2_events: std.array_list.Managed(RepositionableDrawList.Mouse2),
     prev_frame_mouse_event_to_offset: IdMap(MouseEventInfo),
     prev_frame_draw_list_states: IdMap(GenericDrawListState),
     this_frame_ids: IdMap(void),
@@ -627,7 +627,7 @@ pub const ID = struct {
 
     const duplicate_id_safety = std.debug.runtime_safety;
 
-    pub fn format(value: ID, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(value: ID, writer: *std.Io.Writer) !void {
         // const seen_srcs_for_fmt = struct {
         //     var seen_srcs_for_fmt = std.StringArrayHashMapUnmanaged(usize);
         // };
@@ -636,10 +636,10 @@ pub const ID = struct {
         try writer.print("%", .{});
         for (value.str) |seg| {
             if (seg.tag == .str) {
-                try writer.print(".\"{}\"", .{std.zig.fmtEscapes(std.mem.trimRight(u8, &seg.value, &.{0}))});
+                try writer.print(".\"{f}\"", .{std.zig.fmtString(std.mem.trimRight(u8, &seg.value, &.{0}))});
             } else if (seg.tag == .src) {
                 const dec: IDSegment.SrcStruct = std.mem.bytesAsValue(IDSegment.SrcStruct, seg.value[0..@sizeOf(IDSegment.SrcStruct)]).*;
-                try writer.print(".\"{}\"@{d}:{d}", .{ std.zig.fmtEscapes(std.mem.span(dec.filename)), dec.line, dec.col });
+                try writer.print(".\"{f}\"@{d}:{d}", .{ std.zig.fmtString(std.mem.span(dec.filename)), dec.line, dec.col });
             } else {
                 try writer.print(".{s}", .{@tagName(seg.tag)});
             }
@@ -895,7 +895,7 @@ pub const RepositionableDrawList = struct {
         },
     };
     b2: *Beui2,
-    content: std.ArrayList(RepositionableDrawChild),
+    content: std.array_list.Managed(RepositionableDrawChild),
     placed: bool = false,
     pub const PlaceCfg = struct {
         offset: @Vector(2, f32) = .{ 0, 0 },
@@ -1117,8 +1117,8 @@ pub const RepositionableDrawList = struct {
 
     const FinalizeCfg = struct {
         out_list: ?*render_list.RenderList,
-        out_events: ?*std.ArrayList(MouseEventEntry),
-        out_mouse_events: ?*std.ArrayList(Mouse2),
+        out_events: ?*std.array_list.Managed(MouseEventEntry),
+        out_mouse_events: ?*std.array_list.Managed(Mouse2),
         out_rdl_states: ?*IdMap(GenericDrawListState),
     };
     fn finalize(self: *RepositionableDrawList, res: FinalizeCfg, cfg: PlaceCfg, clip: ClipCfg) void {
@@ -1717,7 +1717,7 @@ pub const B2Tester = struct {
         fn setClipboard(_: *const Beui.FrameCfg, _: [:0]const u8) void {
             std.log.info("TODO setClipboard", .{});
         }
-        fn getClipboard(_: *const Beui.FrameCfg, _: *std.ArrayList(u8)) void {
+        fn getClipboard(_: *const Beui.FrameCfg, _: *std.array_list.Managed(u8)) void {
             std.log.info("TODO getClipboard", .{});
         }
         pub const vtable: *const Beui.FrameCfgVtable = &.{

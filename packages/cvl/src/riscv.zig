@@ -20,9 +20,7 @@ pub const EmitBlock = struct {
             if (rvint >= lowest_int_reg) return @intCast(rvint - (lowest_int_reg));
             return null;
         }
-        pub fn format(value: RvVar, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(value: RvVar, writer: *std.Io.Writer) !void {
             if (value.isIntReg()) |intreg| {
                 try writer.print("x{d}", .{intreg});
             } else {
@@ -45,7 +43,7 @@ pub const EmitBlock = struct {
     };
     instructions: std.ArrayListUnmanaged(RvInstr),
 
-    pub fn print(self: *EmitBlock, writer: std.io.AnyWriter) anyerror!void {
+    pub fn print(self: *EmitBlock, writer: std.Io.AnyWriter) anyerror!void {
         for (self.instructions.items) |instr| {
             switch (instr) {
                 .instr => |m| {

@@ -1,3 +1,3 @@
-pub usingnamespace @cImport({
+pub const api_h = @cImport({
     @cInclude("api.h");
 });

@@ -23,11 +23,13 @@ pub const BuildCache = struct {
     GLESV3_LIB: ?[]const u8 = null,
 
     pub fn toJson(opts: BuildCache, arena: std.mem.Allocator) []const u8 {
-        const printed = std.json.stringifyAlloc(arena, opts, .{ .whitespace = .indent_4 }) catch |e| {
+        var w = std.Io.Writer.Allocating.init(arena);
+        defer w.deinit();
+        std.json.Stringify.value(opts, .{ .whitespace = .indent_4 }, &w.writer) catch |e| {
             std.log.warn("failed to stringify json: {s}", .{@errorName(e)});
             @panic("failure");
         };
-        return printed;
+        return w.toOwnedSlice() catch @panic("oom");
     }
     pub fn fromJsonAllocIfNeeded(arena: std.mem.Allocator, cache_text: []const u8) ?BuildCache {
         return std.json.parseFromSliceLeaky(BuildCache, arena, cache_text, .{ .allocate = .alloc_if_needed }) catch |e| {
@@ -78,13 +80,17 @@ pub fn buildCacheOptions(b: *std.Build) BuildCache {
 
     blk: {
         const printed = opts.toJson(b.allocator);
-
-        var atomic_file = b.cache_root.handle.atomicFile(cache_file_path, .{}) catch |e| {
+        var buf: [4096]u8 = @splat(0);
+        var atomic_file = b.cache_root.handle.atomicFile(cache_file_path, .{ .write_buffer = &buf }) catch |e| {
             std.log.warn("failed to open json output file: {s}", .{@errorName(e)});
             break :blk;
         };
         defer atomic_file.deinit();
-        atomic_file.file.writeAll(printed) catch |e| {
+        atomic_file.file_writer.interface.writeAll(printed) catch |e| {
+            std.log.warn("failed to writeAll build-options-cache.json: {s}", .{@errorName(e)});
+            break :blk;
+        };
+        atomic_file.file_writer.interface.flush() catch |e| {
             std.log.warn("failed to writeAll build-options-cache.json: {s}", .{@errorName(e)});
             break :blk;
         };
@@ -109,8 +115,9 @@ pub fn createApp(self_dep: *std.Build.Dependency, app_mod: *std.Build.Module) st
     // for every addStaticLibrary, addDynamicLibrary call otherwise this won't compile
     const beui_dep = b.dependency("beui", .{ .target = target, .optimize = optimize });
 
-    const lib = b.addSharedLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "zigpart",
+        .linkage = .dynamic,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/root.zig"),
             .target = target,
