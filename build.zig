@@ -29,6 +29,7 @@ pub fn build(b: *std.Build) void {
     const cvl_dep = b.dependency("cvl", .{ .target = target, .optimize = optimize });
     const loadimage_dep = b.dependency("loadimage", .{ .target = target, .optimize = optimize });
     const loadimage_wasm_dep = b.dependency("loadimage_wasm", .{});
+    const logicgame_dep = b.dependency("logicgame", .{ .target = target, .optimize = optimize });
     const minigamer_3ds_dep = b.dependency("minigamer_3ds", .{ .optimize = optimize });
     const sheen_bidi_dep = b.dependency("sheen_bidi", .{ .target = target, .optimize = optimize });
     const texteditor_dep = b.dependency("texteditor", .{ .target = target, .optimize = optimize });
@@ -56,6 +57,7 @@ pub fn build(b: *std.Build) void {
     cvl_test_run.addFileInput(b.path("packages/cvl/src/tests/zig.cvl"));
     test_step.dependOn(&cvl_test_run.step);
     test_step.dependOn(&b.addRunArtifact(loadimage_dep.artifact("test")).step);
+    test_step.dependOn(&b.addRunArtifact(logicgame_dep.artifact("test")).step);
     test_step.dependOn(&b.addRunArtifact(sheen_bidi_dep.artifact("test")).step);
     test_step.dependOn(&b.addRunArtifact(texteditor_dep.artifact("test")).step);
     test_step.dependOn(&b.addRunArtifact(unicode_segmentation_2_dep.artifact("test")).step);
