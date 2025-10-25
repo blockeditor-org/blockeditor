@@ -14,9 +14,23 @@ jobs:
           java-version: '21'
       - run: zig build -Dci --fetch=all
       - run: zig build -Dci
-      - run: zig build test -Dci
-      - run: zig build -Dci -Dtarget=x86_64-windows -p build/windows
-      - run: zig build -Dci -Dplatform=web -p build/web
+      - run: |
+          zig build test -Dci & pid2=$!
+          zig build -Dci -Dtarget=x86_64-windows -p build/windows & pid3=$!
+          zig build -Dci -Dplatform=web -p build/web & pid4=$!
+
+          fail=0
+
+          wait $pid2 || fail=1
+          wait $pid3 || fail=1
+          wait $pid4 || fail=1
+
+          if [ "$fail" -ne 0 ]; then
+            echo "❌ One or more Zig builds failed."
+            exit 1
+          fi
+
+          echo "✅ All Zig builds completed successfully."
       - run: ./gradlew assembleDebug
         working-directory: packages/android/Aztest
       - run: mkdir -p build/android && cp packages/android/Aztest/app/build/outputs/apk/debug/app-debug.apk build/android
