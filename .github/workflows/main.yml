@@ -1,13 +1,15 @@
 on: [pull_request, merge_group]
+
 jobs:
   test:
     runs-on: ubuntu-22.04
-    name: Test
+    name: Test (Zig)
     steps:
       - uses: actions/checkout@v3
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
+          cache-key: zig
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -17,10 +19,27 @@ jobs:
       - run: zig build test -Dci
       - run: zig build -Dci -Dtarget=x86_64-windows -p build/windows
       - run: zig build -Dci -Dplatform=web -p build/web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zig-build
+          path: build
+  android-build:
+    runs-on: ubuntu-22.04
+    name: Android Build (Gradle + Zig)
+    steps:
+      - uses: actions/checkout@v3
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+          cache-key: android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - run: ./gradlew assembleDebug
         working-directory: packages/android/Aztest
       - run: mkdir -p build/android && cp packages/android/Aztest/app/build/outputs/apk/debug/app-debug.apk build/android
       - uses: actions/upload-artifact@v4
         with:
-          path: build
-
+          name: android-apk
+          path: build/android
