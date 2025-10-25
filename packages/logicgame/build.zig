@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
             .target = tool_target,
             .optimize = tool_optimize,
         }),
+        .use_llvm = false, // https://github.com/ziglang/zig/issues/25247
     });
     b.installArtifact(snapshot);
 
