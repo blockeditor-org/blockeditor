@@ -1,4 +1,4 @@
-on: [push, merge_group]
+on: [pull_request, merge_group]
 jobs:
   test:
     runs-on: ubuntu-22.04
