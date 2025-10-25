@@ -5,8 +5,8 @@
     .dependencies = .{
         .tree_sitter = .{
             // patched to not error on wasm32-wasi-musl
-            .url = "https://github.com/pfgithub/tree-sitter/archive/15225cc1517cb1abedd9207fed1154dcb10ed1e1.zip",
-            .hash = "tree_sitter-0.25.0-98HwOOR3CwBnBGQJQnlL2bJgWPg-6cBDxFztP9E9UpLC",
+            .url = "https://github.com/pfgithub/tree-sitter/archive/a2f2b16acb67a7659331ab12ab7cfbef4567ba31.zip",
+            .hash = "tree_sitter-0.26.0-Tw2sRzKLCwBtxJc9TDk_XtHVcnWB-H-N4iL-OGqAzCbH",
         },
     },
     .paths = .{
