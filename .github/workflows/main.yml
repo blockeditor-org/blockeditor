@@ -12,10 +12,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - run: zig build --fetch
-      - run: zig build
-      - run: zig build test -Dci
-      - run: zig build -Dtarget=x86_64-windows -p build/windows
+      - run: |
+          zig build --fetch
+          zig build &
+          zig build test -Dci &
+          zig build -Dtarget=x86_64-windows -p build/windows &
+          wait
       # disabled because of a freetype problem from zig upgrade
       # - run: zig build -Dplatform=web -p build/web
       - run: ./gradlew assembleDebug
