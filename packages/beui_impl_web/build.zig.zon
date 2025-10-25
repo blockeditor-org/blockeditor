@@ -9,8 +9,8 @@
         .anywhere = .{ .path = "../anywhere" },
         .beui = .{ .path = "../beui" },
         .mime = .{
-            .url = "https://github.com/andrewrk/mime/archive/7c61852d1408559cfea7d999ab81524f05678182.zip",
-            .hash = "mime-3.0.0-zwmL-6wgAADuFwn7gr-_DAQDGJdIim94aDIPa6qO-6GT",
+            .url = "https://github.com/andrewrk/mime/archive/4535b74bd5fcaa03e22f2f25af164a4c6253af00.zip",
+            .hash = "mime-4.0.0-zwmL--0gAACndOVlROQeDnM0chfojNDS8tpohlsBqMNy",
             .lazy = true,
         },
     },
