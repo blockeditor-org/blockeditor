@@ -56,6 +56,40 @@ pub fn build(b: *std.Build) void {
     });
     const freetype_mod = mach_freetype_dep.module("mach-freetype");
     const harfbuzz_mod = mach_freetype_dep.module("mach-harfbuzz");
+    // wasm patches
+    if (target.result.os.tag == .wasi) {
+        freetype_mod.addCMacro("__wasm_exception_handling__", "");
+        harfbuzz_mod.addCMacro("__wasm_exception_handling__", "");
+        if (mach_freetype_dep.builder.lazyDependency("freetype", .{
+            .target = target,
+            .optimize = optimize,
+            .use_system_zlib = false,
+            .enable_brotli = true,
+        })) |ft_dep| {
+            ft_dep.artifact("freetype").root_module.addCMacro("__wasm_exception_handling__", "");
+        }
+        if (mach_freetype_dep.builder.lazyDependency("harfbuzz", .{
+            .target = target,
+            .optimize = optimize,
+            .enable_freetype = true,
+            .freetype_use_system_zlib = false,
+            .freetype_enable_brotli = true,
+        })) |hb_dep| {
+            hb_dep.artifact("harfbuzz").root_module.addCMacro("__wasm_exception_handling__", "");
+            hb_dep.artifact("harfbuzz").root_module.addCMacro("HB_NO_MT", "");
+            for (hb_dep.artifact("harfbuzz").root_module.link_objects.items) |*lobj| {
+                switch (lobj.*) {
+                    inline .c_source_file, .c_source_files => |csf| {
+                        var flags_clone = std.ArrayList([]const u8).initCapacity(b.allocator, csf.flags.len) catch unreachable;
+                        flags_clone.appendSliceAssumeCapacity(csf.flags);
+                        flags_clone.append(b.allocator, "-Wno-nontrivial-memaccess") catch unreachable;
+                        csf.flags = flags_clone.toOwnedSlice(b.allocator) catch unreachable;
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
 
     const beui_mod = b.addModule("beui", .{
         .root_source_file = b.path("src/root.zig"),
