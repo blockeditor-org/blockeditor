@@ -16,8 +16,7 @@ jobs:
       - run: zig build
       - run: zig build test -Dci
       - run: zig build -Dtarget=x86_64-windows -p build/windows
-      # disabled because of a freetype problem from zig upgrade
-      # - run: zig build -Dplatform=web -p build/web
+      - run: zig build -Dplatform=web -p build/web
       - run: ./gradlew assembleDebug
         working-directory: packages/android/Aztest
       - run: mkdir -p build/android && cp packages/android/Aztest/app/build/outputs/apk/debug/app-debug.apk build/android
