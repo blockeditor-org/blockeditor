@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
     });
     const dat_test = b.addTest(.{
         .root_module = dat,
-        .use_llvm = false, // https://github.com/ziglang/zig/issues/25247
+        .use_llvm = true, // https://github.com/ziglang/zig/issues/25247
     });
 
     b.installArtifact(dat_test);
