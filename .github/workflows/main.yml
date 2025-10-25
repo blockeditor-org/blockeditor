@@ -12,7 +12,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - run: zig env
+      - run: ls ~/.cache/zig/p
       - run: zig build -Dci --fetch=all
+      - run: ls ~/.cache/zig/p
       - run: zig build -Dci
       - run: zig build test -Dci
       - run: zig build -Dci -Dtarget=x86_64-windows -p build/windows
