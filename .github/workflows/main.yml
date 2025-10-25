@@ -1,4 +1,4 @@
-on: [push, merge_group]
+on: [pull_request, merge_group]
 jobs:
   test:
     runs-on: ubuntu-22.04
@@ -20,10 +20,9 @@ jobs:
       - run: zig build --fetch
       - run: zig build
       - run: zig build test -Dci
+      - run: zig build test -Dtarget=x86_64-windows-gnu -fwine
       - run: zig build -Dtarget=x86_64-windows -p build/windows
-      - run: zig build test -Dtarget=x86_64-windows -fwine
-      # disabled because of a freetype problem from zig upgrade
-      # - run: zig build -Dplatform=web -p build/web
+      - run: zig build -Dplatform=web -p build/web
       - run: ./gradlew assembleDebug
         working-directory: packages/android/Aztest
       - run: mkdir -p build/android && cp packages/android/Aztest/app/build/outputs/apk/debug/app-debug.apk build/android
