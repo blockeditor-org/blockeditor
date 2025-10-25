@@ -12,11 +12,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - run: zig build --fetch
-      - run: zig build
+      - run: zig build -Dci --fetch=all
+      - run: zig build -Dci
       - run: zig build test -Dci
-      - run: zig build -Dtarget=x86_64-windows -p build/windows
-      - run: zig build -Dplatform=web -p build/web
+      - run: zig build -Dci -Dtarget=x86_64-windows -p build/windows
+      - run: zig build -Dci -Dplatform=web -p build/web
       - run: ./gradlew assembleDebug
         working-directory: packages/android/Aztest
       - run: mkdir -p build/android && cp packages/android/Aztest/app/build/outputs/apk/debug/app-debug.apk build/android
