@@ -12,9 +12,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Setup Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt update
+          sudo apt install -y --no-install-recommends wine64 wine32
       - run: zig build --fetch
       - run: zig build
       - run: zig build test -Dci
+      - run: zig build test -Dtarget=x86_64-windows-gnu -fwine
       - run: zig build -Dtarget=x86_64-windows -p build/windows
       - run: zig build -Dplatform=web -p build/web
       - run: ./gradlew assembleDebug
