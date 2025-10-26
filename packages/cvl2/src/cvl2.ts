@@ -6,14 +6,15 @@ type TokenizerMode = "regular" | "in_string";
 type Config = {
     style: "open" | "close" | "join",
     prec: number,
+    precStr: PrecString,
     close?: string,
     autoOpen?: boolean,
     setMode?: TokenizerMode,
     joinTag?: string,
 };
 
-const mkconfig: Record<string, Omit<Config, "prec">>[] = [
-    {
+const mkconfig = {
+    paren: {
         "(": {style: "open", close: ")"},
         "{": {style: "open", close: "}"},
         "[": {style: "open", close: "]"},
@@ -21,39 +22,44 @@ const mkconfig: Record<string, Omit<Config, "prec">>[] = [
         "}": {style: "close"},
         "]": {style: "close"},
     },
-    {
+    semi: {
         ",": {style: "join", joinTag: "sep"},
         ";": {style: "join", joinTag: "sep"},
         "\n": {style: "join", joinTag: "sep"},
     },
-    {
+    bind: {
         "::": {style: "join", joinTag: "bind"},
     },
-    {
+    arrow: {
         "=>": {style: "join"},
     },
-    {
+    colon: {
         ":": {style: "open"},
     },
-    {
+    equals: {
         "=": {style: "join", joinTag: "assign"},
     },
-    {
+    dot: {
         ".": {style: "close", autoOpen: true},
     },
-    {
+    string: {
         "\"": {style: "open", close: "<in_string>\"", setMode: "in_string"},
         "<in_string>\"": {style: "close", setMode: "regular"},
     },
 
     // TODO: "=>"
     // TODO: "\()" as style open prec 0 autoclose display{open: "(", close: ")"}
-];
+} satisfies Record<string, Record<string, Omit<Config, "prec" | "precStr">>>;
+export type PrecString = keyof typeof mkconfig;
 
 const config: Record<string, Config> = {};
-for(const [i, segment] of mkconfig.entries()) {
-    for(const [key, value] of Object.entries(segment)) {
-        config[key] = {...value, prec: i};
+{
+    let i = 0;
+    for(const [name, segment] of Object.entries(mkconfig)) {
+        for(const [key, value] of Object.entries(segment)) {
+            config[key] = {...value, prec: i, precStr: name};
+        }
+        i += 1;
     }
 }
 
@@ -117,60 +123,67 @@ export class Source {
     }
 }
 
-interface TokenPosition {
+export interface TokenPosition {
     fyl: string;
     idx: number;
     lyn: number;
     col: number;
 }
 
-interface IdentifierToken {
+export interface IdentifierToken {
     kind: "ident";
     pos: TokenPosition;
     str: string;
 }
 
-interface WhitespaceToken {
+export interface WhitespaceToken {
     kind: "ws";
     pos: TokenPosition;
     nl: boolean;
 }
 
-interface OperatorToken {
+export interface OperatorToken {
     kind: "op";
     pos: TokenPosition;
     op: string;
 }
 
-interface OperatorSegmentToken {
+export interface OperatorSegmentToken {
     kind: "opSeg";
     pos: TokenPosition;
     items: SyntaxNode[],
 }
 
-interface BlockToken {
+export interface BlockToken {
     kind: "block";
     pos: TokenPosition;
     start: string;
     end: string;
     items: SyntaxNode[];
+    precStr: PrecString;
 }
 
-interface BinaryExpressionToken {
+export interface BinaryExpressionToken {
     kind: "binary";
     pos: TokenPosition;
     prec: number;
+    precStr: PrecString;
     tag: string;
     items: SyntaxNode[];
 }
 
-interface StrSegToken {
+export interface StrSegToken {
     kind: "strSeg";
     pos: TokenPosition;
     str: string;
 }
 
-type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken;
+export interface ErrToken {
+    kind: "err";
+    pos: TokenPosition;
+}
+
+export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | ErrToken;
 
 interface TokenizerStackItem {
     pos: TokenPosition,
@@ -183,16 +196,16 @@ interface TokenizerStackItem {
     tag?: string;
 }
 
-type TokenizationErrorEntry = {
+export type TokenizationErrorEntry = {
     pos?: TokenPosition,
     style: "note" | "error",
     message: string,
 };
-type TokenizationError = {
+export type TokenizationError = {
     entries: TokenizationErrorEntry[],
     trace: TokenPosition[],
 };
-interface TokenizationResult {
+export interface TokenizationResult {
     result: SyntaxNode[];
     errors: TokenizationError[];
 }
@@ -275,6 +288,7 @@ export function tokenize(source: Source): TokenizationResult {
                 start: currentToken,
                 end: cfg.close ?? "",
                 items: newBlockItems,
+                precStr: cfg.precStr,
             });
             parseStack.push({
                 pos: start,
@@ -313,6 +327,7 @@ export function tokenize(source: Source): TokenizationResult {
                             start: "",
                             end: currentToken,
                             items: prevItems,
+                            precStr: cfg.precStr,
                         });
                     }else{
                         errors.push({
@@ -391,6 +406,7 @@ export function tokenize(source: Source): TokenizationResult {
                         kind: "binary",
                         pos: start,
                         prec: operatorPrecedence,
+                        precStr: cfg.precStr,
                         items: opSupVal,
                         tag: cfg.joinTag ?? "",
                     });
@@ -465,9 +481,9 @@ function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode, level:
     const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
     let desc: string;
     if (entity.kind === "block") {
-        desc = `${entity.start}${entity.end}`;
+        desc = `${entity.precStr}`;
     } else if(entity.kind === "binary") {
-        desc = ``;
+        desc = `${entity.precStr}`;
     } else if(entity.kind === "op") {
         desc = `${colors.yellow}${JSON.stringify(entity.op)}${colors.reset}`;
     } else if(entity.kind === "opSeg") {
@@ -583,7 +599,7 @@ const styles = {
 };
 const rainbow = [colors.red, colors.yellow, colors.green, colors.cyan, colors.blue, colors.magenta];
 
-function prettyPrintErrors(source: Source, errors: TokenizationError[]): string {
+export function prettyPrintErrors(source: Source, errors: TokenizationError[]): string {
     if (errors.length === 0) return "";
 
     const sourceLines = source.text.split('\n');
