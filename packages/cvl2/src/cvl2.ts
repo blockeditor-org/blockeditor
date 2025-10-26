@@ -469,13 +469,14 @@ function renderEntityAdisp(config: RenderConfig, entity: SyntaxNode, level: numb
     } else if(entity.kind === "binary") {
         desc = ``;
     } else if(entity.kind === "op") {
-        desc = `${colors.gold}${JSON.stringify(entity.op)}${colors.reset}`;
+        desc = `${colors.yellow}${JSON.stringify(entity.op)}${colors.reset}`;
     } else if(entity.kind === "opSeg") {
         desc = ``;
     } else if(entity.kind === "ws") {
         desc = JSON.stringify(entity.nl ? "\n" : " ");
     } else if(entity.kind === "ident") {
-        desc = colors.blue + JSON.stringify(entity.str) + colors.reset;
+        const jstr = JSON.stringify(entity.str);
+        desc = colors.blue + (jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr) + colors.reset;
     } else if(entity.kind === "strSeg") {
         desc = colors.green + JSON.stringify(entity.str) + colors.reset;
     } else {
@@ -541,15 +542,33 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, level: num
 }
 
 const colors = {
-    red: "\x1b[31m",
-    gold: "\x1b[33m",
-    green: "\x1b[32m",
-    brgreen: "\x1b[92m",
-    blue: "\x1b[34m",
-    cyan: "\x1b[36m",
     black: "\x1b[30m",
-    bold: "\x1b[1m",
+    red: "\x1b[31m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    blue: "\x1b[34m",
+    magenta: "\x1b[35m",
+    cyan: "\x1b[36m",
+    white: "\x1b[37m",
+
+    brblack: "\x1b[90m",
+    brred: "\x1b[91m",
+    brgreen: "\x1b[92m",
+    bryellow: "\x1b[93m",
+    brblue: "\x1b[94m",
+    brmagenta: "\x1b[95m",
+    brcyan: "\x1b[96m",
+    brwhite: "\x1b[97m",
+
     reset: "\x1b[0m",
+    bold: "\x1b[1m",
+    dim: "\x1b[2m",
+    italic: "\x1b[3m",
+    underline: "\x1b[4m",
+    blink: "\x1b[5m",
+    inverse: "\x1b[7m",
+    hidden: "\x1b[8m",
+    strikethrough: "\x1b[9m",
 };
 
 function prettyPrintErrors(source: Source, errors: TokenizationError[]): string {
