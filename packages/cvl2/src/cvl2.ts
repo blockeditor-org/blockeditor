@@ -40,9 +40,6 @@ const mkconfig = {
     equals: {
         "=": {style: "join", joinTag: "assign"},
     },
-    dot: {
-        ".": {style: "close", autoOpen: true},
-    },
     string: {
         "\"": {style: "open", close: "<in_string>\"", setMode: "in_string"},
         "<in_string>\"": {style: "close", setMode: "regular"},
@@ -179,12 +176,18 @@ export interface StrSegToken {
     str: string;
 }
 
+export interface RawToken {
+    kind: "raw";
+    pos: TokenPosition;
+    raw: string;
+}
+
 export interface ErrToken {
     kind: "err";
     pos: TokenPosition;
 }
 
-export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | ErrToken;
+export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | RawToken | ErrToken;
 
 interface TokenizerStackItem {
     pos: TokenPosition,
@@ -459,6 +462,12 @@ export function tokenize(source: Source): TokenizationResult {
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                 nl: false,
             });
+        }else if(currentToken === ".") {
+            currentSyntaxNodes.push({
+                kind: "raw",
+                pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                raw: currentToken,
+            });
         } else {
             errors.push({
                 entries: [{
@@ -497,6 +506,8 @@ function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode, level:
         desc = colors.blue + (jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr) + colors.reset;
     } else if(entity.kind === "strSeg") {
         desc = colors.green + JSON.stringify(entity.str) + colors.reset;
+    } else if(entity.kind === "raw") {
+        desc = JSON.stringify(entity.raw);
     } else {
         desc = `%%TODO%%`;
     }
@@ -562,6 +573,8 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: nu
         throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
     }else if (entity.kind === "strSeg") {
         return entity.str;
+    }else if (entity.kind === "raw") {
+        return entity.raw;
     } else {
         return `%TODO<${(entity as {kind: string}).kind}>%`;
     }
