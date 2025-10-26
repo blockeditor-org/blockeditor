@@ -460,6 +460,31 @@ interface RenderConfig {
     indent: string;
 }
 
+
+function renderEntityAdisp(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
+    const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
+    let desc: string;
+    if (entity.kind === "block") {
+        desc = `${entity.start}${entity.end}`;
+    } else if(entity.kind === "binary") {
+        desc = ``;
+    } else if(entity.kind === "op") {
+        desc = `${colors.gold}${JSON.stringify(entity.op)}${colors.reset}`;
+    } else if(entity.kind === "opSeg") {
+        desc = ``;
+    } else if(entity.kind === "ws") {
+        desc = JSON.stringify(entity.nl ? "\n" : " ");
+    } else if(entity.kind === "ident") {
+        desc = colors.blue + JSON.stringify(entity.str) + colors.reset;
+    } else if(entity.kind === "strSeg") {
+        desc = colors.green + JSON.stringify(entity.str) + colors.reset;
+    } else {
+        desc = `%%TODO%%`;
+    }
+    return `${colors.cyan}${entity.kind}${colors.reset}${desc ? " " + desc : ""} ${colors.black}· ${entity.pos.fyl}:${entity.pos.lyn}:${entity.pos.col}${colors.reset}` + (ch ?? []).map(e => "\n" + colors.black + config.indent.repeat(level + 1) + colors.reset + renderEntityAdisp(config, e, level + 1, false)).join("");
+}
+
+
 function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], level: number, isTopLevel: boolean): string {
     let result = "";
     let needsDeeperIndent = false;
@@ -491,29 +516,6 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], le
         }
     }
     return result;
-}
-
-function renderEntityAdisp(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
-    const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
-    let desc: string;
-    if (entity.kind === "block") {
-        desc = `${entity.start}${entity.end}`;
-    } else if(entity.kind === "binary") {
-        desc = ``;
-    } else if(entity.kind === "op") {
-        desc = `${colors.gold}${JSON.stringify(entity.op)}${colors.reset}`;
-    } else if(entity.kind === "opSeg") {
-        desc = ``;
-    } else if(entity.kind === "ws") {
-        desc = JSON.stringify(entity.nl ? "\n" : " ");
-    } else if(entity.kind === "ident") {
-        desc = colors.blue + JSON.stringify(entity.str) + colors.reset;
-    } else if(entity.kind === "strSeg") {
-        desc = colors.green + JSON.stringify(entity.str) + colors.reset;
-    } else {
-        desc = `%%TODO%%`;
-    }
-    return `${colors.cyan}${entity.kind}${colors.reset}${desc ? " " + desc : ""} ${colors.black}· ${entity.pos.fyl}:${entity.pos.lyn}:${entity.pos.col}${colors.reset}` + (ch ?? []).map(e => "\n" + colors.black + config.indent.repeat(level + 1) + colors.reset + renderEntityAdisp(config, e, level + 1, false)).join("");
 }
 function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
     if (entity.kind === "block") {
