@@ -1,5 +1,5 @@
 
-main :: (): std.Folder [
+.main = (): std.Folder [
     "a.out" = std.File: "out"
 ]
 

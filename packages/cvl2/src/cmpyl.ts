@@ -39,6 +39,8 @@ type ComptimeNamespace = {
 function analyzeNamespace(env: Env, src: SyntaxNode[]): ComptimeNamespace {
     const container = readContainer(env, src);
     for (const line of container.lines) {
+        // not true! we'll need to be able to define exports
+        // ie #builtin.main = abc
         env.errors.push(getErr(env, line.items[0]?.pos, "A container must only consist of bindings; no lines"));
     }
     console.log(container);
