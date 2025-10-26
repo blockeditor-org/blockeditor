@@ -1,5 +1,5 @@
 
-.main = (): std.Folder [
+#builtin.main := (): std.Folder [
     "a.out" = std.File: "out"
 ]
 

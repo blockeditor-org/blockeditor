@@ -22,13 +22,14 @@ const mkconfig = {
         "}": {style: "close"},
         "]": {style: "close"},
     },
-    semi: {
+    sep: {
         ",": {style: "join", joinTag: "sep"},
         ";": {style: "join", joinTag: "sep"},
         "\n": {style: "join", joinTag: "sep"},
     },
     bind: {
         "::": {style: "join", joinTag: "bind"},
+        ":=": {style: "join", joinTag: "bind"},
     },
     arrow: {
         "=>": {style: "join"},
@@ -210,9 +211,9 @@ export interface TokenizationResult {
     errors: TokenizationError[];
 }
 
-const identifierRegex = /^[a-zA-Z0-9]$/;
+const identifierRegex = /^[a-zA-Z0-9#]$/;
 const whitespaceRegex = /^\s$/;
-const operatorChars = [..."~!@#$%^&*-=+|/<>:"];
+const operatorChars = [..."~!@$%^&*-=+|/<>:"];
 
 export function tokenize(source: Source): TokenizationResult {
     let currentSyntaxNodes: SyntaxNode[] = [];
@@ -302,7 +303,7 @@ export function tokenize(source: Source): TokenizationResult {
         } else if (cfg?.style === "close") {
             const currentIndent = source.currentLineIndentLevel;
 
-            while (parseStack.length > 1) {
+            while (parseStack.length > 0) {
                 const lastStackItem = parseStack.pop();
                 if (!lastStackItem) unreachable();
 
@@ -358,6 +359,7 @@ export function tokenize(source: Source): TokenizationResult {
                     currentSyntaxNodes = parseStack[parseStack.length - 1]!.val;
                 }
             }
+            if (parseStack.length === 0) throw new Error("ups parsestack len 0!");
         } else if (cfg?.style === "join") {
             const operatorPrecedence = cfg.prec;
             let targetCommaBlock: TokenizerStackItem | undefined;
