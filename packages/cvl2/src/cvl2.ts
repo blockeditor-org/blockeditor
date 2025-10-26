@@ -466,10 +466,9 @@ export function tokenize(source: Source): TokenizationResult {
 
 interface RenderConfig {
     indent: string;
-    style?: "adisp";
 }
 
-function renderEntityList(config: RenderConfig, entities: SyntaxNode[], level: number, isTopLevel: boolean): string {
+function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], level: number, isTopLevel: boolean): string {
     let result = "";
     let needsDeeperIndent = false;
     let didInsertNewline = false;
@@ -496,7 +495,7 @@ function renderEntityList(config: RenderConfig, entities: SyntaxNode[], level: n
             }
         } else {
             didInsertNewline = false;
-            result += renderEntity(config, entity, level + (needsDeeperIndent ? 1 : 0), isTopLevel);
+            result += renderEntityPretty(config, entity, level + (needsDeeperIndent ? 1 : 0), isTopLevel);
         }
     }
     return result;
@@ -547,47 +546,46 @@ function renderEntityJ(entity: SyntaxNode): unknown {
         TODO: true,
     };
 }
-function renderEntity(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
-    if(config.style === "adisp") {
-        const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
-        let desc: string;
-        if (entity.kind === "block") {
-            desc = `${entity.start}${entity.end}`;
-        } else if(entity.kind === "binary") {
-            desc = ``;
-        } else if(entity.kind === "op") {
-            desc = `${colors.gold}${JSON.stringify(entity.op)}${colors.reset}`;
-        } else if(entity.kind === "opSeg") {
-            desc = ``;
-        } else if(entity.kind === "ws") {
-            desc = JSON.stringify(entity.nl ? "\n" : " ");
-        } else if(entity.kind === "ident") {
-            desc = colors.blue + JSON.stringify(entity.str) + colors.reset;
-        } else if(entity.kind === "strSeg") {
-            desc = colors.green + JSON.stringify(entity.str) + colors.reset;
-        } else {
-            desc = `%%TODO%%`;
-        }
-        return `${colors.cyan}${entity.kind}${colors.reset}${desc ? " " + desc : ""} ${colors.black}· ${entity.pos.fyl}:${entity.pos.lyn}:${entity.pos.col}${colors.reset}` + (ch ?? []).map(e => "\n" + colors.black + config.indent.repeat(level + 1) + colors.reset + renderEntity(config, e, level + 1, false)).join("");
+function renderEntityAdisp(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
+    const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
+    let desc: string;
+    if (entity.kind === "block") {
+        desc = `${entity.start}${entity.end}`;
+    } else if(entity.kind === "binary") {
+        desc = ``;
+    } else if(entity.kind === "op") {
+        desc = `${colors.gold}${JSON.stringify(entity.op)}${colors.reset}`;
+    } else if(entity.kind === "opSeg") {
+        desc = ``;
+    } else if(entity.kind === "ws") {
+        desc = JSON.stringify(entity.nl ? "\n" : " ");
+    } else if(entity.kind === "ident") {
+        desc = colors.blue + JSON.stringify(entity.str) + colors.reset;
+    } else if(entity.kind === "strSeg") {
+        desc = colors.green + JSON.stringify(entity.str) + colors.reset;
     } else {
-        if (entity.kind === "block") {
-            return entity.start + renderEntityList(config, entity.items, level, false) + entity.end;
-        } else if (entity.kind === "binary") {
-            return renderEntityList(config, entity.items, level, isTopLevel);
-        } else if (entity.kind === "ws") {
-            throw new Error("Unreachable: Whitespace should be handled by renderEntityList.");
-        } else if (entity.kind === "ident") {
-            return entity.str;
-        } else if (entity.kind === "op") {
-            if(entity.op === "\n") return "";
-            return entity.op;
-        }else if (entity.kind === "opSeg") {
-            throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
-        }else if (entity.kind === "strSeg") {
-            return entity.str;
-        } else {
-            return `%TODO<${(entity as {kind: string}).kind}>%`;
-        }
+        desc = `%%TODO%%`;
+    }
+    return `${colors.cyan}${entity.kind}${colors.reset}${desc ? " " + desc : ""} ${colors.black}· ${entity.pos.fyl}:${entity.pos.lyn}:${entity.pos.col}${colors.reset}` + (ch ?? []).map(e => "\n" + colors.black + config.indent.repeat(level + 1) + colors.reset + renderEntityAdisp(config, e, level + 1, false)).join("");
+}
+function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
+    if (entity.kind === "block") {
+        return entity.start + renderEntityPrettyList(config, entity.items, level, false) + entity.end;
+    } else if (entity.kind === "binary") {
+        return renderEntityPrettyList(config, entity.items, level, isTopLevel);
+    } else if (entity.kind === "ws") {
+        throw new Error("Unreachable: Whitespace should be handled by renderEntityList.");
+    } else if (entity.kind === "ident") {
+        return entity.str;
+    } else if (entity.kind === "op") {
+        if(entity.op === "\n") return "";
+        return entity.op;
+    }else if (entity.kind === "opSeg") {
+        throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
+    }else if (entity.kind === "strSeg") {
+        return entity.str;
+    } else {
+        return `%TODO<${(entity as {kind: string}).kind}>%`;
     }
 }
 
@@ -643,8 +641,8 @@ function prettyPrintErrors(source: Source, errors: TokenizationError[]): string 
 }
 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
-    const formattedCode = renderEntityList({ indent: "  " }, tokenizationResult.result, 0, true);
-    const adisp = renderEntityList({indent: "│ ", style: "adisp"}, tokenizationResult.result, 0, true);
+    const formattedCode = renderEntityPrettyList({ indent: "  " }, tokenizationResult.result, 0, true);
+    const adisp = tokenizationResult.result.map(r => renderEntityAdisp({indent: "│ "}, r, 0, true)).join("\n");
     const jsonCode = JSON.stringify(tokenizationResult.result.map(renderEntityJ), null, 1);
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
