@@ -456,12 +456,12 @@ export function tokenize(source: Source): TokenizationResult {
     return { result: parseStack[0]!.val, errors };
 }
 
-interface RenderConfig {
+interface RenderConfigAdisp {
     indent: string;
 }
 
 
-function renderEntityAdisp(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
+function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
     const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
     let desc: string;
     if (entity.kind === "block") {
@@ -486,7 +486,11 @@ function renderEntityAdisp(config: RenderConfig, entity: SyntaxNode, level: numb
 }
 
 
-function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], level: number, isTopLevel: boolean): string {
+interface RenderConfig {
+    indent: string;
+    reveal: boolean,
+}
+function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], indent: number, depth: number, isTopLevel: boolean): string {
     let result = "";
     let needsDeeperIndent = false;
     let didInsertNewline = false;
@@ -502,28 +506,32 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], le
         }
     }
 
+    let revealColor = rainbow[depth % rainbow.length]!;
+    if (config.reveal) result += revealColor + "<" + colors.reset;
+
     for (let i = 0; i < entities.length; i++) {
         const entity = entities[i]!;
         if (isNl(entity)) {
             if (!didInsertNewline) {
                 needsDeeperIndent = !isTopLevel && i < lastNewlineIndex;
                 didInsertNewline = true;
-                result += "\n" + config.indent.repeat(level + (needsDeeperIndent ? 1 : 0));
+                result += "\n" + config.indent.repeat(indent + (needsDeeperIndent ? 1 : 0));
             } else {
                 result += " ";
             }
         } else {
             didInsertNewline = false;
-            result += renderEntityPretty(config, entity, level + (needsDeeperIndent ? 1 : 0), isTopLevel);
+            result += renderEntityPretty(config, entity, indent + (needsDeeperIndent ? 1 : 0), depth + 1, isTopLevel);
         }
     }
+    if (config.reveal) result += revealColor + ">" + colors.reset;
     return result;
 }
-function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
+function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: number, depth: number, isTopLevel: boolean): string {
     if (entity.kind === "block") {
-        return entity.start + renderEntityPrettyList(config, entity.items, level, false) + entity.end;
+        return entity.start + renderEntityPrettyList(config, entity.items, indent, depth, false) + entity.end.replaceAll("<in_string>", "");
     } else if (entity.kind === "binary") {
-        return renderEntityPrettyList(config, entity.items, level, isTopLevel);
+        return renderEntityPrettyList(config, entity.items, indent, depth, isTopLevel);
     } else if (entity.kind === "ws") {
         if(entity.nl) return "";
         return " ";
@@ -570,6 +578,10 @@ const colors = {
     hidden: "\x1b[8m",
     strikethrough: "\x1b[9m",
 };
+const styles = {
+    string: colors.green,
+};
+const rainbow = [colors.red, colors.yellow, colors.green, colors.cyan, colors.blue, colors.magenta];
 
 function prettyPrintErrors(source: Source, errors: TokenizationError[]): string {
     if (errors.length === 0) return "";
@@ -611,12 +623,14 @@ function prettyPrintErrors(source: Source, errors: TokenizationError[]): string 
 }
 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
-    const formattedCode = renderEntityPrettyList({ indent: "  " }, tokenizationResult.result, 0, true);
+    const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false }, tokenizationResult.result, 0, 0, true);
+    const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true }, tokenizationResult.result, 0, 0, true);
     const adisp = tokenizationResult.result.map(r => renderEntityAdisp({indent: "│ "}, r, 0, true)).join("\n");
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
     return (
         `// adisp:\n${adisp}\n\n` +
+        `// ugly\n${uglyCode}\n\n` +
         `// formatted\n${formattedCode}\n\n` +
         `// errors:\n${prettyErrors}`
     );
