@@ -493,17 +493,18 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], le
 
     entities = entities.flatMap(nt => nt.kind === "opSeg" ? nt.items : [nt]); // hacky
 
+    const isNl = (entity: SyntaxNode) => (entity.kind === "ws" && entity.nl) || (entity.kind === "op" && entity.op === "\n");
     for (let i = 0; i < entities.length; i++) {
         const entity = entities[i]!;
-        if (entity.kind === "ws" && entity.nl) {
+        if (isNl(entity)) {
             lastNewlineIndex = i;
         }
     }
 
     for (let i = 0; i < entities.length; i++) {
         const entity = entities[i]!;
-        if (entity.kind === "ws") {
-            if (entity.nl && !didInsertNewline) {
+        if (isNl(entity)) {
+            if (!didInsertNewline) {
                 needsDeeperIndent = !isTopLevel && i < lastNewlineIndex;
                 didInsertNewline = true;
                 result += "\n" + config.indent.repeat(level + (needsDeeperIndent ? 1 : 0));
@@ -523,7 +524,8 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, level: num
     } else if (entity.kind === "binary") {
         return renderEntityPrettyList(config, entity.items, level, isTopLevel);
     } else if (entity.kind === "ws") {
-        throw new Error("Unreachable: Whitespace should be handled by renderEntityList.");
+        if(entity.nl) return "";
+        return " ";
     } else if (entity.kind === "ident") {
         return entity.str;
     } else if (entity.kind === "op") {
