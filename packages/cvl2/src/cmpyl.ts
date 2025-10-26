@@ -37,7 +37,8 @@ type Env = {
     errors: TokenizationError[],
 };
 type ComptimeNamespace = {
-    _?: undefined,
+    getString(env: Env, pos: TokenPosition, field: string, block: AnalysisBlock): AnalysisResult,
+    getSymbol(env: Env, pos: TokenPosition, field: symbol, block: AnalysisBlock): AnalysisResult | undefined,
 };
 function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeNamespace {
     const block: AnalysisBlock = {
@@ -54,7 +55,9 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
             // `let a: comptime_key[.abc] = .abc; a := 25` -> this succeeds
             // strange. odd behaviour here. it's fine though i guess?
             const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
-            throwErr(env, op.pos, "TODO complete analyzeBind implementation");
+            // insert an instruction to append the value to the children list
+            // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
+            throwErr(env, op.pos, "TODO: insert an instruction to append [value] to the list of [k, v] pairs");
         },
     });
     /*
@@ -85,7 +88,14 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
     so then we analyze B, so we analyze let two = A.one, so then we analyze A = dep loop
     ok so we're actually fine maybe??
     */
-    return {};
+    return {
+        getString(env, pos, field, block) {
+            throwErr(env, pos, "todo getString on analyzeNamespace namespace");
+        },
+        getSymbol(env, pos, field, block) {
+            return undefined;
+        },
+    };
 }
 function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: SyntaxNode[], block: AnalysisBlock, cfg: {
     analyzeBind(env: Env, b2: Binary2, block: AnalysisBlock): AnalysisResult,
@@ -115,14 +125,7 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
 type ComptimeTypeVoid = {type: "void", pos: TokenPosition};
 type ComptimeTypeKey = {
     type: "key", pos: TokenPosition,
-    narrow?: {
-        type: "symbol",
-        symbol: symbol,
-        child: ComptimeType,
-    } | {
-        type: "string",
-        string: string,
-    },
+    narrow?: ComptimeNarrowKey,
 };
 type ComptimeTypeAst = {
     type: "ast", pos: TokenPosition,
@@ -136,7 +139,21 @@ type ComptimeTypeType = {
 type ComptimeTypeNamespace = {
     type: "namespace", narrow?: ComptimeNamespace,
 };
-type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace;
+type ComptimeTypeFn = {
+    type: "fn",
+    arg: ComptimeType,
+    ret: ComptimeType,
+};
+type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn;
+
+type ComptimeNarrowKey = {
+    type: "symbol",
+    symbol: symbol,
+    child: ComptimeType,
+} | {
+    type: "string",
+    string: string,
+};
 
 type ComptimeValueAst = {
     ast: SyntaxNode[],
@@ -209,8 +226,32 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
 
     return result;
 }
+
+const mainSymbol: ComptimeTypeKey = {
+    type: "key",
+    pos: compilerPos(),
+    narrow: {
+        type: "symbol", symbol: Symbol("main"), child: {
+            type: "fn",
+            arg: {type: "void", pos: compilerPos()},
+            ret: {type: "todo"}, // type std.Folder | std.File
+        },
+    }
+};
 function builtinNamespace(env: Env): ComptimeNamespace {
-    return {};
+    return {
+        getString(env, pos, field, block): AnalysisResult {
+            if (field === "main") {
+                const idx = blockAppend(block, {expr: "comptime:only"});
+                return {idx, type: mainSymbol};
+            } else {
+                throwErr(env, pos, "builtin does not have field: "+field);
+            }
+        },
+        getSymbol(env, pos, field, block): AnalysisResult | undefined {
+            return undefined;
+        },
+    };
 }
 function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
     if (ast.kind === "builtin") {
@@ -234,14 +275,18 @@ function analyzeSuffix(env: Env, slot: ComptimeType, result: AnalysisResult, ast
     if (ast.kind === "ident") {
         // access ident on result
         // the way to do this will vary based on the type
-        return analyzeAccess(env, slot, result, ast.pos, ast.str, block);
+        return analyzeAccess(env, slot, result, ast.pos, {type: "string", string: ast.str}, block);
     }
     throwErr(env, ast.pos, "TODO analyzeSuffix: "+ast.kind);
 }
-function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: string | symbol, block: AnalysisBlock): AnalysisResult {
+function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: ComptimeNarrowKey, block: AnalysisBlock): AnalysisResult {
     if (obj.type.type === "namespace") {
         if (!obj.type.narrow) throwErr(env, pos, "cannot access on non-narrowed namespace");
-        throwErr(env, pos, "TODO: access on namespace");
+        if (prop.type === "string") {
+            return obj.type.narrow.getString(env, pos, prop.string, block);
+        }else{
+            throwErr(env, pos, "TODO return ?symbolChildType .init(T) or .empty");
+        }
     }
     throwErr(env, pos, "TODO: analyze access on type: "+obj.type.type);
 }
