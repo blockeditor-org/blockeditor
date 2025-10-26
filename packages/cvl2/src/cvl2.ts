@@ -466,7 +466,7 @@ export function tokenize(source: Source): TokenizationResult {
 
 interface RenderConfig {
     indent: string;
-    style?: "s" | "s2";
+    style?: "s" | "s2" | "adisp";
 }
 
 function renderEntityList(config: RenderConfig, entities: SyntaxNode[], level: number, isTopLevel: boolean): string {
@@ -562,19 +562,19 @@ function renderEntity(config: RenderConfig, entity: SyntaxNode, level: number, i
         }else if(entity.kind === "ident") {
             return "@" + entity.str;
         }else if(entity.kind === "op") {
-            return "op" + JSON.stringify(entity.op);
+            return "<" + JSON.stringify(entity.op) + ">";
         }else if(entity.kind === "opSeg") {
             return renderS(config, "", entity.items, level, undefined, true);
         }else if(entity.kind === "strSeg") {
             return renderS(config, "strSeg", [], level, JSON.stringify(entity.str));
         }else if(entity.kind === "ws") {
-            return entity.nl ? "<spc>" : "<nl>";
+            return entity.nl ? `"\\n"` : `" "`;
         }else{
             return renderS(config, (entity as SyntaxNode).kind, [], level);
         }
     }else if (config.style === "s") {
         if (entity.kind === "block") {
-            return `(${JSON.stringify(entity.start + entity.end)} ` + renderEntityList(config, entity.items, level, false) + ")";
+            return `${JSON.stringify(entity.start + entity.end)} ` + renderEntityList(config, entity.items, level, false) + ")";
         } else if (entity.kind === "binary") {
             return "(" + renderEntityList(config, entity.items, level, isTopLevel) + ")";
         } else if (entity.kind === "ws") {
@@ -590,6 +590,27 @@ function renderEntity(config: RenderConfig, entity: SyntaxNode, level: number, i
         } else {
             return `(TODO $${(entity as {kind: string}).kind})`;
         }
+    }else if(config.style === "adisp") {
+        const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
+        let desc: string;
+        if (entity.kind === "block") {
+            desc = `${entity.start}${entity.end}`;
+        } else if(entity.kind === "binary") {
+            desc = ``;
+        } else if(entity.kind === "op") {
+            desc = `${JSON.stringify(entity.op)}`;
+        } else if(entity.kind === "opSeg") {
+            desc = ``;
+        } else if(entity.kind === "ws") {
+            desc = JSON.stringify(entity.nl ? "\n" : " ");
+        } else if(entity.kind === "ident") {
+            desc = JSON.stringify(entity.str);
+        } else if(entity.kind === "strSeg") {
+            desc = colors.green + JSON.stringify(entity.str) + colors.reset;
+        } else {
+            desc = `%%TODO%%`;
+        }
+        return `${colors.cyan}${entity.kind}${colors.reset}${desc ? " " + desc : ""} ${colors.black}· ${entity.pos.fyl}:${entity.pos.lyn}:${entity.pos.col}${colors.reset}` + (ch ?? []).map(e => "\n" + colors.black + config.indent.repeat(level + 1) + colors.reset + renderEntity(config, e, level + 1, false)).join("");
     } else {
         if (entity.kind === "block") {
             return entity.start + renderEntityList(config, entity.items, level, false) + entity.end;
@@ -614,8 +635,11 @@ function renderEntity(config: RenderConfig, entity: SyntaxNode, level: number, i
 
 const colors = {
     red: "\x1b[31m",
+    green: "\x1b[32m",
+    brgreen: "\x1b[92m",
     blue: "\x1b[34m",
     cyan: "\x1b[36m",
+    black: "\x1b[30m",
     bold: "\x1b[1m",
     reset: "\x1b[0m",
 };
@@ -663,6 +687,7 @@ export function renderTokenizedOutput(tokenizationResult: TokenizationResult, so
     const formattedCode = renderEntityList({ indent: "  " }, tokenizationResult.result, 0, true);
     const sExpression = renderEntityList({ indent: "  ", style: "s" }, tokenizationResult.result, 0, true);
     const s2Expression = renderEntityList({ indent: "  ", style: "s2" }, tokenizationResult.result, 0, true);
+    const adisp = renderEntityList({indent: "│ ", style: "adisp"}, tokenizationResult.result, 0, true);
     const jsonCode = JSON.stringify(tokenizationResult.result.map(renderEntityJ), null, 1);
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
@@ -670,6 +695,7 @@ export function renderTokenizedOutput(tokenizationResult: TokenizationResult, so
         `// json:\n${jsonCode}\n\n` +
         `// s2-expr:\n${s2Expression}\n\n` +
         `// s-expr:\n${sExpression}\n\n` +
+        `// adisp:\n${adisp}\n\n` +
         `// formatted\n${formattedCode}\n\n` +
         `// errors:\n${prettyErrors}`
     );
