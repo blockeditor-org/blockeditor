@@ -134,6 +134,12 @@ export interface IdentifierToken {
     str: string;
 }
 
+export interface BuiltinToken {
+    kind: "builtin";
+    pos: TokenPosition;
+    str: string;
+}
+
 export interface WhitespaceToken {
     kind: "ws";
     pos: TokenPosition;
@@ -187,7 +193,7 @@ export interface ErrToken {
     pos: TokenPosition;
 }
 
-export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | RawToken | ErrToken;
+export type SyntaxNode = IdentifierToken | BuiltinToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | RawToken | ErrToken;
 
 interface TokenizerStackItem {
     pos: TokenPosition,
@@ -214,7 +220,7 @@ export interface TokenizationResult {
     errors: TokenizationError[];
 }
 
-const identifierRegex = /^[a-zA-Z0-9#]$/;
+const identifierRegex = /^[a-zA-Z0-9]$/;
 const whitespaceRegex = /^\s$/;
 const operatorChars = [..."~!@$%^&*-=+|/<>:"];
 
@@ -240,6 +246,19 @@ export function tokenize(source: Source): TokenizationResult {
                     kind: "ident",
                     pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                     str: source.text.substring(start.idx, source.currentIndex),
+                });
+                continue;
+            }
+            if (firstChar === "#") {
+                source.take();
+                
+                while (source.peek().match(identifierRegex)) {
+                    source.take();
+                }
+                currentSyntaxNodes.push({
+                    kind: "builtin",
+                    pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                    str: source.text.substring(start.idx + 1, source.currentIndex),
                 });
                 continue;
             }
@@ -504,6 +523,8 @@ function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode, level:
     } else if(entity.kind === "ident") {
         const jstr = JSON.stringify(entity.str);
         desc = colors.blue + (jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr) + colors.reset;
+    } else if(entity.kind === "builtin") {
+        desc = colors.blue + "#" + entity.str + colors.reset;
     } else if(entity.kind === "strSeg") {
         desc = colors.green + JSON.stringify(entity.str) + colors.reset;
     } else if(entity.kind === "raw") {
@@ -566,6 +587,8 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: nu
         return " ";
     } else if (entity.kind === "ident") {
         return entity.str;
+    } else if (entity.kind === "builtin") {
+        return "#" + entity.str;
     } else if (entity.kind === "op") {
         if(entity.op === "\n") return "";
         return entity.op;

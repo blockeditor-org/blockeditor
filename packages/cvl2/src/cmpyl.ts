@@ -127,15 +127,26 @@ type ComptimeTypeKey = {
 type ComptimeTypeAst = {
     type: "ast", pos: TokenPosition,
 };
-type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst;
+type ComptimeTypeUnknown = {
+    type: "unknown", pos: TokenPosition,
+};
+type ComptimeTypeType = {
+    type: "type", narrow?: ComptimeType,
+};
+type ComptimeTypeNamespace = {
+    type: "namespace", narrow?: ComptimeNamespace,
+};
+type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace;
 
 type ComptimeValueAst = {
     ast: SyntaxNode[],
 };
 
 type AnalysisLine = {
-    expr: "ct:ast",
+    expr: "comptime:ast",
     value: ComptimeValueAst,
+} | {
+    expr: "comptime:only",
 } | {
     expr: "void",
 };
@@ -153,8 +164,8 @@ function blockAppend(block: AnalysisBlock, instr: AnalysisLine): number {
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
     if (slot.type === "ast") {
         const value: ComptimeValueAst = {ast: ast};
-        const idx = blockAppend(block, {expr: "ct:ast", value});
-        return {idx: idx, type: {
+        const idx = blockAppend(block, {expr: "comptime:ast", value});
+        return {idx, type: {
             type: "ast",
             pos: pos,
         }};
@@ -172,7 +183,67 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
     // so first we analyze (block dot (ident #builtin))
     // then we take that result and analyze (ident main) on it
     */
-    throwErr(env, ast[0]?.pos ?? pos, "TODO analyze "+(ast[0]?.kind));
+
+    if (ast.length === 0) throwErr(env, pos, "failed to analyze empty expression");
+
+    const first = ast[0]!;
+    const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
+    // in the future we might choose to back propagate slot types so T: a.b.c is T: ({c: T}: ({c: {b: T}}: a).b).c
+    const slotTypes = Array.from({length: ast.length}, (_, i) => i === ast.length - 1 ? slot : unknownSlot);
+
+    let result: AnalysisResult;
+    if (first.kind === "raw" && first.raw === ".") {
+        const idx = blockAppend(block, {expr: "comptime:only"});
+        result = {idx, type: {
+            type: "type",
+            narrow: slot,
+        }};
+    }else {
+        result = analyzeBase(env, slotTypes[0]!, first, block);
+    }
+
+
+    for (let i = 1; i < ast.length; i++) {
+        result = analyzeSuffix(env, slotTypes[i]!, result, ast[i]!, block);
+    }
+
+    return result;
+}
+function builtinNamespace(env: Env): ComptimeNamespace {
+    return {};
+}
+function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
+    if (ast.kind === "builtin") {
+        if (ast.str === "builtin") {
+            const idx = blockAppend(block, {expr: "comptime:only"});
+            return {idx, type: {
+                type: "namespace",
+                narrow: builtinNamespace(env),
+            }};
+        }else {
+            throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
+        }
+    }
+    throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind);
+}
+function analyzeSuffix(env: Env, slot: ComptimeType, result: AnalysisResult, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
+    if (ast.kind === "raw") {
+        if (ast.raw === ".") return result; // todo
+        throwErr(env, ast.pos, "unexpected raw: "+JSON.stringify(ast.raw));
+    }
+    if (ast.kind === "ident") {
+        // access ident on result
+        // the way to do this will vary based on the type
+        return analyzeAccess(env, slot, result, ast.pos, ast.str, block);
+    }
+    throwErr(env, ast.pos, "TODO analyzeSuffix: "+ast.kind);
+}
+function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: string | symbol, block: AnalysisBlock): AnalysisResult {
+    if (obj.type.type === "namespace") {
+        if (!obj.type.narrow) throwErr(env, pos, "cannot access on non-narrowed namespace");
+        throwErr(env, pos, "TODO: access on namespace");
+    }
+    throwErr(env, pos, "TODO: analyze access on type: "+obj.type.type);
 }
 
 // if we specialized our parser we wouldn't need to do this mess
