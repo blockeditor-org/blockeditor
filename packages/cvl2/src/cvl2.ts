@@ -435,14 +435,6 @@ export function tokenize(source: Source): TokenizationResult {
             });
             targetCommaBlock.val = nextVal;
             currentSyntaxNodes = targetCommaBlock.val;
-
-            if(currentToken === "\n") {
-                nextVal.push({
-                    kind: "ws",
-                    pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
-                    nl: true,
-                });
-            }
         }else if(currentToken === " ") {
             currentSyntaxNodes.push({
                 kind: "ws",
@@ -501,51 +493,6 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], le
     return result;
 }
 
-function renderEntityJ(entity: SyntaxNode): unknown {
-    const kind = `${entity.kind}:${entity.pos.lyn}:${entity.pos.col}`;
-    if(entity.kind === "block") {
-        return {
-            kind,
-            start: entity.start,
-            end: entity.end,
-            items: entity.items.map(renderEntityJ),
-        };
-    }else if(entity.kind === "binary") {
-        return {
-            kind,
-            prec: entity.prec,
-            items: entity.items.map(renderEntityJ),
-        };
-    }else if(entity.kind === "ws") {
-        return {
-            kind: kind,
-            nl: entity.nl,
-        }
-    }else if(entity.kind === "op") {
-        return {
-            kind,
-            op: entity.op,
-        }
-    }else if(entity.kind === "opSeg") {
-        return {
-            kind,
-            items: entity.items.map(renderEntityJ),
-        };
-    }else if(entity.kind === "strSeg") {
-        return {
-            kind,
-            str: entity.str,
-        };
-    }else if(entity.kind === "ident") {
-        return {
-            kind,
-            str: entity.str,
-        }
-    }else return {
-        kind,
-        TODO: true,
-    };
-}
 function renderEntityAdisp(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
     const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
     let desc: string;
@@ -643,11 +590,9 @@ function prettyPrintErrors(source: Source, errors: TokenizationError[]): string 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
     const formattedCode = renderEntityPrettyList({ indent: "  " }, tokenizationResult.result, 0, true);
     const adisp = tokenizationResult.result.map(r => renderEntityAdisp({indent: "│ "}, r, 0, true)).join("\n");
-    const jsonCode = JSON.stringify(tokenizationResult.result.map(renderEntityJ), null, 1);
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
     return (
-        `// json:\n${jsonCode}\n\n` +
         `// adisp:\n${adisp}\n\n` +
         `// formatted\n${formattedCode}\n\n` +
         `// errors:\n${prettyErrors}`

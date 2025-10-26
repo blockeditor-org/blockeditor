@@ -1,11 +1,15 @@
 import { renderTokenizedOutput, Source, tokenize } from "./cvl2";
 
+// const src = `
+// main :: (): std.Folder [
+//     "a.out" = std.File: "out"
+// ]
+// other :: void, other::void;other::void
+// `;
 const src = `
-main :: (): std.Folder [
-    "a.out" = std.File: "out"
-]
-other :: void, other::void;other::void
-`;
+main (
+    item
+)`;
 
 function importFile(filename: string, contents: string) {
     const sourceCode = new Source(filename, contents);
