@@ -598,13 +598,13 @@ function renderEntity(config: RenderConfig, entity: SyntaxNode, level: number, i
         } else if(entity.kind === "binary") {
             desc = ``;
         } else if(entity.kind === "op") {
-            desc = `${JSON.stringify(entity.op)}`;
+            desc = `${colors.gold}${JSON.stringify(entity.op)}${colors.reset}`;
         } else if(entity.kind === "opSeg") {
             desc = ``;
         } else if(entity.kind === "ws") {
             desc = JSON.stringify(entity.nl ? "\n" : " ");
         } else if(entity.kind === "ident") {
-            desc = JSON.stringify(entity.str);
+            desc = colors.blue + JSON.stringify(entity.str) + colors.reset;
         } else if(entity.kind === "strSeg") {
             desc = colors.green + JSON.stringify(entity.str) + colors.reset;
         } else {
@@ -635,6 +635,7 @@ function renderEntity(config: RenderConfig, entity: SyntaxNode, level: number, i
 
 const colors = {
     red: "\x1b[31m",
+    gold: "\x1b[33m",
     green: "\x1b[32m",
     brgreen: "\x1b[92m",
     blue: "\x1b[34m",
