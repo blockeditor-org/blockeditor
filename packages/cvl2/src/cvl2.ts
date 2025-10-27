@@ -28,8 +28,10 @@ const mkconfig = {
         "\n": {style: "join", joinTag: "sep"},
     },
     bind: {
-        "::": {style: "join", joinTag: "bind"},
-        ":=": {style: "join", joinTag: "bind"},
+        // def name :: value
+        "::": {style: "join", joinTag: "def"},
+        // pub .name :: value
+        ":=": {style: "join", joinTag: "pub"},
     },
     arrow: {
         "=>": {style: "join"},
@@ -481,7 +483,7 @@ export function tokenize(source: Source): TokenizationResult {
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                 nl: false,
             });
-        }else if(currentToken === ".") {
+        }else if(currentToken === "." || currentToken == "->") {
             currentSyntaxNodes.push({
                 kind: "raw",
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
@@ -507,7 +509,7 @@ interface RenderConfigAdisp {
 }
 
 
-function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
+export function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode, level: number): string {
     const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
     let desc: string;
     if (entity.kind === "block") {
@@ -532,7 +534,7 @@ function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode, level:
     } else {
         desc = `%%TODO%%`;
     }
-    return `${colors.cyan}${entity.kind}${colors.reset}${desc ? " " + desc : ""} ${colors.black}· ${entity.pos.fyl}:${entity.pos.lyn}:${entity.pos.col}${colors.reset}` + (ch ?? []).map(e => "\n" + colors.black + config.indent.repeat(level + 1) + colors.reset + renderEntityAdisp(config, e, level + 1, false)).join("");
+    return `${colors.cyan}${entity.kind}${colors.reset}${desc ? " " + desc : ""} ${colors.black}· ${entity.pos.fyl}:${entity.pos.lyn}:${entity.pos.col}${colors.reset}` + (ch ?? []).map(e => "\n" + colors.black + config.indent.repeat(level + 1) + colors.reset + renderEntityAdisp(config, e, level + 1)).join("");
 }
 
 
@@ -603,7 +605,7 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: nu
     }
 }
 
-const colors = {
+export const colors = {
     black: "\x1b[30m",
     red: "\x1b[31m",
     green: "\x1b[32m",
@@ -679,7 +681,7 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
     const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false }, tokenizationResult.result, 0, 0, true);
     const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true }, tokenizationResult.result, 0, 0, true);
-    const adisp = tokenizationResult.result.map(r => renderEntityAdisp({indent: "│ "}, r, 0, true)).join("\n");
+    const adisp = tokenizationResult.result.map(r => renderEntityAdisp({indent: "│ "}, r, 0)).join("\n");
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
     return (

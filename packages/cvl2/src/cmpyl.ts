@@ -1,3 +1,4 @@
+import { comptimeEval } from "./cte";
 import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type OperatorSegmentToken, type OperatorToken, type PrecString, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
 
 class PositionedError extends Error {
@@ -15,13 +16,22 @@ function importFile(filename: string, contents: string) {
     const sourceCode = new Source(filename, contents);
     const tokenized = tokenize(sourceCode);
     console.log(renderTokenizedOutput(tokenized, sourceCode));
+    const rootPos: TokenPosition = {fyl: filename, lyn: 0, col: 0, idx: 0};
     
     const env: Env = {
         trace: [],
         errors: [...tokenized.errors],
     };
     try {
-        analyzeNamespace(env, {fyl: filename, lyn: 0, col: 0, idx: 0}, tokenized.result);
+        const block: AnalysisBlock = {
+            lines: [],
+        };
+        const ns = analyzeNamespace(env, {fyl: filename, lyn: 0, col: 0, idx: 0}, tokenized.result);
+        const mainFn = ns.getSymbol(env, rootPos, mainSymbolSymbol, block);
+        if (!mainFn) throwErr(env, rootPos, "expected main fn");
+        const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, (env, slot, pos, block) => ({idx: blockAppend(block, {expr: "void", pos: compilerPos()}), type: {type: "void", pos: compilerPos()}}), block);
+        // blockAppend(block, {expr: "break", value: callResult.idx, pos: rootPos});
+        comptimeEval(block);
     }catch(err) {
         handleErr(env, err);
     }
@@ -44,50 +54,22 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
     const block: AnalysisBlock = {
         lines: [],
     };
-    const analyzeBindEntries = new Map<string | symbol, unknown>();
+    const arrEntry = blockAppend(block, {expr: "comptime:ns_list_init", pos});
     analyzeBlock(env, {type: "void", pos: compilerPos()}, pos, src, block, {
         analyzeBind(env, [lhs, op, rhs], block): AnalysisResult {
             const key = analyze(env, {type: "key", pos: compilerPos()}, lhs.pos, lhs.items, block);
             if (key.type.type !== "key") throw new Error("unreachable");
-            if (!key.type.narrow) throwErr(env, lhs.pos, "Expected narrowed key, got un-narrowed key");
-            // ^ this means eg:
-            // `let a: comptime_key = .abc; a := 25` -> this fails because a is not narrowed
-            // `let a: comptime_key[.abc] = .abc; a := 25` -> this succeeds
-            // strange. odd behaviour here. it's fine though i guess?
+            if (!key.type.narrow) throwErr(env, lhs.pos, "Expected narrowed key, got un-narrowed key", [
+                [undefined, "This error is unnecessary because we're not varying the slot type of the value based on the type of the key"],
+            ]);
             const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
             // insert an instruction to append the value to the children list
             // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
-            throwErr(env, op.pos, "TODO: insert an instruction to append [value] to the list of [k, v] pairs");
+            const ret = blockAppend(block, {expr: "comptime:ns_list_append", list: arrEntry, key: key.idx, value: value.idx, pos: op.pos});
+            return {type: {type: "void", pos: compilerPos()}, idx: ret};
         },
     });
-    /*
-    are we ruined by going this route?
-    - the route being one that requires comptime evaluating the block contents before we post the fields
-
-    A :: ns [
-        .three := B.two + 1
-        .one := 1
-    ]
-    B :: ns [
-        .two := A.one + 1
-    ]
-    yes we're ruined aren't we
-    because we're analyzing A
-    wait no it's fine actually because := bodies are lazy already
-    the only time there's a dep loop is:
-    A :: ns [
-        let three = B.two + 1
-        .three := three
-        .one = 1
-    ]
-    B :: ns [
-        let two = A.one + 1
-        .two := 
-    ]
-    there's a dep loop there because we're analyzing the line 'let three = B.two'
-    so then we analyze B, so we analyze let two = A.one, so then we analyze A = dep loop
-    ok so we're actually fine maybe??
-    */
+    comptimeEval(block);
     return {
         getString(env, pos, field, block) {
             throwErr(env, pos, "todo getString on analyzeNamespace namespace");
@@ -119,8 +101,8 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
     }
 
 
-    block.lines.push({expr: "void"});
-    return {idx: block.lines.length - 1, type: {type: "void", pos: pos}};
+    const ret = blockAppend(block, {expr: "void", pos});
+    return {idx: ret, type: {type: "void", pos: pos}};
 }
 type ComptimeTypeVoid = {type: "void", pos: TokenPosition};
 type ComptimeTypeKey = {
@@ -144,7 +126,10 @@ type ComptimeTypeFn = {
     arg: ComptimeType,
     ret: ComptimeType,
 };
-type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn;
+type ComptimeTypeFolderOrFile = {
+    type: "folder_or_file",
+};
+type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile;
 
 type ComptimeNarrowKey = {
     type: "symbol",
@@ -159,29 +144,61 @@ type ComptimeValueAst = {
     ast: SyntaxNode[],
 };
 
-type AnalysisLine = {
+export type AnalysisLine = {
     expr: "comptime:ast",
     value: ComptimeValueAst,
+    pos: TokenPosition,
 } | {
     expr: "comptime:only",
+    pos: TokenPosition,
+} | {
+    expr: "comptime:ns_list_init",
+    pos: TokenPosition,
+} | {
+    expr: "comptime:ns_list_append",
+    pos: TokenPosition,
+    list: BlockIdx,
+    key: BlockIdx,
+    value: BlockIdx,
 } | {
     expr: "void",
+    pos: TokenPosition,
+} | {
+    expr: "call",
+    pos: TokenPosition,
+    method: BlockIdx,
+    arg: BlockIdx,
+} | {
+    expr: "break",
+    pos: TokenPosition,
+    // target: ...
+    value: BlockIdx,
 };
-type AnalysisBlock = {
+export type AnalysisBlock = {
     lines: AnalysisLine[],
 };
-type AnalysisResult = {
-    idx: number,
+export type AnalysisResult = {
+    idx: BlockIdx,
     type: ComptimeType,
 };
-function blockAppend(block: AnalysisBlock, instr: AnalysisLine): number {
+type BlockIdx = number & {__is_block_idx: true};
+function blockAppend(block: AnalysisBlock, instr: AnalysisLine): BlockIdx {
     block.lines.push(instr);
-    return block.lines.length - 1;
+    return block.lines.length - 1 as BlockIdx;
+}
+function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: AnalysisResult, getArg: (env: Env, slot: ComptimeType, pos: TokenPosition, block: AnalysisBlock) => AnalysisResult, block: AnalysisBlock): AnalysisResult {
+    if (method.type.type === "fn") {
+        const arg = getArg(env, method.type.arg, pos, block);
+        return {
+            idx: blockAppend(block, {expr: "call", method: method.idx, arg: arg.idx, pos}),
+            type: method.type.ret,
+        };
+    } else throwErr(env, pos, "not supported call type: " + method.type.type);
 }
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
     if (slot.type === "ast") {
         const value: ComptimeValueAst = {ast: ast};
-        const idx = blockAppend(block, {expr: "comptime:ast", value});
+        const idx = blockAppend(block, {expr: "comptime:ast", pos, value});
         return {idx, type: {
             type: "ast",
             pos: pos,
@@ -210,7 +227,7 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
 
     let result: AnalysisResult;
     if (first.kind === "raw" && first.raw === ".") {
-        const idx = blockAppend(block, {expr: "comptime:only"});
+        const idx = blockAppend(block, {expr: "comptime:only", pos: first.pos});
         result = {idx, type: {
             type: "type",
             narrow: slot,
@@ -227,14 +244,16 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
     return result;
 }
 
-const mainSymbol: ComptimeTypeKey = {
+const stdFolderOrFileType: ComptimeTypeFolderOrFile = {type: "folder_or_file"}; // type std.Folder | std.File
+const mainSymbolSymbol = Symbol("main");
+const mainSymbolType: ComptimeTypeKey = {
     type: "key",
     pos: compilerPos(),
     narrow: {
-        type: "symbol", symbol: Symbol("main"), child: {
+        type: "symbol", symbol: mainSymbolSymbol, child: {
             type: "fn",
             arg: {type: "void", pos: compilerPos()},
-            ret: {type: "todo"}, // type std.Folder | std.File
+            ret: stdFolderOrFileType,
         },
     }
 };
@@ -242,8 +261,8 @@ function builtinNamespace(env: Env): ComptimeNamespace {
     return {
         getString(env, pos, field, block): AnalysisResult {
             if (field === "main") {
-                const idx = blockAppend(block, {expr: "comptime:only"});
-                return {idx, type: mainSymbol};
+                const idx = blockAppend(block, {expr: "comptime:only", pos});
+                return {idx, type: mainSymbolType};
             } else {
                 throwErr(env, pos, "builtin does not have field: "+field);
             }
@@ -256,7 +275,7 @@ function builtinNamespace(env: Env): ComptimeNamespace {
 function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
     if (ast.kind === "builtin") {
         if (ast.str === "builtin") {
-            const idx = blockAppend(block, {expr: "comptime:only"});
+            const idx = blockAppend(block, {expr: "comptime:only", pos: ast.pos});
             return {idx, type: {
                 type: "namespace",
                 narrow: builtinNamespace(env),

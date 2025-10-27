@@ -3,4 +3,10 @@
     "a.out" := std.File: "out"
 ]
 
+demo :: () void [
+    1
+    2
+    -> 3
+]
+
 other :: void, other2::void;other3::void
