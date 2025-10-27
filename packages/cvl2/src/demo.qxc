@@ -1,6 +1,6 @@
 
 #builtin.main := (): std.Folder [
-    "a.out" = std.File: "out"
+    "a.out" := std.File: "out"
 ]
 
 other :: void, other2::void;other3::void
