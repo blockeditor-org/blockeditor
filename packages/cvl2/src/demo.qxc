@@ -1,12 +1,13 @@
 
 #builtin.main := (): std.Folder [
-    "a.out" := std.File: "out"
+    "a.txt" := std.File: "hello"
+    "a.zig" := std.zig.compile: () {}
+    "a.js" := std.js.compile: () {}
+    "a.mcfunction" := std.mc.compile: (position: std.mc.Position, entity: std.mc.Entity) std.mc.Result: {
+        _ = std.mc.cmd.tp(entity, position)
+        -> 25
+    }
 ]
-
-demo :: () void [
-    1
-    2
-    -> 3
-]
+std :: #builtin.std
 
 other :: void, other2::void;other3::void
