@@ -25,7 +25,7 @@ function printBlock(cfg: PrintCfg, block: AnalysisBlock, indent: number): string
                 desc = `symbol=${expr.narrow.symbol.description??"(unnamed)"}, type=${printType(cfg, expr.narrow.child, indent + 1)}`;
             }
         }else if(expr.expr === "comptime:ast") {
-            desc = "ast:"+expr.value.ast.map(l => "\n"+printIndent(cfg, indent + 1)+renderEntityAdisp(cfg, l, indent));
+            desc = "ast:"+expr.value.ast.map(l => "\n"+printIndent(cfg, indent + 1)+renderEntityAdisp(cfg, l, indent + 1));
         }else if(expr.expr === "comptime:ns_list_append") {
             desc = `key=${expr.key} list=${expr.list} value=${expr.value}`;
         } else {
