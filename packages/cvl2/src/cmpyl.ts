@@ -104,32 +104,34 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
     const ret = blockAppend(block, {expr: "void", pos});
     return {idx: ret, type: {type: "void", pos: pos}};
 }
-type ComptimeTypeVoid = {type: "void", pos: TokenPosition};
-type ComptimeTypeKey = {
+export type ComptimeTypeVoid = {type: "void", pos: TokenPosition};
+export type ComptimeTypeKey = {
     type: "key", pos: TokenPosition,
     narrow?: ComptimeNarrowKey,
 };
-type ComptimeTypeAst = {
+export type ComptimeTypeAst = {
     type: "ast", pos: TokenPosition,
 };
-type ComptimeTypeUnknown = {
+export type ComptimeTypeUnknown = {
     type: "unknown", pos: TokenPosition,
 };
-type ComptimeTypeType = {
-    type: "type", narrow?: ComptimeType,
+export type ComptimeTypeType = {
+    type: "type", narrow?: ComptimeType, pos: TokenPosition,
 };
-type ComptimeTypeNamespace = {
-    type: "namespace", narrow?: ComptimeNamespace,
+export type ComptimeTypeNamespace = {
+    type: "namespace", narrow?: ComptimeNamespace, pos: TokenPosition,
 };
-type ComptimeTypeFn = {
+export type ComptimeTypeFn = {
     type: "fn",
+    pos: TokenPosition,
     arg: ComptimeType,
     ret: ComptimeType,
 };
-type ComptimeTypeFolderOrFile = {
+export type ComptimeTypeFolderOrFile = {
     type: "folder_or_file",
+    pos: TokenPosition,
 };
-type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile;
+export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile;
 
 type ComptimeNarrowKey = {
     type: "symbol",
@@ -151,6 +153,10 @@ export type AnalysisLine = {
 } | {
     expr: "comptime:only",
     pos: TokenPosition,
+} | {
+    expr: "comptime:key",
+    pos: TokenPosition,
+    narrow: ComptimeNarrowKey    
 } | {
     expr: "comptime:ns_list_init",
     pos: TokenPosition,
@@ -230,6 +236,7 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
         const idx = blockAppend(block, {expr: "comptime:only", pos: first.pos});
         result = {idx, type: {
             type: "type",
+            pos: slot.pos,
             narrow: slot,
         }};
     }else {
@@ -244,24 +251,26 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
     return result;
 }
 
-const stdFolderOrFileType: ComptimeTypeFolderOrFile = {type: "folder_or_file"}; // type std.Folder | std.File
+const stdFolderOrFileType: ComptimeTypeFolderOrFile = {type: "folder_or_file", pos: compilerPos()}; // type std.Folder | std.File
 const mainSymbolSymbol = Symbol("main");
+const mainSymbolNarrow: ComptimeNarrowKey = {
+    type: "symbol", symbol: mainSymbolSymbol, child: {
+        type: "fn",
+        arg: {type: "void", pos: compilerPos()},
+        ret: stdFolderOrFileType,
+        pos: compilerPos(),
+    },
+};
 const mainSymbolType: ComptimeTypeKey = {
     type: "key",
     pos: compilerPos(),
-    narrow: {
-        type: "symbol", symbol: mainSymbolSymbol, child: {
-            type: "fn",
-            arg: {type: "void", pos: compilerPos()},
-            ret: stdFolderOrFileType,
-        },
-    }
+    narrow: mainSymbolNarrow,
 };
 function builtinNamespace(env: Env): ComptimeNamespace {
     return {
         getString(env, pos, field, block): AnalysisResult {
             if (field === "main") {
-                const idx = blockAppend(block, {expr: "comptime:only", pos});
+                const idx = blockAppend(block, {expr: "comptime:key", narrow: mainSymbolNarrow, pos});
                 return {idx, type: mainSymbolType};
             } else {
                 throwErr(env, pos, "builtin does not have field: "+field);
@@ -279,6 +288,7 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             return {idx, type: {
                 type: "namespace",
                 narrow: builtinNamespace(env),
+                pos: compilerPos(),
             }};
         }else {
             throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
