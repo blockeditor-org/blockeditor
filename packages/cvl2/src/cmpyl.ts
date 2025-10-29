@@ -28,7 +28,7 @@ function importFile(filename: string, contents: string) {
             lines: [],
         };
         const ns = analyzeNamespace(env, {fyl: filename, lyn: 0, col: 0, idx: 0}, tokenized.result);
-        const mainFn = ns.getSymbol(env, rootPos, mainSymbolSymbol, block);
+        const mainFn = ns.getSymbol(env, rootPos, mainSymbolChildType, mainSymbolSymbol, block);
         if (!mainFn) throwErr(env, rootPos, "expected main fn");
         const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, (env, slot, pos, block) => ({idx: blockAppend(block, {expr: "void", pos: compilerPos()}), type: {type: "void", pos: compilerPos()}}), block);
         // blockAppend(block, {expr: "break", value: callResult.idx, pos: rootPos});
@@ -55,11 +55,11 @@ export type TargetEnv = {
 };
 type ComptimeNamespace = {
     getString(env: Env, pos: TokenPosition, field: string, block: AnalysisBlock): AnalysisResult,
-    getSymbol(env: Env, pos: TokenPosition, field: symbol, block: AnalysisBlock): AnalysisResult | undefined,
+    getSymbol(env: Env, pos: TokenPosition, keychild: ComptimeType, field: symbol, block: AnalysisBlock): AnalysisResult | undefined,
 };
 
 type NsFields = {
-    registered: Map<string | symbol, {pos: TokenPosition, ast: SyntaxNode[]}>,
+    registered: Map<string | symbol, {key: ComptimeNarrowKey, ast: ComptimeValueAst}>,
 };
 
 function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeNamespace {
@@ -86,13 +86,13 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
                 const fields = (results[arrEntry]! as NsFields);
                 const key = results[kIdx] as ComptimeNarrowKey;
                 const prevdef = fields.registered.get(key.key);
-                const ast = results[value.idx] as SyntaxNode[];
+                const ast = results[value.idx] as ComptimeValueAst;
                 if (prevdef) {
-                    throwErr(env, ast[0]?.pos, "already declared", [
-                        [prevdef.ast[0]?.pos, "previous definition here"],
+                    throwErr(env, ast.pos, "already declared", [
+                        [prevdef.ast.pos, "previous definition here"],
                     ]);
                 }
-                fields.registered.set(key.key, {ast: ast, pos: ast[0]?.pos ?? compilerPos()}); // TODO pos
+                fields.registered.set(key.key, {key, ast});
             }});
             return {type: {type: "void", pos: compilerPos()}, idx: ret};
         },
@@ -102,18 +102,20 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
     const arrValue = results[arrEntry] as NsFields;
     return {
         getString(env, pos, field, block) {
-            if (arrValue.registered.has(field)) {
+            const value = arrValue.registered.get(field);
+            if (value) {
                 throwErr(env, pos, "todo get registered field");
             }
             throwErr(env, pos, "string field '"+field+"' is not defined on namespace", [
                 [pos, "namespace declared here"],
             ]);
         },
-        getSymbol(env, pos, field, block) {
-            if (arrValue.registered.has(field)) {
-                // ok so now we have to analyze the field in its original context
-                // or if the compile target has changed, re-analyze the namespace
-                throwErr(env, pos, "todo get registered field");
+        getSymbol(env, pos, childt, field, outerBlock) {
+            const value = arrValue.registered.get(field);
+            if (value) {
+                const block: AnalysisBlock = {lines: []};
+                const result = analyze(env, childt, value.ast.pos, value.ast.ast, block);
+                throwErr(env, pos, "todo handle analyzed result");
             }
             return undefined;
         },
@@ -184,6 +186,8 @@ type ComptimeNarrowKey = {
 
 type ComptimeValueAst = {
     ast: SyntaxNode[],
+    pos: TokenPosition,
+    // TODO: some env stuff in here (ie scope)
 };
 
 export type AnalysisLine = {
@@ -200,6 +204,8 @@ export type AnalysisLine = {
     //
     // basically we take the set of input instructions and the set of backend-supported output instructions and
     // transform any unsupported ones
+    //
+    // let's switch back to that
 } | {
     expr: "void",
     pos: TokenPosition,
@@ -237,7 +243,7 @@ function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: A
 }
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
     if (slot.type === "ast") {
-        const value: ComptimeValueAst = {ast: ast};
+        const value: ComptimeValueAst = {ast: ast, pos, env};
         const idx = blockAppend(block, {expr: "comptime:raw", pos, cb(results) {return value}});
         return {idx, type: {
             type: "ast",
@@ -287,13 +293,14 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
 
 const stdFolderOrFileType: ComptimeTypeFolderOrFile = {type: "folder_or_file", pos: compilerPos()}; // type std.Folder | std.File
 const mainSymbolSymbol = Symbol("main");
+const mainSymbolChildType: ComptimeType = {
+    type: "fn",
+    arg: {type: "void", pos: compilerPos()},
+    ret: stdFolderOrFileType,
+    pos: compilerPos(),
+};
 const mainSymbolNarrow: ComptimeNarrowKey = {
-    type: "symbol", key: mainSymbolSymbol, child: {
-        type: "fn",
-        arg: {type: "void", pos: compilerPos()},
-        ret: stdFolderOrFileType,
-        pos: compilerPos(),
-    },
+    type: "symbol", key: mainSymbolSymbol, child: mainSymbolChildType,
 };
 const mainSymbolType: ComptimeTypeKey = {
     type: "key",
