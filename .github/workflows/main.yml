@@ -8,16 +8,25 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-          cache-size-limit: 8192
+          use-cache: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-      - run: unset ZIG_LOCAL_CACHE_DIR; zig build -Dci --fetch=all
-      - run: unset ZIG_LOCAL_CACHE_DIR; zig build -Dci
-      - run: unset ZIG_LOCAL_CACHE_DIR; zig build test -Dci
-      - run: unset ZIG_LOCAL_CACHE_DIR; zig build -Dci -Dtarget=x86_64-windows -p build/windows
-      - run: unset ZIG_LOCAL_CACHE_DIR; zig build -Dci -Dplatform=web -p build/web
+      - name: Download packages
+        run: |
+          mkdir -p ~/.cache/zig
+          wget -O blockeditor-packages.zip https://unalfs.b-cdn.net/by-name/blockeditor-packages-0.zip
+          echo "344435a7e9d8c924688cac67246d08838a00361280e7a6c81710ddd226d0d400 *blockeditor-packages-0.zip" | shasum -a 256 --check --status
+          unzip -o blockeditor-packages.zip -d ~/.cache/zig/
+      - name: Build with Zig (network disabled)
+        run: |
+          unshare -n bash -c '
+            zig build -Dci &&
+            zig build test -Dci &&
+            zig build -Dci -Dtarget=x86_64-windows -p build/windows &&
+            zig build -Dci -Dplatform=web -p build/web
+          '
       - run: unset ZIG_LOCAL_CACHE_DIR; ./gradlew assembleDebug
         working-directory: packages/android/Aztest
       - run: mkdir -p build/android && cp packages/android/Aztest/app/build/outputs/apk/debug/app-debug.apk build/android
