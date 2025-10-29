@@ -58,7 +58,8 @@ type ComptimeNamespace = {
     getSymbol(env: Env, pos: TokenPosition, keychild: ComptimeType, field: symbol, block: AnalysisBlock): AnalysisResult | undefined,
 };
 
-type NsFields = {
+export type NsFields = {
+    locked: boolean,
     registered: Map<string | symbol, {key: ComptimeNarrowKey, ast: ComptimeValueAst}>,
 };
 
@@ -66,9 +67,7 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
     const block: AnalysisBlock = {
         lines: [],
     };
-    const arrEntry = blockAppend(block, {expr: "comptime:raw", pos, cb(results): NsFields {return {
-        registered: new Map(),
-    }}});
+    const arrEntry = blockAppend(block, {expr: "comptime:ns_list_init", pos});
     let locked = false;
     analyzeBlock(env, {type: "void", pos: compilerPos()}, pos, src, block, {
         analyzeBind(env, [lhs, op, rhs], block): AnalysisResult {
@@ -80,26 +79,13 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
             const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
             // insert an instruction to append the value to the children list
             // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
-            const kIdx = key.idx;
-            const ret = blockAppend(block, {expr: "comptime:raw", pos: op.pos, cb(env, results) {
-                assert(!locked);
-                const fields = (results[arrEntry]! as NsFields);
-                const key = results[kIdx] as ComptimeNarrowKey;
-                const prevdef = fields.registered.get(key.key);
-                const ast = results[value.idx] as ComptimeValueAst;
-                if (prevdef) {
-                    throwErr(env, ast.pos, "already declared", [
-                        [prevdef.ast.pos, "previous definition here"],
-                    ]);
-                }
-                fields.registered.set(key.key, {key, ast});
-            }});
+            const ret = blockAppend(block, {expr: "comptime:ns_list_append", pos: op.pos, list: arrEntry, key: key.idx, value: value.idx});
             return {type: {type: "void", pos: compilerPos()}, idx: ret};
         },
     });
     const results = comptimeEval(env, block);
-    locked = true;
     const arrValue = results[arrEntry] as NsFields;
+    arrValue.locked = true;
     return {
         getString(env, pos, field, block) {
             const value = arrValue.registered.get(field);
@@ -175,7 +161,7 @@ export type ComptimeTypeFolderOrFile = {
 };
 export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile;
 
-type ComptimeNarrowKey = {
+export type ComptimeNarrowKey = {
     type: "symbol",
     key: symbol,
     child: ComptimeType,
@@ -184,28 +170,38 @@ type ComptimeNarrowKey = {
     key: string,
 };
 
-type ComptimeValueAst = {
+export type ComptimeValueAst = {
     ast: SyntaxNode[],
     pos: TokenPosition,
     // TODO: some env stuff in here (ie scope)
 };
 
+// there may be a bunch of random instructions
+// but not every backend will need to support every instruction
+// backends will be able to define which instructions they support,
+// and then other instructions will be transformed to the nearest supported instruction
+// (it will assemble a plan for each unsupported instruction that uses the lowest cost list of
+//  transforms to convert to a supported instruction)
 export type AnalysisLine = {
     expr: "comptime:only",
     pos: TokenPosition,
 } | {
-    expr: "comptime:raw",
+    expr: "comptime:ns_list_init",
     pos: TokenPosition,
-    cb(env: Env, results: readonly unknown[]): unknown,
-    // the alternative to cb ^ is the comptemp way
-    // the comptemp way is having specialized instructions (comptemp:init_list)
-    // and converting those to backend instructions (js:array_init)
-    // then compiling to the backend
-    //
-    // basically we take the set of input instructions and the set of backend-supported output instructions and
-    // transform any unsupported ones
-    //
-    // let's switch back to that
+} | {
+    expr: "comptime:key",
+    pos: TokenPosition,
+    narrow: ComptimeNarrowKey,
+} | {
+    expr: "comptime:ast",
+    pos: TokenPosition,
+    narrow: ComptimeValueAst,
+} | {
+    expr: "comptime:ns_list_append",
+    pos: TokenPosition,
+    key: BlockIdx,
+    list: BlockIdx,
+    value: BlockIdx,
 } | {
     expr: "void",
     pos: TokenPosition,
@@ -243,8 +239,8 @@ function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: A
 }
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
     if (slot.type === "ast") {
-        const value: ComptimeValueAst = {ast: ast, pos, env};
-        const idx = blockAppend(block, {expr: "comptime:raw", pos, cb(results) {return value}});
+        const value: ComptimeValueAst = {ast: ast, pos};
+        const idx = blockAppend(block, {expr: "comptime:ast", pos, narrow: value});
         return {idx, type: {
             type: "ast",
             pos: pos,
@@ -311,7 +307,7 @@ function builtinNamespace(env: Env): ComptimeNamespace {
     return {
         getString(env, pos, field, block): AnalysisResult {
             if (field === "main") {
-                const idx = blockAppend(block, {expr: "comptime:raw", cb(results) {return mainSymbolNarrow}, pos});
+                const idx = blockAppend(block, {expr: "comptime:key", narrow: mainSymbolNarrow, pos});
                 return {idx, type: mainSymbolType};
             } else {
                 throwErr(env, pos, "builtin does not have field: "+field);
@@ -437,13 +433,13 @@ function readBinary(env: Env, src: SyntaxNode[], cat: PrecString): OperatorSegme
         throwErr(env, itm.pos, `Unexpected token in ${cat}: ${itm.kind}`);
     });
 }
-function throwErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): never {
+export function throwErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): never {
     throw new PositionedError(getErr(env, pos, msg, notes))
 }
-function addErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): void {
+export function addErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): void {
     env.errors.push(getErr(env, pos, msg, notes))
 }
-function getErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): TokenizationError {
+export function getErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): TokenizationError {
     throw new PositionedError({
         entries: [
             {pos: pos, style: "error", message: msg},
@@ -459,7 +455,7 @@ function handleErr(env: Env, err: unknown): void {
         throw err;
     }
 }
-function assert(a: boolean): asserts a {
+export function assert(a: boolean): asserts a {
     if (!a) throw new Error("assertion failed");
 }
 
