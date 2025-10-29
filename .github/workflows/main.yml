@@ -17,11 +17,11 @@ jobs:
         run: |
           mkdir -p ~/.cache/zig &&
           echo "Download..." &&
-          wget -q -O blockeditor-packages-0.zip https://unalfs.b-cdn.net/by-name/blockeditor-packages-0.zip &&
+          wget -q -O blockeditor-packages-0.tar.xz https://unalfs.b-cdn.net/by-name/blockeditor-packages-0.tar.xz &&
           echo "Shasum..." &&
-          echo "344435a7e9d8c924688cac67246d08838a00361280e7a6c81710ddd226d0d400 *blockeditor-packages-0.zip" | shasum -a 256 --check --status &&
-          echo "Unzip..." &&
-          unzip -q -o blockeditor-packages-0.zip -d ~/.cache/zig/ &&
+          echo "d03337940503f5a0c33df65528ff6f01920f5ff79ba8c79842932118873459ce *blockeditor-packages-0.tar.xz" | shasum -a 256 --check --status &&
+          echo "Extract..." &&
+          tar -xJf blockeditor-packages-0.tar.xz -C ~/.cache/zig/ &&
           echo "Done"
       - name: Build with Zig (network disabled)
         run: |
