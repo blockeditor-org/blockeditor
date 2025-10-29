@@ -15,10 +15,14 @@ jobs:
           java-version: '21'
       - name: Download packages
         run: |
-          mkdir -p ~/.cache/zig
-          wget -O blockeditor-packages-0.zip https://unalfs.b-cdn.net/by-name/blockeditor-packages-0.zip
-          echo "344435a7e9d8c924688cac67246d08838a00361280e7a6c81710ddd226d0d400 *blockeditor-packages-0.zip" | shasum -a 256 --check --status
-          unzip -o blockeditor-packages-0.zip -d ~/.cache/zig/
+          mkdir -p ~/.cache/zig &&
+          echo "Download..." &&
+          wget -q -O blockeditor-packages-0.zip https://unalfs.b-cdn.net/by-name/blockeditor-packages-0.zip &&
+          echo "Shasum..." &&
+          echo "344435a7e9d8c924688cac67246d08838a00361280e7a6c81710ddd226d0d400 *blockeditor-packages-0.zip" | shasum -a 256 --check --status &&
+          echo "Unzip..." &&
+          unzip -q -o blockeditor-packages-0.zip -d ~/.cache/zig/ &&
+          echo "Done"
       - name: Build with Zig (network disabled)
         run: |
           unshare -n bash -c '
