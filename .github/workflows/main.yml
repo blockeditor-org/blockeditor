@@ -23,14 +23,10 @@ jobs:
           echo "Extract..." &&
           tar -xJf blockeditor-packages-0.tar.xz -C ~/.cache/zig/ &&
           echo "Done"
-      - name: Build with Zig (network disabled)
-        run: |
-          unshare -n bash -c '
-            zig build -Dci &&
-            zig build test -Dci &&
-            zig build -Dci -Dtarget=x86_64-windows -p build/windows &&
-            zig build -Dci -Dplatform=web -p build/web
-          '
+      - run: zig build -Dci
+      - run: zig build test -Dci
+      - run: zig build -Dci -Dtarget=x86_64-windows -p build/windows
+      - run: zig build -Dci -Dplatform=web -p build/web
       - run: unset ZIG_LOCAL_CACHE_DIR; ./gradlew assembleDebug
         working-directory: packages/android/Aztest
       - run: mkdir -p build/android && cp packages/android/Aztest/app/build/outputs/apk/debug/app-debug.apk build/android
