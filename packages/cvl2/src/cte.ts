@@ -1,9 +1,23 @@
-import type { AnalysisBlock, ComptimeType } from "./cmpyl";
+import type { AnalysisBlock, ComptimeType, Env } from "./cmpyl";
 import { colors, renderEntityAdisp, type TokenPosition } from "./cvl2";
 
-export function comptimeEval(block: AnalysisBlock): void {
+export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
     console.log(printBlock({indent: "│ "}, block, 0));
-    throw new Error("todo: comptime eval block");
+
+    const results = Array.from({length: block.lines.length}, () => undefined) as unknown[];
+    for (let i = 0; i < block.lines.length; i += 1) {
+        const instr = block.lines[i]!;
+        if (instr.expr === "void") {
+            results[i] = undefined;
+        } else if (instr.expr === "comptime:only") {
+            results[i] = undefined;
+        } else if (instr.expr === "comptime:raw") {
+            results[i] = instr.cb(env, results);
+        } else {
+            throw new Error("todo: comptime eval expr: "+instr.expr);
+        }
+    }
+    return results;
 }
 
 type PrintCfg = {indent: string};
@@ -14,20 +28,22 @@ function printBlock(cfg: PrintCfg, block: AnalysisBlock, indent: number): string
         let desc: string;
         if (expr.expr === "call") {
             desc = `method=${expr.method} arg=${expr.arg}`;
-        }else if(expr.expr === "comptime:ns_list_init") {
-            desc = "";
+        }else if(expr.expr === "comptime:raw") {
+            desc = "raw";
         }else if(expr.expr === "comptime:only") {
             desc = "";
-        }else if(expr.expr === "comptime:key") {
-            if(expr.narrow.type === "string") {
-                desc = `str=${JSON.stringify(expr.narrow.string)}`;
-            }else{
-                desc = `symbol=${expr.narrow.symbol.description??"(unnamed)"}, type=${printType(cfg, expr.narrow.child, indent + 1)}`;
-            }
-        }else if(expr.expr === "comptime:ast") {
-            desc = "ast:"+expr.value.ast.map(l => "\n"+printIndent(cfg, indent + 1)+renderEntityAdisp(cfg, l, indent + 1));
-        }else if(expr.expr === "comptime:ns_list_append") {
-            desc = `key=${expr.key} list=${expr.list} value=${expr.value}`;
+        // }else if(expr.expr === "comptime:ns_list_init") {
+        //     desc = "";
+        // }else if(expr.expr === "comptime:key") {
+        //     if(expr.narrow.type === "string") {
+        //         desc = `str=${JSON.stringify(expr.narrow.string)}`;
+        //     }else{
+        //         desc = `symbol=${expr.narrow.symbol.description??"(unnamed)"}, type=${printType(cfg, expr.narrow.child, indent + 1)}`;
+        //     }
+        // }else if(expr.expr === "comptime:ast") {
+        //     desc = "ast:"+expr.value.ast.map(l => "\n"+printIndent(cfg, indent + 1)+renderEntityAdisp(cfg, l, indent + 1));
+        // }else if(expr.expr === "comptime:ns_list_append") {
+        //     desc = `key=${expr.key} list=${expr.list} value=${expr.value}`;
         } else {
             desc = "%%TODO%%";
         }

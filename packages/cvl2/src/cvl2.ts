@@ -483,7 +483,7 @@ export function tokenize(source: Source): TokenizationResult {
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                 nl: false,
             });
-        }else if(currentToken === "." || currentToken == "->") {
+        }else if(currentToken === "." || currentToken == "->" || currentToken === "_") {
             currentSyntaxNodes.push({
                 kind: "raw",
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },

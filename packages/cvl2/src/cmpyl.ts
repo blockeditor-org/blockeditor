@@ -21,6 +21,7 @@ function importFile(filename: string, contents: string) {
     const env: Env = {
         trace: [],
         errors: [...tokenized.errors],
+        target: {kind: "comptime"},
     };
     try {
         const block: AnalysisBlock = {
@@ -31,7 +32,7 @@ function importFile(filename: string, contents: string) {
         if (!mainFn) throwErr(env, rootPos, "expected main fn");
         const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, (env, slot, pos, block) => ({idx: blockAppend(block, {expr: "void", pos: compilerPos()}), type: {type: "void", pos: compilerPos()}}), block);
         // blockAppend(block, {expr: "break", value: callResult.idx, pos: rootPos});
-        comptimeEval(block);
+        comptimeEval(env, block);
     }catch(err) {
         handleErr(env, err);
     }
@@ -42,19 +43,33 @@ function importFile(filename: string, contents: string) {
     }
 }
 
-type Env = {
+export type Env = {
     trace: TokenPosition[],
     errors: TokenizationError[],
+    target: TargetEnv,
+};
+export type TargetEnv = {
+    kind: "comptime"
+} | {
+    kind: "todo",
 };
 type ComptimeNamespace = {
     getString(env: Env, pos: TokenPosition, field: string, block: AnalysisBlock): AnalysisResult,
     getSymbol(env: Env, pos: TokenPosition, field: symbol, block: AnalysisBlock): AnalysisResult | undefined,
 };
+
+type NsFields = {
+    registered: Map<string | symbol, {pos: TokenPosition, ast: SyntaxNode[]}>,
+};
+
 function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeNamespace {
     const block: AnalysisBlock = {
         lines: [],
     };
-    const arrEntry = blockAppend(block, {expr: "comptime:ns_list_init", pos});
+    const arrEntry = blockAppend(block, {expr: "comptime:raw", pos, cb(results): NsFields {return {
+        registered: new Map(),
+    }}});
+    let locked = false;
     analyzeBlock(env, {type: "void", pos: compilerPos()}, pos, src, block, {
         analyzeBind(env, [lhs, op, rhs], block): AnalysisResult {
             const key = analyze(env, {type: "key", pos: compilerPos()}, lhs.pos, lhs.items, block);
@@ -65,16 +80,41 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
             const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
             // insert an instruction to append the value to the children list
             // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
-            const ret = blockAppend(block, {expr: "comptime:ns_list_append", list: arrEntry, key: key.idx, value: value.idx, pos: op.pos});
+            const kIdx = key.idx;
+            const ret = blockAppend(block, {expr: "comptime:raw", pos: op.pos, cb(env, results) {
+                assert(!locked);
+                const fields = (results[arrEntry]! as NsFields);
+                const key = results[kIdx] as ComptimeNarrowKey;
+                const prevdef = fields.registered.get(key.key);
+                const ast = results[value.idx] as SyntaxNode[];
+                if (prevdef) {
+                    throwErr(env, ast[0]?.pos, "already declared", [
+                        [prevdef.ast[0]?.pos, "previous definition here"],
+                    ]);
+                }
+                fields.registered.set(key.key, {ast: ast, pos: ast[0]?.pos ?? compilerPos()}); // TODO pos
+            }});
             return {type: {type: "void", pos: compilerPos()}, idx: ret};
         },
     });
-    comptimeEval(block);
+    const results = comptimeEval(env, block);
+    locked = true;
+    const arrValue = results[arrEntry] as NsFields;
     return {
         getString(env, pos, field, block) {
-            throwErr(env, pos, "todo getString on analyzeNamespace namespace");
+            if (arrValue.registered.has(field)) {
+                throwErr(env, pos, "todo get registered field");
+            }
+            throwErr(env, pos, "string field '"+field+"' is not defined on namespace", [
+                [pos, "namespace declared here"],
+            ]);
         },
         getSymbol(env, pos, field, block) {
+            if (arrValue.registered.has(field)) {
+                // ok so now we have to analyze the field in its original context
+                // or if the compile target has changed, re-analyze the namespace
+                throwErr(env, pos, "todo get registered field");
+            }
             return undefined;
         },
     };
@@ -135,11 +175,11 @@ export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst 
 
 type ComptimeNarrowKey = {
     type: "symbol",
-    symbol: symbol,
+    key: symbol,
     child: ComptimeType,
 } | {
     type: "string",
-    string: string,
+    key: string,
 };
 
 type ComptimeValueAst = {
@@ -147,25 +187,19 @@ type ComptimeValueAst = {
 };
 
 export type AnalysisLine = {
-    expr: "comptime:ast",
-    value: ComptimeValueAst,
-    pos: TokenPosition,
-} | {
     expr: "comptime:only",
     pos: TokenPosition,
 } | {
-    expr: "comptime:key",
+    expr: "comptime:raw",
     pos: TokenPosition,
-    narrow: ComptimeNarrowKey    
-} | {
-    expr: "comptime:ns_list_init",
-    pos: TokenPosition,
-} | {
-    expr: "comptime:ns_list_append",
-    pos: TokenPosition,
-    list: BlockIdx,
-    key: BlockIdx,
-    value: BlockIdx,
+    cb(env: Env, results: readonly unknown[]): unknown,
+    // the alternative to cb ^ is the comptemp way
+    // the comptemp way is having specialized instructions (comptemp:init_list)
+    // and converting those to backend instructions (js:array_init)
+    // then compiling to the backend
+    //
+    // basically we take the set of input instructions and the set of backend-supported output instructions and
+    // transform any unsupported ones
 } | {
     expr: "void",
     pos: TokenPosition,
@@ -204,7 +238,7 @@ function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: A
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
     if (slot.type === "ast") {
         const value: ComptimeValueAst = {ast: ast};
-        const idx = blockAppend(block, {expr: "comptime:ast", pos, value});
+        const idx = blockAppend(block, {expr: "comptime:raw", pos, cb(results) {return value}});
         return {idx, type: {
             type: "ast",
             pos: pos,
@@ -254,7 +288,7 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
 const stdFolderOrFileType: ComptimeTypeFolderOrFile = {type: "folder_or_file", pos: compilerPos()}; // type std.Folder | std.File
 const mainSymbolSymbol = Symbol("main");
 const mainSymbolNarrow: ComptimeNarrowKey = {
-    type: "symbol", symbol: mainSymbolSymbol, child: {
+    type: "symbol", key: mainSymbolSymbol, child: {
         type: "fn",
         arg: {type: "void", pos: compilerPos()},
         ret: stdFolderOrFileType,
@@ -270,7 +304,7 @@ function builtinNamespace(env: Env): ComptimeNamespace {
     return {
         getString(env, pos, field, block): AnalysisResult {
             if (field === "main") {
-                const idx = blockAppend(block, {expr: "comptime:key", narrow: mainSymbolNarrow, pos});
+                const idx = blockAppend(block, {expr: "comptime:raw", cb(results) {return mainSymbolNarrow}, pos});
                 return {idx, type: mainSymbolType};
             } else {
                 throwErr(env, pos, "builtin does not have field: "+field);
@@ -304,7 +338,7 @@ function analyzeSuffix(env: Env, slot: ComptimeType, result: AnalysisResult, ast
     if (ast.kind === "ident") {
         // access ident on result
         // the way to do this will vary based on the type
-        return analyzeAccess(env, slot, result, ast.pos, {type: "string", string: ast.str}, block);
+        return analyzeAccess(env, slot, result, ast.pos, {type: "string", key: ast.str}, block);
     }
     throwErr(env, ast.pos, "TODO analyzeSuffix: "+ast.kind);
 }
@@ -312,7 +346,7 @@ function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: T
     if (obj.type.type === "namespace") {
         if (!obj.type.narrow) throwErr(env, pos, "cannot access on non-narrowed namespace");
         if (prop.type === "string") {
-            return obj.type.narrow.getString(env, pos, prop.string, block);
+            return obj.type.narrow.getString(env, pos, prop.key, block);
         }else{
             throwErr(env, pos, "TODO return ?symbolChildType .init(T) or .empty");
         }
