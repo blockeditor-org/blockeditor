@@ -369,6 +369,18 @@ type ReadContainer = {
     bindings: Map<string, ReadBinding>,
     lines: {items: SyntaxNode[], pos: TokenPosition}[],
 };
+function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): {str: string, pos: TokenPosition} {
+    // TODO: support destructuring. ie:
+    // a :: 25 ✓
+    // [a, b] :: 25
+    // [a :: .a, b :: .b] :: 25
+    const lhsItems = trimWs(src);
+    if (lhsItems.length < 1) throwErr(env, pos, "Expected ident for bind");
+    const ident = lhsItems[0]!;
+    if (ident.kind !== "ident") throwErr(env, ident.pos, `Expected ident for bind lhs, found ${ident.kind}`);
+    if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in bind lhs");
+    return {str: ident.str, pos: ident.pos};
+}
 function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadContainer {
     const lines: {items: SyntaxNode[], pos: TokenPosition}[] = readBinary(env, src, "sep") ?? [{items: src, pos: pos}];
     const res: ReadContainer = {
@@ -382,11 +394,7 @@ function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadCon
             if (rb2) {
                 // found binding
                 const [lhs, op, rhs] = rb2;
-                const lhsItems = trimWs(lhs!.items);
-                if (lhsItems.length < 1) throwErr(env, lhs!.pos, "Expected ident for bind");
-                const ident = lhsItems[0]!;
-                if (ident.kind !== "ident") throwErr(env, ident.pos, `Expected ident for bind lhs, found ${ident.kind}`);
-                if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in bind lhs");
+                const ident = readDestructure(env, lhs.pos, lhs.items);
                 const prev = res.bindings.get(ident.str);
                 if (prev) {
                     // ideally we would prevent posting the error if the value is already an error
