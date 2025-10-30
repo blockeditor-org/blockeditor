@@ -100,6 +100,7 @@ export class Adisp {
                 this.put(" ast:");
                 this.putSrc(expr.pos);
                 this.indent += 1;
+                this.putNewline();
                 this.putAst(expr.narrow.ast);
                 this.indent -= 1;
             }else if(expr.expr === "comptime:ns_list_append") {
@@ -122,6 +123,7 @@ export class Adisp {
             this.indent -= 1;
             this.putNewline();
             this.indent += 1;
+            this.put("ret=");
             this.putType(type.ret);
             this.indent -= 1;
         }else if(type.type === "void") {
@@ -135,7 +137,7 @@ export class Adisp {
     }
     putAst(ast: SyntaxNode[]) {
         for (const node of ast) {
-            this.putNewline();
+            if (node !== ast[0]) this.putNewline();
             this.put(renderEntityAdisp(this.cfg, node, this.indent));
         }
     }
