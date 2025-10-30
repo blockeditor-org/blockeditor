@@ -1,5 +1,5 @@
 import { comptimeEval } from "./cte";
-import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type OperatorSegmentToken, type OperatorToken, type PrecString, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
+import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type PrecString, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
 
 class PositionedError extends Error {
     e: TokenizationError;
@@ -262,7 +262,8 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
 
     if (ast.length === 0) throwErr(env, pos, "failed to analyze empty expression");
 
-    const first = ast[0]!;
+    let eater = 0;
+    const first = ast[eater++]!;
     const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
     // in the future we might choose to back propagate slot types so T: a.b.c is T: ({c: T}: ({c: {b: T}}: a).b).c
     const slotTypes = Array.from({length: ast.length}, (_, i) => i === ast.length - 1 ? slot : unknownSlot);
@@ -276,12 +277,11 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
             narrow: slot,
         }};
     }else {
-        result = analyzeBase(env, slotTypes[0]!, first, block);
+        result = analyzeBase(env, slotTypes[eater - 1]!, first, block);
     }
 
-
-    for (let i = 1; i < ast.length; i++) {
-        result = analyzeSuffix(env, slotTypes[i]!, result, ast[i]!, block);
+    for (; eater < ast.length; eater++) {
+        result = analyzeSuffix(env, slotTypes[eater]!, result, ast[eater]!, block);
     }
 
     return result;
