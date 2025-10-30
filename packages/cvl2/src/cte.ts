@@ -141,4 +141,12 @@ export class Adisp {
             this.put(renderEntityAdisp(this.cfg, node, this.indent));
         }
     }
+
+    static printAst(ast: SyntaxNode[]): string {
+        const res = new Adisp();
+        res.indent = 1;
+        res.putNewline();
+        res.putAst(ast);
+        return res.end();
+    }
 }
