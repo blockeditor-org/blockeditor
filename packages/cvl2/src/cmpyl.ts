@@ -1,5 +1,5 @@
 import { comptimeEval } from "./cte";
-import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type PrecString, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
+import { prettyPrintErrors, renderEntityAdisp, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type PrecString, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
 
 class PositionedError extends Error {
     e: TokenizationError;
@@ -330,6 +330,12 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         }else {
             throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
         }
+    } else if (ast.kind === "binary") {
+        const fnBin = readBinary2(env, ast.items, "arrow", "=>");
+        if (fnBin) {
+            throwErr(env, ast.pos, "TODO analyze function");
+        }
+        throwErr(env, ast.pos, `TODO analyze binary`);
     }
     throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind);
 }

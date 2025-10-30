@@ -1,8 +1,7 @@
-
-#builtin.main := (): std.Folder [
+#builtin.main := () => std.Folder [
     "a.txt" := std.File: "hello"
-    "a.zig" := std.zig.compile: () {}
-    "a.js" := std.js.compile: () {}
+    "a.zig" := std.zig.compile: () => {}
+    "a.js" := std.js.compile: () => {}
     "a.mcfunction" := std.mc.compile: (position: std.mc.Position, entity: std.mc.Entity) std.mc.Result: {
         _ = std.mc.cmd.tp(entity, position)
         -> 25

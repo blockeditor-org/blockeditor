@@ -70,7 +70,7 @@ function printBlock(cfg: PrintCfg, block: AnalysisBlock, indent: number): string
     }
     return res.join("\n" + printIndent(cfg, indent));
 }
-function printIndent(cfg: PrintCfg, indent: number): string {
+export function printIndent(cfg: PrintCfg, indent: number): string {
     return colors.black+cfg.indent.repeat(indent)+colors.reset;   
 }
 function printSrc(pos: TokenPosition): string {
@@ -88,4 +88,23 @@ function printType(cfg: PrintCfg, type: ComptimeType, indent: number): string {
         desc = "%%TODO%%";
     }
     return `${colors.yellow}${type.type}${colors.reset}${desc ? desc.startsWith("\n") ? ":" : " " + desc : ""}${printSrc(type.pos)}${desc && desc.startsWith("\n") ? desc : ""}`;
+}
+
+export class Adisp {
+    cfg: PrintCfg;
+    indent: number = 0;
+    res: string[] = [];
+    constructor() {
+        this.cfg = {indent: "│ "};
+    }
+    end(): string {
+        return this.res.join("");
+    }
+
+    put(msg: string): void {
+        this.res.push(msg);
+    }
+    newline(): void {
+        this.put(printIndent(this.cfg, this.indent));
+    }
 }
