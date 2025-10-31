@@ -330,12 +330,6 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         }else {
             throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
         }
-    } else if (ast.kind === "binary") {
-        const fnBin = readBinary2(env, [ast], "arrow", "=>");
-        if (fnBin) {
-            throwErr(env, ast.pos, "TODO analyze function");
-        }
-        throwErr(env, ast.pos, `TODO analyze binary`);
     }
     throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind);
 }

@@ -33,11 +33,9 @@ const mkconfig = {
         // pub .name :: value
         ":=": {style: "join", joinTag: "pub"},
     },
-    arrow: {
-        "=>": {style: "join"},
-    },
-    colon: {
+    right_associative: {
         ":": {style: "open"},
+        "=>": {style: "open"},
     },
     equals: {
         "=": {style: "join", joinTag: "assign"},
