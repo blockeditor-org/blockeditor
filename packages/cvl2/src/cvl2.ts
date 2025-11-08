@@ -32,7 +32,7 @@ const mkconfig = {
         "::": {style: "join", joinTag: "def"},
         // .name .= value (def name = value)
         ".=": {style: "join", joinTag: "pub"},
-        ":=": {style: "join", joinTag: "pub"},
+        ":=": {style: "join", joinTag: "var"},
     },
     right_associative: {
         ":": {style: "open"},
