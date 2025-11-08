@@ -234,7 +234,7 @@ export interface TokenizationResult {
 
 const identifierRegex = /^[a-zA-Z0-9]$/;
 const whitespaceRegex = /^\s$/;
-const operatorChars = [..."~!@$%^&*-=+|/<>:"];
+const operatorChars = [..."~!@$%^&*-=+|/<>:."];
 
 export function tokenize(source: Source): TokenizationResult {
     let currentSyntaxNodes: SyntaxNode[] = [];
@@ -280,7 +280,7 @@ export function tokenize(source: Source): TokenizationResult {
                     source.take();
                 }
                 currentToken = source.text.substring(start.idx, source.currentIndex).includes("\n") ? "\n" : " ";
-            }else if ("()[]{},;\"'.`".includes(firstChar)) {
+            }else if ("()[]{},;\"'`".includes(firstChar)) {
                 currentToken = source.text.substring(start.idx, source.currentIndex);
             }else if(operatorChars.includes(firstChar)) {
                 while (operatorChars.includes(source.peek())) {
