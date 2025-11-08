@@ -115,10 +115,6 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
     for (const line of container.lines) {
         // execute lines
         const rb2 = readBinary2(env, line.items, "pub");
-        if (!rb2) {
-            console.log(line.items);
-            throw new Error("debug: why did readbinary2 fail here?"+Adisp.dumpAst(line.items, 3));
-        }
         if (rb2) {
             // have the caller analyze the bind
             cfg.analyzeBind(env, rb2, block);
@@ -331,7 +327,7 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
         }
     }
-    throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind);
+    throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+Adisp.dumpAst([ast], 3));
 }
 function analyzeSuffix(env: Env, slot: ComptimeType, result: AnalysisResult, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
     if (ast.kind === "raw") {
