@@ -28,9 +28,10 @@ const mkconfig = {
         "\n": {style: "join", joinTag: "sep"},
     },
     bind: {
-        // def name :: value
+        // name :: value (pub name = value)
         "::": {style: "join", joinTag: "def"},
-        // pub .name :: value
+        // .name .= value (def name = value)
+        ".=": {style: "join", joinTag: "pub"},
         ":=": {style: "join", joinTag: "pub"},
     },
     right_associative: {

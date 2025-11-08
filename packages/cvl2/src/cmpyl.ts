@@ -114,7 +114,7 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
     
     for (const line of container.lines) {
         // execute lines
-        const rb2 = readBinary2(env, line.items, "bind", ":=");
+        const rb2 = readBinary2(env, line.items, "bind", ".=");
         if (!rb2) {
             console.log(line.items);
             throw new Error("debug: why did readbinary2 fail here?");
