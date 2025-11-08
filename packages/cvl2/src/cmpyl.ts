@@ -1,5 +1,5 @@
 import { Adisp, comptimeEval } from "./cte";
-import { prettyPrintErrors, renderEntityAdisp, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type PrecString, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
+import { prettyPrintErrors, renderEntityAdisp, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
 
 class PositionedError extends Error {
     e: TokenizationError;
@@ -114,10 +114,10 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
     
     for (const line of container.lines) {
         // execute lines
-        const rb2 = readBinary2(env, line.items, "bind", ".=");
+        const rb2 = readBinary2(env, line.items, "pub");
         if (!rb2) {
             console.log(line.items);
-            throw new Error("debug: why did readbinary2 fail here?");
+            throw new Error("debug: why did readbinary2 fail here?"+Adisp.dumpAst(line.items));
         }
         if (rb2) {
             // have the caller analyze the bind
@@ -269,7 +269,7 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
     const slotTypes = Array.from({length: ast.length}, (_, i) => i === ast.length - 1 ? slot : unknownSlot);
 
     let result: AnalysisResult;
-    if (first.kind === "raw" && first.raw === ".") {
+    if (first.kind === "raw" && first.tag === "access") {
         const idx = blockAppend(block, {expr: "comptime:only", pos: first.pos});
         result = {idx, type: {
             type: "type",
@@ -335,7 +335,7 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
 }
 function analyzeSuffix(env: Env, slot: ComptimeType, result: AnalysisResult, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
     if (ast.kind === "raw") {
-        if (ast.raw === ".") return result; // todo
+        if (ast.tag === "access") return result; // todo
         throwErr(env, ast.pos, "unexpected raw: "+JSON.stringify(ast.raw));
     }
     if (ast.kind === "ident") {
@@ -390,7 +390,7 @@ function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadCon
     for (const line of lines) {
         try {
             if (line.items.length === 0) continue;
-            const rb2 = readBinary2(env, line.items, "bind", "::");
+            const rb2 = readBinary2(env, line.items, "def");
             if (rb2) {
                 // found binding
                 const [lhs, op, rhs] = rb2;
@@ -419,10 +419,10 @@ function trimWs(src: SyntaxNode[]): SyntaxNode[] {
     return src.filter(itm => itm.kind !== "ws");
 }
 type Binary2 = [OperatorSegmentToken, OperatorToken, OperatorSegmentToken];
-function readBinary2(env: Env, rootSrc: SyntaxNode[], cat: PrecString, kw: string): Binary2 | undefined {
+function readBinary2(env: Env, rootSrc: SyntaxNode[], kw: OpTag): Binary2 | undefined {
     rootSrc = trimWs(rootSrc);
     if (rootSrc.length === 0) return undefined;
-    if (rootSrc[0]!.kind !== "binary" || rootSrc[0]!.precStr !== cat) return undefined;
+    if (rootSrc[0]!.kind !== "binary" || rootSrc[0]!.tag !== kw) return undefined;
     const src = trimWs(rootSrc[0]!.items);
     if (src.length !== 3) return undefined;
     const [lhs, op, rhs] = src;
@@ -430,15 +430,15 @@ function readBinary2(env: Env, rootSrc: SyntaxNode[], cat: PrecString, kw: strin
     if (op.op !== kw) return undefined;
     return [lhs, op, rhs];
 }
-function readBinary(env: Env, src: SyntaxNode[], cat: PrecString): OperatorSegmentToken[] | undefined {
+function readBinary(env: Env, src: SyntaxNode[], kw: OpTag): OperatorSegmentToken[] | undefined {
     src = trimWs(src);
     if (src.length === 0) return undefined;
-    if (src[0]!.kind !== "binary" || src[0]!.precStr !== cat) return undefined;
+    if (src[0]!.kind !== "binary" || src[0]!.tag !== kw) return undefined;
     if (src.length > 1) throwErr(env, src[1]!.pos, "Found extra trailing items while parsing readBinary");
     return src[0]!.items.flatMap((itm): OperatorSegmentToken[] => {
         if (itm.kind === "opSeg") return [itm];
         if (itm.kind === "op") return [];
-        throwErr(env, itm.pos, `Unexpected token in ${cat}: ${itm.kind}`);
+        throwErr(env, itm.pos, `Unexpected token in ${kw}: ${itm.kind}`);
     });
 }
 export function throwErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): never {

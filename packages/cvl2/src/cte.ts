@@ -47,6 +47,7 @@ type PrintCfg = {indent: string};
 export class Adisp {
     cfg: PrintCfg;
     indent: number = 0;
+    depth: number = Infinity;
     res: string[] = [];
     constructor() {
         this.cfg = {indent: "│ "};
@@ -68,7 +69,16 @@ export class Adisp {
         this.put(` · ${pos.fyl}:${pos.lyn}:${pos.col}`, colors.black);
     }
 
+    putCheckDepth() {
+        if (this.indent > this.depth) {
+            this.put("...");
+            return true;
+        }
+        return false;
+    }
+
     putBlock(block: AnalysisBlock) {
+        if (this.putCheckDepth()) return;
         for (let i = 0; i < block.lines.length; i++) {
             const expr = block.lines[i]!;
             let desc: string;
@@ -113,6 +123,7 @@ export class Adisp {
         }
     }
     putType(type: ComptimeType) {
+        if (this.putCheckDepth()) return;
         this.put(type.type, colors.yellow);
         if (type.type === "fn") {
             this.putSrc(type.pos);
@@ -136,15 +147,17 @@ export class Adisp {
         }
     }
     putAst(ast: SyntaxNode[]) {
+        if (this.putCheckDepth()) return;
         for (const node of ast) {
             if (node !== ast[0]) this.putNewline();
             this.put(renderEntityAdisp(this.cfg, node, this.indent));
         }
     }
 
-    static printAst(ast: SyntaxNode[]): string {
+    static dumpAst(ast: SyntaxNode[], depth: number = 3): string {
         const res = new Adisp();
         res.indent = 1;
+        res.depth = depth;
         res.putNewline();
         res.putAst(ast);
         return res.end();

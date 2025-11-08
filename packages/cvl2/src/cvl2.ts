@@ -6,50 +6,59 @@ type TokenizerMode = "regular" | "in_string";
 type Config = {
     style: "open" | "close" | "join",
     prec: number,
-    precStr: PrecString,
+    precStr: string,
     close?: string,
     autoOpen?: boolean,
     setMode?: TokenizerMode,
-    joinTag?: string,
+    opTag?: OpTag,
+    bracketTag?: BracketTag,
 };
 
-const mkconfig = {
+export type OpTag = "sep" | "def" | "pub" | "var" | "assign" | "";
+export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "";
+export type RawTag = "access" | "return" | "discard";
+
+const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>> = {
     paren: {
-        "(": {style: "open", close: ")"},
-        "{": {style: "open", close: "}"},
-        "[": {style: "open", close: "]"},
-        ")": {style: "close"},
-        "}": {style: "close"},
-        "]": {style: "close"},
+        "(": {style: "open", close: ")", bracketTag: "list"},
+        "{": {style: "open", close: "}", bracketTag: "code"},
+        "[": {style: "open", close: "]", bracketTag: "map"},
+        ")": {style: "close", bracketTag: "list"},
+        "}": {style: "close", bracketTag: "code"},
+        "]": {style: "close", bracketTag: "map"},
     },
     sep: {
-        ",": {style: "join", joinTag: "sep"},
-        ";": {style: "join", joinTag: "sep"},
-        "\n": {style: "join", joinTag: "sep"},
+        ",": {style: "join", opTag: "sep"},
+        ";": {style: "join", opTag: "sep"},
+        "\n": {style: "join", opTag: "sep"},
     },
     bind: {
         // name :: value (pub name = value)
-        "::": {style: "join", joinTag: "def"},
+        "::": {style: "join", opTag: "def"},
         // .name .= value (def name = value)
-        ".=": {style: "join", joinTag: "pub"},
-        ":=": {style: "join", joinTag: "var"},
+        ".=": {style: "join", opTag: "pub"},
+        ":=": {style: "join", opTag: "var"},
     },
     right_associative: {
-        ":": {style: "open"},
-        "=>": {style: "open"},
+        ":": {style: "open", bracketTag: "colon_call"},
+        "=>": {style: "open", bracketTag: "arrow_fn"},
     },
     equals: {
-        "=": {style: "join", joinTag: "assign"},
+        "=": {style: "join", opTag: "assign"},
     },
     string: {
-        "\"": {style: "open", close: "<in_string>\"", setMode: "in_string"},
-        "<in_string>\"": {style: "close", setMode: "regular"},
+        "\"": {style: "open", close: "<in_string>\"", setMode: "in_string", bracketTag: "string"},
+        "<in_string>\"": {style: "close", setMode: "regular", bracketTag: "string"},
     },
 
     // TODO: "=>"
     // TODO: "\()" as style open prec 0 autoclose display{open: "(", close: ")"}
-} satisfies Record<string, Record<string, Omit<Config, "prec" | "precStr">>>;
-export type PrecString = keyof typeof mkconfig;
+};
+const rawconfig: Record<string, RawTag> = {
+    ".": "access",
+    "->": "return",
+    "_": "discard",
+};
 
 const config: Record<string, Config> = {};
 {
@@ -165,15 +174,14 @@ export interface BlockToken {
     start: string;
     end: string;
     items: SyntaxNode[];
-    precStr: PrecString;
+    tag: BracketTag;
 }
 
 export interface BinaryExpressionToken {
     kind: "binary";
     pos: TokenPosition;
     prec: number;
-    precStr: PrecString;
-    tag: string;
+    tag: OpTag;
     items: SyntaxNode[];
 }
 
@@ -187,6 +195,7 @@ export interface RawToken {
     kind: "raw";
     pos: TokenPosition;
     raw: string;
+    tag: RawTag;
 }
 
 export interface ErrToken {
@@ -312,7 +321,7 @@ export function tokenize(source: Source): TokenizationResult {
                 start: currentToken,
                 end: cfg.close ?? "",
                 items: newBlockItems,
-                precStr: cfg.precStr,
+                tag: cfg.bracketTag ?? "",
             });
             parseStack.push({
                 pos: start,
@@ -351,7 +360,7 @@ export function tokenize(source: Source): TokenizationResult {
                             start: "",
                             end: currentToken,
                             items: prevItems,
-                            precStr: cfg.precStr,
+                            tag: cfg.bracketTag ?? "",
                         });
                     }else{
                         errors.push({
@@ -391,7 +400,7 @@ export function tokenize(source: Source): TokenizationResult {
                 const lastStackItem = parseStack[parseStack.length - 1]!;
 
                 if (lastStackItem.prec === operatorPrecedence) {
-                    if (lastStackItem.tag !== cfg.joinTag) {
+                    if (lastStackItem.tag !== cfg.opTag) {
                         errors.push({
                             entries: [{
                                 message: "mixing operators disallowed",
@@ -424,16 +433,15 @@ export function tokenize(source: Source): TokenizationResult {
                         indent: lastStackItem.indent,
                         autoClose: true,
                         prec: operatorPrecedence,
-                        tag: cfg.joinTag ?? "",
+                        tag: cfg.opTag ?? "",
                     };
                     parseStack.push(targetCommaBlock);
                     lastStackItem.val.splice(valStartIdx, lastStackItem.val.length, {
                         kind: "binary",
                         pos: start,
                         prec: operatorPrecedence,
-                        precStr: cfg.precStr,
                         items: opSupVal,
-                        tag: cfg.joinTag ?? "",
+                        tag: cfg.opTag ?? "",
                     });
                     break;
                 } else {
@@ -482,11 +490,12 @@ export function tokenize(source: Source): TokenizationResult {
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                 nl: false,
             });
-        }else if(currentToken === "." || currentToken == "->" || currentToken === "_") {
+        }else if(Object.hasOwn(rawconfig, currentToken)) {
             currentSyntaxNodes.push({
                 kind: "raw",
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                 raw: currentToken,
+                tag: rawconfig[currentToken]!,
             });
         } else {
             errors.push({
@@ -512,9 +521,9 @@ export function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode,
     const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
     let desc: string;
     if (entity.kind === "block") {
-        desc = `${entity.precStr}`;
+        desc = `${entity.tag}`;
     } else if(entity.kind === "binary") {
-        desc = `${entity.precStr}`;
+        desc = `${entity.tag}`;
     } else if(entity.kind === "op") {
         desc = `${colors.yellow}${JSON.stringify(entity.op)}${colors.reset}`;
     } else if(entity.kind === "opSeg") {
@@ -529,7 +538,7 @@ export function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode,
     } else if(entity.kind === "strSeg") {
         desc = colors.green + JSON.stringify(entity.str) + colors.reset;
     } else if(entity.kind === "raw") {
-        desc = JSON.stringify(entity.raw);
+        desc = entity.tag;
     } else {
         desc = `%%TODO%%`;
     }
