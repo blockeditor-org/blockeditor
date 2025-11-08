@@ -196,7 +196,7 @@ export class Adisp {
         }
     }
 
-    static dumpAst(ast: SyntaxNode[], depth: number = 3): string {
+    static dumpAst(ast: SyntaxNode[], depth: number = Infinity): string {
         const res = new Adisp();
         res.depth = depth;
         res.putAstList(ast);

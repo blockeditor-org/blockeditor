@@ -117,7 +117,7 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
         const rb2 = readBinary2(env, line.items, "pub");
         if (!rb2) {
             console.log(line.items);
-            throw new Error("debug: why did readbinary2 fail here?"+Adisp.dumpAst(line.items));
+            throw new Error("debug: why did readbinary2 fail here?"+Adisp.dumpAst(line.items, 3));
         }
         if (rb2) {
             // have the caller analyze the bind
