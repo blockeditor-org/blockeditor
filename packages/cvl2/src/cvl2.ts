@@ -1,3 +1,5 @@
+import { Adisp } from "./cte";
+
 function unreachable(): never {
     throw new Error("unreachable");
 }
@@ -517,35 +519,6 @@ interface RenderConfigAdisp {
 }
 
 
-export function renderEntityAdisp(config: RenderConfigAdisp, entity: SyntaxNode, level: number): string {
-    const ch: SyntaxNode[] | undefined = entity.kind === "block" || entity.kind === "binary" || entity.kind === "opSeg"  ? entity.items : undefined;
-    let desc: string;
-    if (entity.kind === "block") {
-        desc = `${entity.tag}`;
-    } else if(entity.kind === "binary") {
-        desc = `${entity.tag}`;
-    } else if(entity.kind === "op") {
-        desc = `${colors.yellow}${JSON.stringify(entity.op)}${colors.reset}`;
-    } else if(entity.kind === "opSeg") {
-        desc = ``;
-    } else if(entity.kind === "ws") {
-        desc = JSON.stringify(entity.nl ? "\n" : " ");
-    } else if(entity.kind === "ident") {
-        const jstr = JSON.stringify(entity.str);
-        desc = colors.blue + (jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr) + colors.reset;
-    } else if(entity.kind === "builtin") {
-        desc = colors.blue + "#" + entity.str + colors.reset;
-    } else if(entity.kind === "strSeg") {
-        desc = colors.green + JSON.stringify(entity.str) + colors.reset;
-    } else if(entity.kind === "raw") {
-        desc = entity.tag;
-    } else {
-        desc = `%%TODO%%`;
-    }
-    return `${colors.cyan}${entity.kind}${colors.reset}${desc ? " " + desc : ""} ${colors.black}· ${entity.pos.fyl}:${entity.pos.lyn}:${entity.pos.col}${colors.reset}` + (ch ?? []).map(e => "\n" + colors.black + config.indent.repeat(level + 1) + colors.reset + renderEntityAdisp(config, e, level + 1)).join("");
-}
-
-
 interface RenderConfig {
     indent: string;
     reveal: boolean,
@@ -689,11 +662,11 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
     const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false }, tokenizationResult.result, 0, 0, true);
     const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true }, tokenizationResult.result, 0, 0, true);
-    const adisp = tokenizationResult.result.map(r => renderEntityAdisp({indent: "│ "}, r, 0)).join("\n");
+    const adisp = Adisp.dumpAst(tokenizationResult.result);
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
     return (
-        `// adisp:\n${adisp}\n\n` +
+        `// adisp:${adisp}\n\n` +
         `// ugly\n${uglyCode}\n\n` +
         `// formatted\n${formattedCode}\n\n` +
         `// errors:\n${prettyErrors}`

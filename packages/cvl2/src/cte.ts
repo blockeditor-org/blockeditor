@@ -1,5 +1,5 @@
 import { assert, throwErr, type AnalysisBlock, type ComptimeNarrowKey, type ComptimeType, type ComptimeValueAst, type Env, type NsFields } from "./cmpyl";
-import { colors, renderEntityAdisp, type SyntaxNode, type TokenPosition } from "./cvl2";
+import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
     const adisp = new Adisp();
@@ -46,7 +46,7 @@ export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
 type PrintCfg = {indent: string};
 export class Adisp {
     cfg: PrintCfg;
-    indent: number = 0;
+    indentCount: number = 0;
     depth: number = Infinity;
     res: string[] = [];
     constructor() {
@@ -56,6 +56,11 @@ export class Adisp {
         return this.res.join("");
     }
 
+    indent() {
+        this.indentCount += 1;
+        return {[Symbol.dispose]: () => this.indentCount -= 1};
+    }
+
     put(msg: string, color?: string): void {
         if (color) this.res.push(color);
         this.res.push(msg);
@@ -63,14 +68,15 @@ export class Adisp {
     }
     putNewline(): void {
         this.put("\n");
-        this.put(this.cfg.indent.repeat(this.indent), colors.black);
+        this.put(this.cfg.indent.repeat(this.indentCount), colors.black);
     }
     putSrc(pos: TokenPosition) {
         this.put(` · ${pos.fyl}:${pos.lyn}:${pos.col}`, colors.black);
     }
 
     putCheckDepth() {
-        if (this.indent > this.depth) {
+        if (this.indentCount > this.depth) {
+            this.putNewline();
             this.put("...");
             return true;
         }
@@ -99,20 +105,15 @@ export class Adisp {
                 }else{
                     this.put(` str=${JSON.stringify(expr.narrow.key.description??"(unnamed)")}, type=`);
                     this.putSrc(expr.pos);
-                    this.indent += 1;
+                    using _1 = this.indent();
                     this.putNewline();
-                    this.indent += 1;
+                    using _2 = this.indent();
                     this.putType(expr.narrow.child);
-                    this.indent -= 1;
-                    this.indent -= 1;
                 }
             }else if(expr.expr === "comptime:ast") {
                 this.put(" ast:");
                 this.putSrc(expr.pos);
-                this.indent += 1;
-                this.putNewline();
-                this.putAst(expr.narrow.ast);
-                this.indent -= 1;
+                this.putAstList(expr.narrow.ast);
             }else if(expr.expr === "comptime:ns_list_append") {
                 this.put(` key=${expr.key} list=${expr.list} value=${expr.value}`);
                 this.putSrc(expr.pos);
@@ -129,14 +130,16 @@ export class Adisp {
             this.putSrc(type.pos);
             this.putNewline();
             this.put("arg=");
-            this.indent += 1;
-            this.putType(type.arg);
-            this.indent -= 1;
+            {
+                using _ = this.indent();
+                this.putType(type.arg);
+            }
             this.putNewline();
-            this.indent += 1;
             this.put("ret=");
-            this.putType(type.ret);
-            this.indent -= 1;
+            {
+                using _ = this.indent();
+                this.putType(type.ret);
+            }
         }else if(type.type === "void") {
             this.putSrc(type.pos);
         }else if(type.type === "folder_or_file") {
@@ -146,20 +149,57 @@ export class Adisp {
             this.putSrc(type.pos);
         }
     }
-    putAst(ast: SyntaxNode[]) {
+    putAstList(ast: SyntaxNode[]) {
+        using _ = this.indent();
         if (this.putCheckDepth()) return;
         for (const node of ast) {
-            if (node !== ast[0]) this.putNewline();
-            this.put(renderEntityAdisp(this.cfg, node, this.indent));
+            this.putNewline();
+            this.putAstNode(node);
+        }
+    }
+    putAstNode(entity: SyntaxNode) {
+        this.put(entity.kind, colors.cyan);
+
+        if (entity.kind === "block") {
+            this.put(` ${entity.tag}`);
+            this.putSrc(entity.pos);
+            this.putAstList(entity.items);
+        } else if(entity.kind === "binary") {
+            this.put(` ${entity.tag}`);
+            this.putSrc(entity.pos);
+            this.putAstList(entity.items);
+        } else if(entity.kind === "op") {
+            this.put(` ${JSON.stringify(entity.op)}`, colors.yellow);
+            this.putSrc(entity.pos);
+        } else if(entity.kind === "opSeg") {
+            this.putSrc(entity.pos);
+            this.putAstList(entity.items);
+        } else if(entity.kind === "ws") {
+            this.put(` ${JSON.stringify(entity.nl ? "\n" : " ")}`);
+            this.putSrc(entity.pos);
+        } else if(entity.kind === "ident") {
+            const jstr = JSON.stringify(entity.str);
+            this.put(` ${(jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr)}`, colors.blue);
+            this.putSrc(entity.pos);
+        } else if(entity.kind === "builtin") {
+            this.put(` #${entity.str}`, colors.blue);
+            this.putSrc(entity.pos);
+        } else if(entity.kind === "strSeg") {
+            this.put(` ${JSON.stringify(entity.str)}`, colors.green);
+            this.putSrc(entity.pos);
+        } else if(entity.kind === "raw") {
+            this.put(` ${entity.tag}`);
+            this.putSrc(entity.pos);
+        } else {
+            this.put(` %%TODO%%`);
+            this.putSrc(entity.pos);
         }
     }
 
     static dumpAst(ast: SyntaxNode[], depth: number = 3): string {
         const res = new Adisp();
-        res.indent = 1;
         res.depth = depth;
-        res.putNewline();
-        res.putAst(ast);
+        res.putAstList(ast);
         return res.end();
     }
 }

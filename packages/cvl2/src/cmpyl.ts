@@ -1,5 +1,5 @@
 import { Adisp, comptimeEval } from "./cte";
-import { prettyPrintErrors, renderEntityAdisp, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
+import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
 
 class PositionedError extends Error {
     e: TokenizationError;
