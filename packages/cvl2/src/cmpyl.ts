@@ -114,7 +114,7 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
     
     for (const line of container.lines) {
         // execute lines
-        const rb2 = readBinary2(env, line.items, "pub");
+        const rb2 = readBinary2(env, line.pos, line.items, "pub");
         if (rb2) {
             // have the caller analyze the bind
             cfg.analyzeBind(env, rb2, block);
@@ -386,7 +386,7 @@ function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadCon
     for (const line of lines) {
         try {
             if (line.items.length === 0) continue;
-            const rb2 = readBinary2(env, line.items, "def");
+            const rb2 = readBinary2(env, line.pos, line.items, "def");
             if (rb2) {
                 // found binding
                 const [lhs, op, rhs] = rb2;
@@ -415,15 +415,14 @@ function trimWs(src: SyntaxNode[]): SyntaxNode[] {
     return src.filter(itm => itm.kind !== "ws");
 }
 type Binary2 = [OperatorSegmentToken, OperatorToken, OperatorSegmentToken];
-function readBinary2(env: Env, rootSrc: SyntaxNode[], kw: OpTag): Binary2 | undefined {
+function readBinary2(env: Env, pos: TokenPosition, rootSrc: SyntaxNode[], kw: OpTag): Binary2 | undefined {
     rootSrc = trimWs(rootSrc);
     if (rootSrc.length === 0) return undefined;
     if (rootSrc[0]!.kind !== "binary" || rootSrc[0]!.tag !== kw) return undefined;
     const src = trimWs(rootSrc[0]!.items);
-    if (src.length !== 3) return undefined;
+    if (src.length !== 3) return throwErr(env, pos, "Expected LHS op RHS, found not that");
     const [lhs, op, rhs] = src;
     if (lhs?.kind !== "opSeg" || op?.kind !== "op" || rhs?.kind !== "opSeg") return undefined;
-    if (op.op !== kw) return undefined;
     return [lhs, op, rhs];
 }
 function readBinary(env: Env, src: SyntaxNode[], kw: OpTag): OperatorSegmentToken[] | undefined {
