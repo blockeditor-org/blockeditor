@@ -1,10 +1,11 @@
 import { Adisp, comptimeEval } from "./cte";
-import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition } from "./cvl2";
+import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition, type TraceEntry } from "./cvl2";
+import { isAbsolute, relative } from "path";
 
 class PositionedError extends Error {
     e: TokenizationError;
     constructor(e: TokenizationError) {
-        super([...e.entries.map(nt => `${nt.pos?.fyl ?? "???"}:${nt.pos?.lyn ?? "???"}:${nt.pos?.col ?? "???"}: ${nt.style}: ${nt.message}`), ...e.trace.map(t => ` at ${t.fyl}:${t.lyn}:${t.col}`)].join("\n"));
+        super([...e.entries.map(nt => `${nt.pos?.fyl ?? "???"}:${nt.pos?.lyn ?? "???"}:${nt.pos?.col ?? "???"}: ${nt.style}: ${nt.message}`), ...e.trace.map(t => ` at ${t.pos.fyl}:${t.pos.lyn}:${t.pos.col} (${t.text})`)].join("\n"));
         this.e = e;
     }
 }
@@ -44,7 +45,7 @@ function importFile(filename: string, contents: string) {
 }
 
 export type Env = {
-    trace: TokenPosition[],
+    trace: TraceEntry[],
     errors: TokenizationError[],
     target: TargetEnv,
 };
@@ -443,13 +444,33 @@ export function addErr(env: Env, pos: TokenPosition | undefined, msg: string, no
     env.errors.push(getErr(env, pos, msg, notes))
 }
 export function getErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): TokenizationError {
-    throw new PositionedError({
+    const constructionLocation = parseErrorStack(new Error()).filter(line => line.text !== "getErr" && line.text !== "throwErr");
+    return {
         entries: [
             {pos: pos, style: "error", message: msg},
             ...(notes ?? []).map((note): TokenizationErrorEntry => ({pos: note[0], style: "note", message: note[1]}))
         ],
-        trace: env.trace,
-    })
+        trace: [...env.trace, ...constructionLocation],
+    };
+}
+function parseErrorStack(error: Error): TraceEntry[] {
+    const stack = error?.stack;
+    if (!stack) return [];
+    const matches = stack.matchAll(/^ {4}at (?:([^(\n]+) \(([^()\n]+?)(?::(\d+)(?::(\d+))?)?\)|([^()\n]+?)(?::(\d+)(?::(\d+))?)?)$/mg);
+    const result: TraceEntry[] = [];
+    for (const m of matches) {
+        const filepath = m[2] ?? m[5] ?? "unknown";
+        result.push({
+            pos: {
+                fyl: isAbsolute(filepath) ? relative(process.cwd(), filepath) : filepath,
+                lyn: +(m[3] ?? m[6] ?? "-1"),
+                col: +(m[4] ?? m[7] ?? "-1"),
+                idx: -1,
+            },
+            text: m[1] ?? "unknown",
+        });
+    }
+    return result;
 }
 function handleErr(env: Env, err: unknown): void {
     if (err instanceof PositionedError) {

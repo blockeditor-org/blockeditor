@@ -73,12 +73,13 @@ const config: Record<string, Config> = {};
     }
 }
 
-const referenceTrace: TokenPosition[] = [];
-function withReferenceTrace(pos: TokenPosition): {[Symbol.dispose]: () => void} {
-    referenceTrace.push(pos);
+const referenceTrace: TraceEntry[] = [];
+function withReferenceTrace(pos: TokenPosition, text: string): {[Symbol.dispose]: () => void} {
+    const appended: TraceEntry = {pos, text};
+    referenceTrace.push(appended);
     return {[Symbol.dispose]() {
         const popped = referenceTrace.pop();
-        if(popped !== pos) unreachable();
+        if(popped !== appended) unreachable();
     }};
 }
 
@@ -223,9 +224,13 @@ export type TokenizationErrorEntry = {
     style: "note" | "error",
     message: string,
 };
+export type TraceEntry = {
+    pos: TokenPosition,
+    text: string,
+};
 export type TokenizationError = {
     entries: TokenizationErrorEntry[],
-    trace: TokenPosition[],
+    trace: TraceEntry[],
 };
 export interface TokenizationResult {
     result: SyntaxNode[];
@@ -651,7 +656,7 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
         }
         if (error.trace.length > 0) {
             for(const line of error.trace) {
-                output += `At ${line.fyl}:${line.lyn}:${line.col}\n`;
+                output += ` at ${line.pos.fyl}:${line.pos.lyn}:${line.pos.col} (${line.text})\n`;
             }
         }
     }
