@@ -387,9 +387,6 @@ type DestructureExtract = {
     kind: "map",
     items: [ComptimeNarrowKey, DestructureExtract][],
 };
-type DestructureListEntry = {
-    type?: ComptimeType,
-};
 function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destructure {
     // TODO: support destructuring. ie:
     // a :: 25 ✓
