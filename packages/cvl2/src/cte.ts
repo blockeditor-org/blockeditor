@@ -179,10 +179,7 @@ export class Adisp {
             this.putSrc(entity.pos);
         } else if(entity.kind === "ident") {
             const jstr = JSON.stringify(entity.str);
-            this.put(` ${(jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr)}`, colors.blue);
-            this.putSrc(entity.pos);
-        } else if(entity.kind === "builtin") {
-            this.put(` #${entity.str}`, colors.blue);
+            this.put(` ${entity.identTag} ${(jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr)}`, colors.blue);
             this.putSrc(entity.pos);
         } else if(entity.kind === "strSeg") {
             this.put(` ${JSON.stringify(entity.str)}`, colors.green);

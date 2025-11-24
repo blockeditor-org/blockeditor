@@ -259,25 +259,35 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
 
     if (ast.length === 0) throwErr(env, pos, "failed to analyze empty expression");
 
-    return analyzeSub(env, slot, slot, pos, ast, ast.length - 1, block);
+    return analyzeSub(env, slot, slot, ast, ast.length - 1, block);
 }
 
-function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], index: number, block: AnalysisBlock): AnalysisResult {
+function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: SyntaxNode[], index: number, block: AnalysisBlock): AnalysisResult {
     const expr = ast[index]!;
-    if (index === 0) {
-        if (expr.kind === "raw" && expr.tag === "access") {
+
+    if (expr.kind === "ident" && expr.identTag === "access") {
+        const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
+        let lhs: AnalysisResult;
+        if (index >= 1) {
+            lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
+        } else {
             const idx = blockAppend(block, {expr: "comptime:only", pos: expr.pos});
-            return {idx, type: {
+            lhs = {idx, type: {
                 type: "type",
                 pos: slot.pos,
                 narrow: rootSlot,
             }};
         }
+        return analyzeAccess(env, slot, lhs, expr.pos, {type: "string", key: expr.str}, block);
+    }
+    
+    if (index === 0) {
         return analyzeBase(env, slot, expr, block);
     } else {
-        const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
-        const lhs = analyzeSub(env, unknownSlot, rootSlot, pos, ast, index - 1, block);
-        return analyzeSuffix(env, slot, lhs, expr, block);
+        // const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
+        // const lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
+        // return analyzeSuffix(env, slot, lhs, expr, block);
+        throwErr(env, expr.pos, "TODO analyzeSuffix: "+expr.kind);
     }
 }
 
@@ -313,7 +323,7 @@ function builtinNamespace(env: Env): ComptimeNamespace {
     };
 }
 function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
-    if (ast.kind === "builtin") {
+    if (ast.kind === "ident" && ast.identTag === "builtin") {
         if (ast.str === "builtin") {
             const idx = blockAppend(block, {expr: "comptime:only", pos: ast.pos});
             return {idx, type: {
@@ -327,19 +337,8 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
     }
     throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+Adisp.dumpAst([ast], 3));
 }
-function analyzeSuffix(env: Env, slot: ComptimeType, result: AnalysisResult, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
-    if (ast.kind === "raw") {
-        if (ast.tag === "access") return result; // todo
-        throwErr(env, ast.pos, "unexpected raw: "+JSON.stringify(ast.raw));
-    }
-    if (ast.kind === "ident") {
-        // access ident on result
-        // the way to do this will vary based on the type
-        return analyzeAccess(env, slot, result, ast.pos, {type: "string", key: ast.str}, block);
-    }
-    throwErr(env, ast.pos, "TODO analyzeSuffix: "+ast.kind);
-}
 function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: ComptimeNarrowKey, block: AnalysisBlock): AnalysisResult {
+    // TODO: this is only for comptime-known accesses but we should support runtime-known accesses
     if (obj.type.type === "namespace") {
         if (!obj.type.narrow) throwErr(env, pos, "cannot access on non-narrowed namespace");
         if (prop.type === "string") {
@@ -371,7 +370,7 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): {str:
     const lhsItems = trimWs(src);
     if (lhsItems.length < 1) throwErr(env, pos, "Expected ident for bind");
     const ident = lhsItems[0]!;
-    if (ident.kind !== "ident") throwErr(env, ident.pos, `Expected ident for bind lhs, found ${ident.kind}`);
+    if (ident.kind !== "ident" || ident.identTag !== "normal") throwErr(env, ident.pos, `Expected normal ident for bind lhs, found ${ident.kind}`);
     if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in bind lhs");
     return {str: ident.str, pos: ident.pos};
 }

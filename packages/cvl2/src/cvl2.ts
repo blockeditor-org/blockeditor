@@ -18,7 +18,8 @@ type Config = {
 
 export type OpTag = "sep" | "def" | "pub" | "var" | "assign" | "";
 export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "";
-export type RawTag = "access" | "return" | "discard";
+export type RawTag = "return" | "discard";
+export type IdentifierTag = "normal" | "access" | "builtin";
 
 const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>> = {
     paren: {
@@ -57,9 +58,12 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
     // TODO: "\()" as style open prec 0 autoclose display{open: "(", close: ")"}
 };
 const rawconfig: Record<string, RawTag> = {
-    ".": "access",
     "->": "return",
     "_": "discard",
+};
+const identtag: Record<string, IdentifierTag> = {
+    ".": "access",
+    "#": "builtin",
 };
 
 const config: Record<string, Config> = {};
@@ -145,12 +149,7 @@ export interface IdentifierToken {
     kind: "ident";
     pos: TokenPosition;
     str: string;
-}
-
-export interface BuiltinToken {
-    kind: "builtin";
-    pos: TokenPosition;
-    str: string;
+    identTag: IdentifierTag;
 }
 
 export interface WhitespaceToken {
@@ -206,7 +205,7 @@ export interface ErrToken {
     pos: TokenPosition;
 }
 
-export type SyntaxNode = IdentifierToken | BuiltinToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | RawToken | ErrToken;
+export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | RawToken | ErrToken;
 
 interface TokenizerStackItem {
     pos: TokenPosition,
@@ -263,19 +262,21 @@ export function tokenize(source: Source): TokenizationResult {
                     kind: "ident",
                     pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                     str: source.text.substring(start.idx, source.currentIndex),
+                    identTag: "normal",
                 });
                 continue;
             }
-            if (firstChar === "#") {
+            if (identtag[firstChar]) {
                 source.take();
                 
                 while (source.peek().match(identifierRegex)) {
                     source.take();
                 }
                 currentSyntaxNodes.push({
-                    kind: "builtin",
+                    kind: "ident",
                     pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                     str: source.text.substring(start.idx + 1, source.currentIndex),
+                    identTag: identtag[firstChar]!,
                 });
                 continue;
             }
@@ -575,8 +576,6 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: nu
         return " ";
     } else if (entity.kind === "ident") {
         return entity.str;
-    } else if (entity.kind === "builtin") {
-        return "#" + entity.str;
     } else if (entity.kind === "op") {
         if(entity.op === "\n") return "";
         return entity.op;
