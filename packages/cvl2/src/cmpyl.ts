@@ -373,7 +373,24 @@ type ReadContainer = {
     bindings: Map<string, ReadBinding>,
     lines: {items: SyntaxNode[], pos: TokenPosition}[],
 };
-function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): {str: string, pos: TokenPosition} {
+type Destructure = {
+    extract: DestructureExtract,
+    type?: ComptimeType,
+};
+type DestructureExtract = {
+    kind: "single_item",
+    name: string,
+} | {
+    kind: "list",
+    items: DestructureExtract[],
+} | {
+    kind: "map",
+    items: [ComptimeNarrowKey, DestructureExtract][],
+};
+type DestructureListEntry = {
+    type?: ComptimeType,
+};
+function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destructure {
     // TODO: support destructuring. ie:
     // a :: 25 ✓
     // [a, b] :: 25
