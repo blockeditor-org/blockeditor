@@ -265,10 +265,18 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
 function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], index: number, block: AnalysisBlock): AnalysisResult {
     const expr = ast[index]!;
     if (index === 0) {
+        if (expr.kind === "raw" && expr.tag === "access") {
+            const idx = blockAppend(block, {expr: "comptime:only", pos: expr.pos});
+            return {idx, type: {
+                type: "type",
+                pos: slot.pos,
+                narrow: rootSlot,
+            }};
+        }
         return analyzeBase(env, slot, expr, block);
     } else {
         const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
-        const lhs = analyzeSub(env, unknownSlot, slot, pos, ast, index - 1, block);
+        const lhs = analyzeSub(env, unknownSlot, rootSlot, pos, ast, index - 1, block);
         return analyzeSuffix(env, slot, lhs, expr, block);
     }
 }
