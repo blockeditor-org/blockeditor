@@ -278,7 +278,13 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
                 narrow: rootSlot,
             }};
         }
-        return analyzeAccess(env, slot, lhs, expr.pos, {type: "string", key: expr.str}, block);
+        const narrow: ComptimeNarrowKey = {type: "string", key: expr.str};
+        const idx = blockAppend(block, {expr: "comptime:key", pos: expr.pos, narrow});
+        return analyzeAccess(env, slot, lhs, expr.pos, {idx, type: {
+            type: "key",
+            pos: expr.pos,
+            narrow,
+        }}, block);
     }
     
     if (index === 0) {
@@ -287,7 +293,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         // const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
         // const lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
         // return analyzeSuffix(env, slot, lhs, expr, block);
-        throwErr(env, expr.pos, "TODO analyzeSuffix: "+expr.kind);
+        throwErr(env, expr.pos, "TODO analyzeSuffix: "+expr.kind+Adisp.dumpAst([expr], 2));
     }
 }
 
@@ -337,12 +343,14 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
     }
     throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+Adisp.dumpAst([ast], 3));
 }
-function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: ComptimeNarrowKey, block: AnalysisBlock): AnalysisResult {
+function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: AnalysisResult, block: AnalysisBlock): AnalysisResult {
     // TODO: this is only for comptime-known accesses but we should support runtime-known accesses
     if (obj.type.type === "namespace") {
         if (!obj.type.narrow) throwErr(env, pos, "cannot access on non-narrowed namespace");
-        if (prop.type === "string") {
-            return obj.type.narrow.getString(env, pos, prop.key, block);
+        if (prop.type.type !== "key") throwErr(env, pos, "expected prop type key");
+        if (!prop.type.narrow) throwErr(env, pos, "cannot access on namespace with non-narrowed prop value");
+        if (prop.type.narrow.type === "string") {
+            return obj.type.narrow.getString(env, pos, prop.type.narrow.key, block);
         }else{
             throwErr(env, pos, "TODO return ?symbolChildType .init(T) or .empty");
         }

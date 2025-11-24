@@ -121,6 +121,12 @@ export class Source {
         }
         return character;
     }
+    revert(pos: TokenPosition) {
+        this.filename = pos.fyl;
+        this.currentIndex = pos.idx;
+        this.currentLine = pos.lyn;
+        this.currentCol = pos.col;
+    }
 
     private calculateIndent(): number {
         const subString = this.text.substring(this.currentIndex);
@@ -150,6 +156,7 @@ export interface IdentifierToken {
     pos: TokenPosition;
     str: string;
     identTag: IdentifierTag;
+    identTagRaw: string;
 }
 
 export interface WhitespaceToken {
@@ -263,22 +270,30 @@ export function tokenize(source: Source): TokenizationResult {
                     pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                     str: source.text.substring(start.idx, source.currentIndex),
                     identTag: "normal",
+                    identTagRaw: "",
                 });
                 continue;
             }
             if (identtag[firstChar]) {
-                source.take();
+                const beforeAttempt = source.getPosition();
                 
                 while (source.peek().match(identifierRegex)) {
                     source.take();
                 }
-                currentSyntaxNodes.push({
-                    kind: "ident",
-                    pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
-                    str: source.text.substring(start.idx + 1, source.currentIndex),
-                    identTag: identtag[firstChar]!,
-                });
-                continue;
+                const len = source.currentIndex - start.idx - 1;
+                if (len > 0) {
+                    currentSyntaxNodes.push({
+                        kind: "ident",
+                        pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                        str: source.text.substring(start.idx + 1, source.currentIndex),
+                        identTag: identtag[firstChar]!,
+                        identTagRaw: firstChar,
+                    });
+                    continue;
+                } else {
+                    // failed to match identtag; revert
+                    source.revert(beforeAttempt);
+                }
             }
 
             if (firstChar.match(whitespaceRegex)) {
@@ -575,7 +590,7 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: nu
         if(entity.nl) return "";
         return " ";
     } else if (entity.kind === "ident") {
-        return entity.str;
+        return entity.identTagRaw + entity.str;
     } else if (entity.kind === "op") {
         if(entity.op === "\n") return "";
         return entity.op;
