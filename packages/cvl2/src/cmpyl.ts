@@ -259,29 +259,18 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
 
     if (ast.length === 0) throwErr(env, pos, "failed to analyze empty expression");
 
-    let eater = 0;
-    const first = ast[eater++]!;
-    const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
-    // in the future we might choose to back propagate slot types so T: a.b.c is T: ({c: T}: ({c: {b: T}}: a).b).c
-    const slotTypes = Array.from({length: ast.length}, (_, i) => i === ast.length - 1 ? slot : unknownSlot);
+    return analyzeSub(env, slot, slot, pos, ast, ast.length - 1, block);
+}
 
-    let result: AnalysisResult;
-    if (first.kind === "raw" && first.tag === "access") {
-        const idx = blockAppend(block, {expr: "comptime:only", pos: first.pos});
-        result = {idx, type: {
-            type: "type",
-            pos: slot.pos,
-            narrow: slot,
-        }};
-    }else {
-        result = analyzeBase(env, slotTypes[eater - 1]!, first, block);
+function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], index: number, block: AnalysisBlock): AnalysisResult {
+    const expr = ast[index]!;
+    if (index === 0) {
+        return analyzeBase(env, slot, expr, block);
+    } else {
+        const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
+        const lhs = analyzeSub(env, unknownSlot, slot, pos, ast, index - 1, block);
+        return analyzeSuffix(env, slot, lhs, expr, block);
     }
-
-    for (; eater < ast.length; eater++) {
-        result = analyzeSuffix(env, slotTypes[eater]!, result, ast[eater]!, block);
-    }
-
-    return result;
 }
 
 const stdFolderOrFileType: ComptimeTypeFolderOrFile = {type: "folder_or_file", pos: compilerPos()}; // type std.Folder | std.File
