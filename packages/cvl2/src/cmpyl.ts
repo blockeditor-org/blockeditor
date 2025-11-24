@@ -286,12 +286,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
             narrow,
         }}, block);
     } else if (expr.kind === "block" && expr.tag === "arrow_fn") {
-        // lhs is args, rhs is body
-        // since it's done this way we can have 0-arg syntax
-        // we should consider
-        // is `(a => b, c => d)` parsed as `a => (b, c => (d))`? or `(a => b) (c => d)`
-        // maybe '=>' should be an op rather than leftprec. maybe same for coloncall.
-        // a => b => c would be disallowed or right-prec
+        const args = readDestructure(env, expr.pos, ast.slice(0, index));
         throwErr(env, expr.pos, "TODO implement function expression:"+Adisp.dumpAst([expr], 2));
     }
     
@@ -386,8 +381,8 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): {str:
     const lhsItems = trimWs(src);
     if (lhsItems.length < 1) throwErr(env, pos, "Expected ident for bind");
     const ident = lhsItems[0]!;
-    if (ident.kind !== "ident" || ident.identTag !== "normal") throwErr(env, ident.pos, `Expected normal ident for bind lhs, found ${ident.kind}`);
-    if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in bind lhs");
+    if (ident.kind !== "ident" || ident.identTag !== "normal") throwErr(env, ident.pos, `Expected normal ident for destructuring, found ${ident.kind}`);
+    if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in destructure");
     return {str: ident.str, pos: ident.pos};
 }
 function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadContainer {
