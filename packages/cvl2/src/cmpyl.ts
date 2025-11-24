@@ -285,6 +285,14 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
             pos: expr.pos,
             narrow,
         }}, block);
+    } else if (expr.kind === "block" && expr.tag === "arrow_fn") {
+        // lhs is args, rhs is body
+        // since it's done this way we can have 0-arg syntax
+        // we should consider
+        // is `(a => b, c => d)` parsed as `a => (b, c => (d))`? or `(a => b) (c => d)`
+        // maybe '=>' should be an op rather than leftprec. maybe same for coloncall.
+        // a => b => c would be disallowed or right-prec
+        throwErr(env, expr.pos, "TODO implement function expression:"+Adisp.dumpAst([expr], 2));
     }
     
     if (index === 0) {
