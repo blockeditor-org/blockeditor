@@ -191,6 +191,7 @@ export class Adisp {
         using _ = this.indent();
         if (this.putCheckDepth()) return;
         for (const child of children) {
+            this.putNewline();
             this.putSingle(printer, child);
         }
         if (children.length === 0) {
@@ -200,6 +201,7 @@ export class Adisp {
     }
     static dump<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>, depth: number = Infinity): string {
         const res = new Adisp(depth);
+        res.putNewline();
         res.putSingle(printer, value);
         return res.end();
     }
@@ -221,7 +223,6 @@ export class Adisp {
 export type AdispSingleItemPrinter<T> = (adisp: Adisp, item: T) => void;
 export const adisp_types = {
     astNode(adisp: Adisp, entity: SyntaxNode): void {
-        adisp.putNewline();
         adisp.put(entity.kind, colors.cyan);
 
         if (entity.kind === "block") {
