@@ -291,9 +291,22 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
             narrow,
         }}, block);
     } else if (expr.kind === "block" && expr.tag === "arrow_fn") {
+        let argSlotType: ComptimeType = {type: "unknown", pos: expr.pos};
+        let retSlotType: ComptimeType = {type: "unknown", pos: expr.pos};
+        if (slot.type === "fn") {
+            argSlotType = slot.arg;
+            retSlotType = slot.ret;
+        }
         const args = readDestructure(env, expr.pos, ast.slice(0, index));
         console.log("destructure", printers.destructure.dump(args));
+        const retTy: ComptimeTypeFn = {
+            type: "fn",
+            arg: args.type,
+            ret: retSlotType,
+            pos: expr.pos,
+        };
         console.log("in slot", printers.type.dump(slot));
+        console.log("result type", printers.type.dump(retTy));
         throwErr(env, expr.pos, "TODO implement function expression:"+printers.astNode.dumpList([expr], 2));
     }
     
