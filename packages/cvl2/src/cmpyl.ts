@@ -375,17 +375,20 @@ type ReadContainer = {
 };
 type Destructure = {
     extract: DestructureExtract,
-    type?: ComptimeType,
+    type: ComptimeType,
 };
 type DestructureExtract = {
     kind: "single_item",
     name: string,
+    pos: TokenPosition,
 } | {
     kind: "list",
     items: DestructureExtract[],
+    pos: TokenPosition,
 } | {
     kind: "map",
     items: [ComptimeNarrowKey, DestructureExtract][],
+    pos: TokenPosition,
 };
 function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destructure {
     // TODO: support destructuring. ie:
@@ -395,9 +398,14 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
     const lhsItems = trimWs(src);
     if (lhsItems.length < 1) throwErr(env, pos, "Expected ident for bind");
     const ident = lhsItems[0]!;
-    if (ident.kind !== "ident" || ident.identTag !== "normal") throwErr(env, ident.pos, `Expected normal ident for destructuring, found ${ident.kind}`);
-    if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in destructure");
-    return {str: ident.str, pos: ident.pos};
+    if (ident.kind === "ident" && ident.identTag === "normal") {
+        if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in destructure");
+        return {
+            extract: {kind: "single_item", name: ident.str, pos: ident.pos},
+            type: {type: "unknown", pos: ident.pos},
+        };
+    }
+    throwErr(env, ident.pos, `Unsupported kind for destructuring: ${ident.kind}`);
 }
 function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadContainer {
     const lines: {items: SyntaxNode[], pos: TokenPosition}[] = readBinary(env, src, "sep") ?? [{items: src, pos: pos}];
@@ -412,16 +420,17 @@ function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadCon
             if (rb2) {
                 // found binding
                 const [lhs, op, rhs] = rb2;
-                const ident = readDestructure(env, lhs.pos, lhs.items);
-                const prev = res.bindings.get(ident.str);
+                const destructure = readDestructure(env, lhs.pos, lhs.items);
+                if (destructure.extract.kind !== "single_item") throwErr(env, destructure.extract.pos, "TODO: support destructure extract kind: " + destructure.extract.kind);
+                const prev = res.bindings.get(destructure.extract.name);
                 if (prev) {
                     // ideally we would prevent posting the error if the value is already an error
-                    addErr(env, ident.pos, `Duplicate binding name ${ident.str}`, [
+                    addErr(env, destructure.extract.pos, `Duplicate binding name ${destructure.extract.name}`, [
                         [prev.pos, "Previous definition here"],
                     ]);
-                    res.bindings.set(ident.str, {pos: prev.pos, value: [{kind: "err", pos: prev.pos}]});
+                    res.bindings.set(destructure.extract.name, {pos: prev.pos, value: [{kind: "err", pos: prev.pos}]});
                 } else {
-                    res.bindings.set(ident.str, {pos: op.pos, value: rhs!.items});
+                    res.bindings.set(destructure.extract.name, {pos: op.pos, value: rhs!.items});
                 }
             } else {
                 // found non-binding
