@@ -113,7 +113,7 @@ export class Adisp {
             }else if(expr.expr === "comptime:ast") {
                 this.put(" ast:");
                 this.putSrc(expr.pos);
-                this.putList(adisp_types.astNode, expr.narrow.ast);
+                this.putList(printers.astNode, expr.narrow.ast);
             }else if(expr.expr === "comptime:ns_list_append") {
                 this.put(` key=${expr.key} list=${expr.list} value=${expr.value}`);
                 this.putSrc(expr.pos);
@@ -184,10 +184,10 @@ export class Adisp {
         }
     }
 
-    putSingle<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>) {
-        printer(this, value);
+    putSingle<T>(printer: Printer<T>, value: NoInfer<T>) {
+        printer.print(this, value);
     }
-    putList<T>(printer: AdispSingleItemPrinter<T>, children: NoInfer<T>[]) {
+    putList<T>(printer: Printer<T>, children: NoInfer<T>[]) {
         using _ = this.indent();
         if (this.putCheckDepth()) return;
         for (const child of children) {
@@ -199,7 +199,7 @@ export class Adisp {
             this.put("*no children*", colors.black);
         }
     }
-    static dump<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>, depth: number = Infinity): string {
+    static dump<T>(printer: Printer<T>, value: NoInfer<T>, depth: number = Infinity): string {
         const res = new Adisp(depth);
         res.putNewline();
         res.putSingle(printer, value);
@@ -207,7 +207,7 @@ export class Adisp {
     }
     static dumpAst(ast: SyntaxNode[], depth: number = Infinity): string {
         const res = new Adisp(depth);
-        res.putList(adisp_types.astNode, ast);
+        res.putList(printers.astNode, ast);
         return res.end();
     }
     static dumpDestructure(destructure: Destructure, depth: number = Infinity): string {
@@ -218,27 +218,34 @@ export class Adisp {
         }
         return res.end();
     }
+
 }
 
-export type AdispSingleItemPrinter<T> = (adisp: Adisp, item: T) => void;
-export const adisp_types = {
-    astNode(adisp: Adisp, entity: SyntaxNode): void {
+class Printer<T> {
+    print: (adisp: Adisp, item: T) => void;
+    constructor(printFn: (adisp: Adisp, item: T) => void) {
+        this.print = printFn;
+    }
+}
+
+export const printers = {
+    astNode: new Printer<SyntaxNode>((adisp, entity) => {
         adisp.put(entity.kind, colors.cyan);
 
         if (entity.kind === "block") {
             adisp.put(` ${entity.tag}`);
             adisp.putSrc(entity.pos);
-            adisp.putList(adisp_types.astNode, entity.items);
+            adisp.putList(printers.astNode, entity.items);
         } else if(entity.kind === "binary") {
             adisp.put(` ${entity.tag}`);
             adisp.putSrc(entity.pos);
-            adisp.putList(adisp_types.astNode, entity.items);
+            adisp.putList(printers.astNode, entity.items);
         } else if(entity.kind === "op") {
             adisp.put(` ${JSON.stringify(entity.op)}`, colors.yellow);
             adisp.putSrc(entity.pos);
         } else if(entity.kind === "opSeg") {
             adisp.putSrc(entity.pos);
-            adisp.putList(adisp_types.astNode, entity.items);
+            adisp.putList(printers.astNode, entity.items);
         } else if(entity.kind === "ws") {
             adisp.put(` ${JSON.stringify(entity.nl ? "\n" : " ")}`);
             adisp.putSrc(entity.pos);
@@ -257,5 +264,6 @@ export const adisp_types = {
             adisp.put(` %%TODO%%`);
             adisp.putSrc(entity.pos);
         }
-    },
-} satisfies Record<string, AdispSingleItemPrinter<any>>;
+    }),
+};
+
