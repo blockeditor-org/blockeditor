@@ -1,4 +1,4 @@
-import { assert, throwErr, type AnalysisBlock, type ComptimeNarrowKey, type ComptimeType, type ComptimeValueAst, type Env, type NsFields } from "./cmpyl";
+import { assert, throwErr, type AnalysisBlock, type ComptimeNarrowKey, type ComptimeType, type ComptimeValueAst, type Destructure, type DestructureExtract, type Env, type NsFields } from "./cmpyl";
 import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
@@ -48,10 +48,11 @@ type PrintCfg = {indent: string};
 export class Adisp {
     cfg: PrintCfg;
     indentCount: number = 0;
-    depth: number = Infinity;
+    depth: number;
     res: string[] = [];
-    constructor() {
+    constructor(depth = Infinity) {
         this.cfg = {indent: "│ "};
+        this.depth = depth;
     }
     end(): string {
         return this.res.join("");
@@ -198,11 +199,64 @@ export class Adisp {
             this.putSrc(entity.pos);
         }
     }
+    putDestructure(destructure: Destructure) {
+        if (this.putCheckDepth()) return;
+        this.putNewline();
+        this.put("extract=");
+        {
+            using _ = this.indent();
+            this.putDestructureExtract(destructure.extract);
+        }
+        this.putNewline();
+        this.put("type=");
+        {
+            using _ = this.indent();
+            this.putType(destructure.type);
+        }
+    }
+    putDestructureExtract(extract: DestructureExtract) {
+        this.putNewline();
+        this.put(extract.kind, colors.cyan);
+        if (extract.kind === "single_item") {
+            this.put(` ${JSON.stringify(extract.name)}`, colors.green);
+            this.putSrc(extract.pos);
+        } else if (extract.kind === "list") {
+            this.putSrc(extract.pos);
+            using _ = this.indent();
+            for (const child of extract.items) {
+                this.putDestructureExtract(child);
+            }
+        } else {
+            this.put(` %%TODO%%`);
+            this.putSrc(extract.pos);
+        }
+    }
 
+    putSingle<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>) {
+
+    }
+    putList<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>[]) {
+
+    }
+    static dump<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>, depth: number = Infinity): string {
+        const res = new Adisp(depth);
+        res.putSingle(printer, value);
+        return res.end();
+    }
     static dumpAst(ast: SyntaxNode[], depth: number = Infinity): string {
-        const res = new Adisp();
-        res.depth = depth;
+        const res = new Adisp(depth);
         res.putAstList(ast);
         return res.end();
     }
+    static dumpDestructure(destructure: Destructure, depth: number = Infinity): string {
+        const res = new Adisp(depth);
+        {
+            using _ = res.indent();
+            res.putDestructure(destructure);
+        }
+        return res.end();
+    }
 }
+
+export type AdispSingleItemPrinter<T> = (adisp: Adisp, item: T) => void;
+export const adisp_types = {} satisfies Record<string, AdispSingleItemPrinter<unknown>>;

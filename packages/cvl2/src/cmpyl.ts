@@ -292,7 +292,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         }}, block);
     } else if (expr.kind === "block" && expr.tag === "arrow_fn") {
         const args = readDestructure(env, expr.pos, ast.slice(0, index));
-        console.log("destructure");
+        console.log("destructure", Adisp.dumpDestructure(args));
         throwErr(env, expr.pos, "TODO implement function expression:"+Adisp.dumpAst([expr], 2));
     }
     
@@ -379,11 +379,11 @@ type ReadContainer = {
     bindings: Map<string, ReadBinding>,
     lines: {items: SyntaxNode[], pos: TokenPosition}[],
 };
-type Destructure = {
+export type Destructure = {
     extract: DestructureExtract,
     type: ComptimeType,
 };
-type DestructureExtract = {
+export type DestructureExtract = {
     kind: "single_item",
     name: string,
     pos: TokenPosition,
