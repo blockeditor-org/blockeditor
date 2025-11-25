@@ -4,7 +4,7 @@ import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
     const adisp = new Adisp();
     adisp.depth = 1;
-    adisp.putBlock(block);
+    adisp.putMulti(printers.block, block);
     console.log(adisp.end());
 
     const results = Array.from({length: block.lines.length}, () => undefined) as unknown[];
@@ -85,46 +85,6 @@ export class Adisp {
         return false;
     }
 
-    putBlock(block: AnalysisBlock) {
-        if (this.putCheckDepth()) return;
-        for (let i = 0; i < block.lines.length; i++) {
-            const expr = block.lines[i]!;
-            let desc: string;
-            if (i !== 0) this.putNewline();
-            this.put(`${i} = `);
-            this.put(expr.expr, colors.magenta);
-            if (expr.expr === "call") {
-                this.put(` method=${expr.method} arg=${expr.arg}`);
-                this.putSrc(expr.pos);
-            }else if(expr.expr === "comptime:only") {
-                this.putSrc(expr.pos);
-            }else if(expr.expr === "comptime:ns_list_init") {
-                this.putSrc(expr.pos);
-            }else if(expr.expr === "comptime:key") {
-                if(expr.narrow.type === "string") {
-                    this.put(` str=${JSON.stringify(expr.narrow.key)}`);
-                    this.putSrc(expr.pos);
-                }else{
-                    this.put(` str=${JSON.stringify(expr.narrow.key.description??"(unnamed)")}, type=`);
-                    this.putSrc(expr.pos);
-                    using _1 = this.indent();
-                    this.putNewline();
-                    this.putSingle(printers.type, expr.narrow.child);
-                }
-            }else if(expr.expr === "comptime:ast") {
-                this.put(" ast:");
-                this.putSrc(expr.pos);
-                this.putList(printers.astNode, expr.narrow.ast);
-            }else if(expr.expr === "comptime:ns_list_append") {
-                this.put(` key=${expr.key} list=${expr.list} value=${expr.value}`);
-                this.putSrc(expr.pos);
-            } else {
-                this.put(" %%TODO%%");
-                this.putSrc(expr.pos);
-            }
-        }
-    }
-
     putSingle<T>(printer: SinglePrinter<T>, value: NoInfer<T>) {
         if (this.putCheckDepth()) return;
         printer.single(this, value);
@@ -181,6 +141,44 @@ class MultiPrinter<T> {
 }
 
 export const printers = {
+    block: new MultiPrinter<AnalysisBlock>((adisp, block) => {
+        if (adisp.putCheckDepth()) return;
+        for (let i = 0; i < block.lines.length; i++) {
+            const expr = block.lines[i]!;
+            adisp.putNewline();
+            adisp.put(`${i} = `);
+            adisp.put(expr.expr, colors.magenta);
+            if (expr.expr === "call") {
+                adisp.put(` method=${expr.method} arg=${expr.arg}`);
+                adisp.putSrc(expr.pos);
+            }else if(expr.expr === "comptime:only") {
+                adisp.putSrc(expr.pos);
+            }else if(expr.expr === "comptime:ns_list_init") {
+                adisp.putSrc(expr.pos);
+            }else if(expr.expr === "comptime:key") {
+                if(expr.narrow.type === "string") {
+                    adisp.put(` str=${JSON.stringify(expr.narrow.key)}`);
+                    adisp.putSrc(expr.pos);
+                }else{
+                    adisp.put(` str=${JSON.stringify(expr.narrow.key.description??"(unnamed)")}, type=`);
+                    adisp.putSrc(expr.pos);
+                    using _1 = adisp.indent();
+                    adisp.putNewline();
+                    adisp.putSingle(printers.type, expr.narrow.child);
+                }
+            }else if(expr.expr === "comptime:ast") {
+                adisp.put(" ast:");
+                adisp.putSrc(expr.pos);
+                adisp.putList(printers.astNode, expr.narrow.ast);
+            }else if(expr.expr === "comptime:ns_list_append") {
+                adisp.put(` key=${expr.key} list=${expr.list} value=${expr.value}`);
+                adisp.putSrc(expr.pos);
+            } else {
+                adisp.put(" %%TODO%%");
+                adisp.putSrc(expr.pos);
+            }
+        }
+    }),
     destructure: new MultiPrinter<Destructure>((adisp, destructure) => {
         adisp.putNewline();
         adisp.put("extract=");
