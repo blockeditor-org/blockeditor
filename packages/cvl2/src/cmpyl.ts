@@ -411,6 +411,24 @@ export type DestructureExtract = {
     pos: TokenPosition,
 };
 function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destructure {
+    /*
+    destructure types don't really make sense. here's the use-cases
+    1. function args
+            myfn :: (a: i32, b: i32) => i32: a + b
+        here, the arg type is a new tuple (i32, i32)
+    2. function args with some implicit
+            ((i32, infer T) => i32): (a, b: i32) => a + b 
+        the arg type should end up (i32, i32)
+    3. function type args
+            myfn_type: type :: (i32, i32) => i32
+        zero clue what to do here. this one is a mess.
+    4. destructuring 1
+            (a: i32, b: i32) = (5, 6)
+    5. destructuring 2
+            (a: i32, b: i32) = (type: (i32, i32)): (5, 6)
+        importantly, if destructure made a tuple here,
+        it would not be equal to the type of the rhs which is problematic
+    */
     const lhsItems = trimWs(src);
     if (lhsItems.length < 1) throwErr(env, pos, "Expected at least one item to destructure" + printers.astNode.dumpList(src, 2));
     if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected item for destructuring. TODO support eg 'name: type := value'" + printers.astNode.dumpList(src, 2));
