@@ -107,8 +107,6 @@ export class Adisp {
                     this.put(` str=${JSON.stringify(expr.narrow.key.description??"(unnamed)")}, type=`);
                     this.putSrc(expr.pos);
                     using _1 = this.indent();
-                    this.putNewline();
-                    using _2 = this.indent();
                     this.putType(expr.narrow.child);
                 }
             }else if(expr.expr === "comptime:ast") {
@@ -126,9 +124,11 @@ export class Adisp {
     }
     putType(type: ComptimeType) {
         if (this.putCheckDepth()) return;
+        this.putNewline();
         this.put(type.type, colors.yellow);
         if (type.type === "fn") {
             this.putSrc(type.pos);
+            using _ = this.indent();
             this.putNewline();
             this.put("arg=");
             {
@@ -154,7 +154,6 @@ export class Adisp {
         using _ = this.indent();
         if (this.putCheckDepth()) return;
         for (const node of ast) {
-            this.putNewline();
             this.putAstNode(node);
         }
         if (ast.length === 0) {
@@ -163,6 +162,7 @@ export class Adisp {
         }
     }
     putAstNode(entity: SyntaxNode) {
+        this.putNewline();
         this.put(entity.kind, colors.cyan);
 
         if (entity.kind === "block") {
