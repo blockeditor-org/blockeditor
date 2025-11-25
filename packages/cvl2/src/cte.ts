@@ -3,6 +3,7 @@ import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
     const adisp = new Adisp();
+    adisp.depth = 1;
     adisp.putBlock(block);
     console.log(adisp.end());
 

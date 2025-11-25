@@ -292,6 +292,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         }}, block);
     } else if (expr.kind === "block" && expr.tag === "arrow_fn") {
         const args = readDestructure(env, expr.pos, ast.slice(0, index));
+        console.log("destructure");
         throwErr(env, expr.pos, "TODO implement function expression:"+Adisp.dumpAst([expr], 2));
     }
     
