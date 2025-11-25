@@ -2,7 +2,7 @@ import { assert, throwErr, type AnalysisBlock, type ComptimeNarrowKey, type Comp
 import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
-    console.log(printers.block.dump(block, 2));
+    console.log("comptimeEval" + printers.block.dump(block, 2));
 
     const results = Array.from({length: block.lines.length}, () => undefined) as unknown[];
     for (let i = 0; i < block.lines.length; i += 1) {

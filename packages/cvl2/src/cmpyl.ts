@@ -293,6 +293,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
     } else if (expr.kind === "block" && expr.tag === "arrow_fn") {
         const args = readDestructure(env, expr.pos, ast.slice(0, index));
         console.log("destructure", printers.destructure.dump(args));
+        console.log("in slot", printers.type.dump(slot));
         throwErr(env, expr.pos, "TODO implement function expression:"+printers.astNode.dumpList([expr], 2));
     }
     
