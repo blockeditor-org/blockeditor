@@ -1,4 +1,4 @@
-import { Adisp } from "./cte";
+import { Adisp, printers } from "./cte";
 
 function unreachable(): never {
     throw new Error("unreachable");
@@ -681,7 +681,7 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
     const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false }, tokenizationResult.result, 0, 0, true);
     const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true }, tokenizationResult.result, 0, 0, true);
-    const adisp = Adisp.dumpAst(tokenizationResult.result);
+    const adisp = printers.astNode.dumpList(tokenizationResult.result);
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
     return (

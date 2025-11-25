@@ -1,4 +1,4 @@
-import { Adisp, comptimeEval } from "./cte";
+import { Adisp, comptimeEval, printers } from "./cte";
 import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition, type TraceEntry } from "./cvl2";
 import { isAbsolute, relative } from "path";
 
@@ -292,8 +292,8 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         }}, block);
     } else if (expr.kind === "block" && expr.tag === "arrow_fn") {
         const args = readDestructure(env, expr.pos, ast.slice(0, index));
-        console.log("destructure", Adisp.dumpDestructure(args));
-        throwErr(env, expr.pos, "TODO implement function expression:"+Adisp.dumpAst([expr], 2));
+        console.log("destructure", printers.destructure.dump(args));
+        throwErr(env, expr.pos, "TODO implement function expression:"+printers.astNode.dumpList([expr], 2));
     }
     
     if (index === 0) {
@@ -302,7 +302,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         // const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
         // const lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
         // return analyzeSuffix(env, slot, lhs, expr, block);
-        throwErr(env, expr.pos, "TODO analyzeSuffix: "+expr.kind+Adisp.dumpAst([expr], 2));
+        throwErr(env, expr.pos, "TODO analyzeSuffix: "+expr.kind+printers.astNode.dumpList([expr], 2));
     }
 }
 
@@ -350,7 +350,7 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
         }
     }
-    throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+Adisp.dumpAst([ast], 3));
+    throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
 }
 function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: AnalysisResult, block: AnalysisBlock): AnalysisResult {
     // TODO: this is only for comptime-known accesses but we should support runtime-known accesses
@@ -398,8 +398,8 @@ export type DestructureExtract = {
 };
 function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destructure {
     const lhsItems = trimWs(src);
-    if (lhsItems.length < 1) throwErr(env, pos, "Expected at least one item to destructure" + Adisp.dumpAst(src, 2));
-    if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected item for destructuring. TODO support eg 'name: type := value'" + Adisp.dumpAst(src, 2));
+    if (lhsItems.length < 1) throwErr(env, pos, "Expected at least one item to destructure" + printers.astNode.dumpList(src, 2));
+    if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected item for destructuring. TODO support eg 'name: type := value'" + printers.astNode.dumpList(src, 2));
     const ident = lhsItems[0]!;
     if (ident.kind === "ident" && ident.identTag === "normal") {
         if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in destructure");

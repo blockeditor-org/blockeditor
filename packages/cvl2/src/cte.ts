@@ -173,26 +173,6 @@ export class Adisp {
             this.put("*no children*", colors.black);
         }
     }
-    static dump<T>(printer: SinglePrinter<T>, value: NoInfer<T>, depth: number = Infinity): string {
-        const res = new Adisp(depth);
-        {
-            using _ = res.indent();
-            res.putNewline();
-            res.putSingle(printer, value);
-        }
-        return res.end();
-    }
-    static dumpAst(ast: SyntaxNode[], depth: number = Infinity): string {
-        const res = new Adisp(depth);
-        res.putList(printers.astNode, ast);
-        return res.end();
-    }
-    static dumpDestructure(destructure: Destructure, depth: number = Infinity): string {
-        const res = new Adisp(depth);
-        res.putMulti(printers.destructure, destructure);
-        return res.end();
-    }
-
 }
 
 class SinglePrinter<T> {
@@ -200,11 +180,30 @@ class SinglePrinter<T> {
     constructor(printFn: (adisp: Adisp, item: T) => void) {
         this.single = printFn;
     }
+    dump(value: T, depth: number = Infinity): string {
+        const res = new Adisp(depth);
+        {
+            using _ = res.indent();
+            res.putNewline();
+            res.putSingle(this, value);
+        }
+        return res.end();
+    }
+    dumpList(value: T[], depth: number = Infinity): string {
+        const res = new Adisp(depth);
+        res.putList(this, value);
+        return res.end();
+    }
 }
 class MultiPrinter<T> {
     multi: (adisp: Adisp, item: T) => void;
     constructor(printFn: (adisp: Adisp, item: T) => void) {
         this.multi = printFn;
+    }
+    dump(value: T, depth: number = Infinity): string {
+        const res = new Adisp(depth);
+        res.putMulti(this, value);
+        return res.end();
     }
 }
 
