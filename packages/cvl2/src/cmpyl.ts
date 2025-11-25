@@ -412,6 +412,7 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
         const extracts: DestructureExtract[] = [];
         const types: ComptimeType[] = [];
         for (const arg of args) {
+            if (arg.items.length === 0) continue; // TODO: we should allow `[a\n\nb]` but disallow `[a,,b]`
             const sub = readDestructure(env, arg.pos, arg.items);
             extracts.push(sub.extract);
             types.push(sub.type);
