@@ -108,7 +108,7 @@ export class Adisp {
                     this.put(` str=${JSON.stringify(expr.narrow.key.description??"(unnamed)")}, type=`);
                     this.putSrc(expr.pos);
                     using _1 = this.indent();
-                    this.putType(expr.narrow.child);
+                    this.putSingle(printers.type, expr.narrow.child);
                 }
             }else if(expr.expr === "comptime:ast") {
                 this.put(" ast:");
@@ -121,34 +121,6 @@ export class Adisp {
                 this.put(" %%TODO%%");
                 this.putSrc(expr.pos);
             }
-        }
-    }
-    putType(type: ComptimeType) {
-        if (this.putCheckDepth()) return;
-        this.putNewline();
-        this.put(type.type, colors.yellow);
-        if (type.type === "fn") {
-            this.putSrc(type.pos);
-            using _ = this.indent();
-            this.putNewline();
-            this.put("arg=");
-            {
-                using _ = this.indent();
-                this.putType(type.arg);
-            }
-            this.putNewline();
-            this.put("ret=");
-            {
-                using _ = this.indent();
-                this.putType(type.ret);
-            }
-        }else if(type.type === "void") {
-            this.putSrc(type.pos);
-        }else if(type.type === "folder_or_file") {
-            this.putSrc(type.pos);
-        }else {
-            this.put(" %%TODO%%");
-            this.putSrc(type.pos);
         }
     }
 
@@ -220,7 +192,7 @@ export const printers = {
         adisp.put("type=");
         {
             using _ = adisp.indent();
-            adisp.putType(destructure.type);
+            adisp.putSingle(printers.type, destructure.type);
         }
     }),
     destructureExact: new SinglePrinter<DestructureExtract>((adisp, extract) => {
@@ -237,6 +209,32 @@ export const printers = {
         } else {
             adisp.put(` %%TODO%%`);
             adisp.putSrc(extract.pos);
+        }
+    }),
+    type: new SinglePrinter<ComptimeType>((adisp, type) => {
+        adisp.put(type.type, colors.yellow);
+        if (type.type === "fn") {
+            adisp.putSrc(type.pos);
+            using _ = adisp.indent();
+            adisp.putNewline();
+            adisp.put("arg=");
+            {
+                using _ = adisp.indent();
+                adisp.putSingle(printers.type, type.arg);
+            }
+            adisp.putNewline();
+            adisp.put("ret=");
+            {
+                using _ = adisp.indent();
+                adisp.putSingle(printers.type, type.ret);
+            }
+        }else if(type.type === "void") {
+            adisp.putSrc(type.pos);
+        }else if(type.type === "folder_or_file") {
+            adisp.putSrc(type.pos);
+        }else {
+            adisp.put(" %%TODO%%");
+            adisp.putSrc(type.pos);
         }
     }),
     astNode: new SinglePrinter<SyntaxNode>((adisp, entity) => {
