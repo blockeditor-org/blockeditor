@@ -73,17 +73,20 @@ export class Adisp {
         this.put(` · ${pos.fyl}:${pos.lyn}:${pos.col}`, colors.black);
     }
 
-    putCheckDepth() {
+    putCheckDepth(n?: number) {
         if (this.indentCount > this.depth) {
             this.putNewline();
-            this.put("...");
+            this.put("...", colors.black);
+            if (n != null && n > 0) this.put(` ${n} item${n === 1 ? "" : "s"}`, colors.black);
             return true;
         }
         return false;
     }
 
     putSingle<T>(printer: SinglePrinter<T>, value: NoInfer<T>) {
+        using _ = this.indent();
         if (this.putCheckDepth()) return;
+        this.putNewline();
         printer.single(this, value);
     }
     putMulti<T>(printer: MultiPrinter<T>, value: NoInfer<T>) {
@@ -93,14 +96,15 @@ export class Adisp {
     }
     putList<T>(printer: SinglePrinter<T>, children: NoInfer<T>[]) {
         using _ = this.indent();
-        if (this.putCheckDepth()) return;
-        for (const child of children) {
-            this.putNewline();
-            this.putSingle(printer, child);
-        }
         if (children.length === 0) {
             this.putNewline();
             this.put("*no children*", colors.black);
+            return;
+        }
+        if (this.putCheckDepth(children.length)) return;
+        for (const child of children) {
+            this.putNewline();
+            printer.single(this, child);
         }
     }
 }
@@ -112,11 +116,7 @@ class SinglePrinter<T> {
     }
     dump(value: T, depth: number = Infinity): string {
         const res = new Adisp(depth);
-        {
-            using _ = res.indent();
-            res.putNewline();
-            res.putSingle(this, value);
-        }
+        res.putSingle(this, value);
         return res.end();
     }
     dumpList(value: T[], depth: number = Infinity): string {
@@ -159,8 +159,6 @@ export const printers = {
                 }else{
                     adisp.put(` str=${JSON.stringify(expr.narrow.key.description??"(unnamed)")}, type=`);
                     adisp.putSrc(expr.pos);
-                    using _1 = adisp.indent();
-                    adisp.putNewline();
                     adisp.putSingle(printers.type, expr.narrow.child);
                 }
             }else if(expr.expr === "comptime:ast") {
@@ -179,18 +177,10 @@ export const printers = {
     destructure: new MultiPrinter<Destructure>((adisp, destructure) => {
         adisp.putNewline();
         adisp.put("extract=");
-        {
-            using _ = adisp.indent();
-            adisp.putNewline();
-            adisp.putSingle(printers.destructureExact, destructure.extract);
-        }
+        adisp.putSingle(printers.destructureExact, destructure.extract);
         adisp.putNewline();
         adisp.put("type=");
-        {
-            using _ = adisp.indent();
-            adisp.putNewline();
-            adisp.putSingle(printers.type, destructure.type);
-        }
+        adisp.putSingle(printers.type, destructure.type);
     }),
     destructureExact: new SinglePrinter<DestructureExtract>((adisp, extract) => {
         adisp.put(extract.kind, colors.cyan);
@@ -199,10 +189,7 @@ export const printers = {
             adisp.putSrc(extract.pos);
         } else if (extract.kind === "list") {
             adisp.putSrc(extract.pos);
-            using _ = adisp.indent();
-            for (const child of extract.items) {
-                adisp.putSingle(printers.destructureExact, child);
-            }
+            adisp.putList(printers.destructureExact, extract.items);
         } else {
             adisp.put(` %%TODO%%`);
             adisp.putSrc(extract.pos);
@@ -215,18 +202,10 @@ export const printers = {
             using _ = adisp.indent();
             adisp.putNewline();
             adisp.put("arg=");
-            {
-                using _ = adisp.indent();
-                adisp.putNewline();
-                adisp.putSingle(printers.type, type.arg);
-            }
+            adisp.putSingle(printers.type, type.arg);
             adisp.putNewline();
             adisp.put("ret=");
-            {
-                using _ = adisp.indent();
-                adisp.putNewline();
-                adisp.putSingle(printers.type, type.ret);
-            }
+            adisp.putSingle(printers.type, type.ret);
         }else if(type.type === "void") {
             adisp.putSrc(type.pos);
         }else if(type.type === "folder_or_file") {
