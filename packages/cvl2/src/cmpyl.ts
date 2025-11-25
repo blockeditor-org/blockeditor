@@ -156,7 +156,12 @@ export type ComptimeTypeFolderOrFile = {
     type: "folder_or_file",
     pos: TokenPosition,
 };
-export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile;
+export type ComptimeTypeTuple = {
+    type: "tuple",
+    pos: TokenPosition,
+    children: ComptimeType[],
+};
+export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple;
 
 export type ComptimeNarrowKey = {
     type: "symbol",
@@ -391,12 +396,9 @@ type DestructureExtract = {
     pos: TokenPosition,
 };
 function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destructure {
-    // TODO: support destructuring. ie:
-    // a :: 25 ✓
-    // [a, b] :: 25
-    // [a :: .a, b :: .b] :: 25
     const lhsItems = trimWs(src);
-    if (lhsItems.length < 1) throwErr(env, pos, "Expected ident for bind");
+    if (lhsItems.length < 1) throwErr(env, pos, "Expected at least one item to destructure" + Adisp.dumpAst(src, 2));
+    if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected item for destructuring. TODO support eg 'name: type := value'" + Adisp.dumpAst(src, 2));
     const ident = lhsItems[0]!;
     if (ident.kind === "ident" && ident.identTag === "normal") {
         if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in destructure");
@@ -404,11 +406,25 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
             extract: {kind: "single_item", name: ident.str, pos: ident.pos},
             type: {type: "unknown", pos: ident.pos},
         };
+    } else if (ident.kind === "block" && ident.tag === "list") {
+        const args = readBinary(env, ident.pos, ident.items, "sep");
+        const extracts: DestructureExtract[] = [];
+        const types: ComptimeType[] = [];
+        for (const arg of args) {
+            const sub = readDestructure(env, arg.pos, arg.items);
+            extracts.push(sub.extract);
+            types.push(sub.type);
+        }
+        return {
+            extract: {kind: "list", items: extracts, pos: ident.pos},
+            type: {type: "tuple", children: types, pos: ident.pos},
+        };
+        throwErr(env, ident.pos, "TODO: support destructing map kind");
     }
     throwErr(env, ident.pos, `Unsupported kind for destructuring: ${ident.kind}`);
 }
 function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadContainer {
-    const lines: {items: SyntaxNode[], pos: TokenPosition}[] = readBinary(env, src, "sep") ?? [{items: src, pos: pos}];
+    const lines = readBinary(env, pos, src, "sep");
     const res: ReadContainer = {
         bindings: new Map(),
         lines: [],
@@ -456,10 +472,12 @@ function readBinary2(env: Env, pos: TokenPosition, rootSrc: SyntaxNode[], kw: Op
     if (lhs?.kind !== "opSeg" || op?.kind !== "op" || rhs?.kind !== "opSeg") return undefined;
     return [lhs, op, rhs];
 }
-function readBinary(env: Env, src: SyntaxNode[], kw: OpTag): OperatorSegmentToken[] | undefined {
+function readBinary(env: Env, pos: TokenPosition, src: SyntaxNode[], kw: OpTag): Omit<OperatorSegmentToken, "kind">[] {
     src = trimWs(src);
-    if (src.length === 0) return undefined;
-    if (src[0]!.kind !== "binary" || src[0]!.tag !== kw) return undefined;
+    if (src.length === 0) return [];
+    if (src[0]!.kind !== "binary" || src[0]!.tag !== kw) {
+        return [{items: src, pos}];
+    }
     if (src.length > 1) throwErr(env, src[1]!.pos, "Found extra trailing items while parsing readBinary");
     return src[0]!.items.flatMap((itm): OperatorSegmentToken[] => {
         if (itm.kind === "opSeg") return [itm];

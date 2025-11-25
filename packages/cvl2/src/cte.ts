@@ -156,6 +156,10 @@ export class Adisp {
             this.putNewline();
             this.putAstNode(node);
         }
+        if (ast.length === 0) {
+            this.putNewline();
+            this.put("*no children*", colors.black);
+        }
     }
     putAstNode(entity: SyntaxNode) {
         this.put(entity.kind, colors.cyan);
