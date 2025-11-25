@@ -108,6 +108,7 @@ export class Adisp {
                     this.put(` str=${JSON.stringify(expr.narrow.key.description??"(unnamed)")}, type=`);
                     this.putSrc(expr.pos);
                     using _1 = this.indent();
+                    this.putNewline();
                     this.putSingle(printers.type, expr.narrow.child);
                 }
             }else if(expr.expr === "comptime:ast") {
@@ -192,6 +193,7 @@ export const printers = {
         adisp.put("type=");
         {
             using _ = adisp.indent();
+            adisp.putNewline();
             adisp.putSingle(printers.type, destructure.type);
         }
     }),
@@ -220,18 +222,23 @@ export const printers = {
             adisp.put("arg=");
             {
                 using _ = adisp.indent();
+                adisp.putNewline();
                 adisp.putSingle(printers.type, type.arg);
             }
             adisp.putNewline();
             adisp.put("ret=");
             {
                 using _ = adisp.indent();
+                adisp.putNewline();
                 adisp.putSingle(printers.type, type.ret);
             }
         }else if(type.type === "void") {
             adisp.putSrc(type.pos);
         }else if(type.type === "folder_or_file") {
             adisp.putSrc(type.pos);
+        }else if(type.type === "tuple") {
+            adisp.putSrc(type.pos);
+            adisp.putList(printers.type, type.children);
         }else {
             adisp.put(" %%TODO%%");
             adisp.putSrc(type.pos);
