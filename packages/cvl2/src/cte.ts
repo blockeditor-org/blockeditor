@@ -151,43 +151,17 @@ export class Adisp {
             this.putSrc(type.pos);
         }
     }
-    putDestructure(destructure: Destructure) {
-        if (this.putCheckDepth()) return;
-        this.putNewline();
-        this.put("extract=");
-        {
-            using _ = this.indent();
-            this.putDestructureExtract(destructure.extract);
-        }
-        this.putNewline();
-        this.put("type=");
-        {
-            using _ = this.indent();
-            this.putType(destructure.type);
-        }
-    }
-    putDestructureExtract(extract: DestructureExtract) {
-        this.putNewline();
-        this.put(extract.kind, colors.cyan);
-        if (extract.kind === "single_item") {
-            this.put(` ${JSON.stringify(extract.name)}`, colors.green);
-            this.putSrc(extract.pos);
-        } else if (extract.kind === "list") {
-            this.putSrc(extract.pos);
-            using _ = this.indent();
-            for (const child of extract.items) {
-                this.putDestructureExtract(child);
-            }
-        } else {
-            this.put(` %%TODO%%`);
-            this.putSrc(extract.pos);
-        }
-    }
 
-    putSingle<T>(printer: Printer<T>, value: NoInfer<T>) {
-        printer.print(this, value);
+    putSingle<T>(printer: SinglePrinter<T>, value: NoInfer<T>) {
+        if (this.putCheckDepth()) return;
+        printer.single(this, value);
     }
-    putList<T>(printer: Printer<T>, children: NoInfer<T>[]) {
+    putMulti<T>(printer: MultiPrinter<T>, value: NoInfer<T>) {
+        using _ = this.indent();
+        if (this.putCheckDepth()) return;
+        printer.multi(this, value);
+    }
+    putList<T>(printer: SinglePrinter<T>, children: NoInfer<T>[]) {
         using _ = this.indent();
         if (this.putCheckDepth()) return;
         for (const child of children) {
@@ -199,10 +173,13 @@ export class Adisp {
             this.put("*no children*", colors.black);
         }
     }
-    static dump<T>(printer: Printer<T>, value: NoInfer<T>, depth: number = Infinity): string {
+    static dump<T>(printer: SinglePrinter<T>, value: NoInfer<T>, depth: number = Infinity): string {
         const res = new Adisp(depth);
-        res.putNewline();
-        res.putSingle(printer, value);
+        {
+            using _ = res.indent();
+            res.putNewline();
+            res.putSingle(printer, value);
+        }
         return res.end();
     }
     static dumpAst(ast: SyntaxNode[], depth: number = Infinity): string {
@@ -212,24 +189,58 @@ export class Adisp {
     }
     static dumpDestructure(destructure: Destructure, depth: number = Infinity): string {
         const res = new Adisp(depth);
-        {
-            using _ = res.indent();
-            res.putDestructure(destructure);
-        }
+        res.putMulti(printers.destructure, destructure);
         return res.end();
     }
 
 }
 
-class Printer<T> {
-    print: (adisp: Adisp, item: T) => void;
+class SinglePrinter<T> {
+    single: (adisp: Adisp, item: T) => void;
     constructor(printFn: (adisp: Adisp, item: T) => void) {
-        this.print = printFn;
+        this.single = printFn;
+    }
+}
+class MultiPrinter<T> {
+    multi: (adisp: Adisp, item: T) => void;
+    constructor(printFn: (adisp: Adisp, item: T) => void) {
+        this.multi = printFn;
     }
 }
 
 export const printers = {
-    astNode: new Printer<SyntaxNode>((adisp, entity) => {
+    destructure: new MultiPrinter<Destructure>((adisp, destructure) => {
+        adisp.putNewline();
+        adisp.put("extract=");
+        {
+            using _ = adisp.indent();
+            adisp.putNewline();
+            adisp.putSingle(printers.destructureExact, destructure.extract);
+        }
+        adisp.putNewline();
+        adisp.put("type=");
+        {
+            using _ = adisp.indent();
+            adisp.putType(destructure.type);
+        }
+    }),
+    destructureExact: new SinglePrinter<DestructureExtract>((adisp, extract) => {
+        adisp.put(extract.kind, colors.cyan);
+        if (extract.kind === "single_item") {
+            adisp.put(` ${JSON.stringify(extract.name)}`, colors.green);
+            adisp.putSrc(extract.pos);
+        } else if (extract.kind === "list") {
+            adisp.putSrc(extract.pos);
+            using _ = adisp.indent();
+            for (const child of extract.items) {
+                adisp.putSingle(printers.destructureExact, child);
+            }
+        } else {
+            adisp.put(` %%TODO%%`);
+            adisp.putSrc(extract.pos);
+        }
+    }),
+    astNode: new SinglePrinter<SyntaxNode>((adisp, entity) => {
         adisp.put(entity.kind, colors.cyan);
 
         if (entity.kind === "block") {
