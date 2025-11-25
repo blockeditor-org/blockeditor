@@ -113,7 +113,7 @@ export class Adisp {
             }else if(expr.expr === "comptime:ast") {
                 this.put(" ast:");
                 this.putSrc(expr.pos);
-                this.putAstList(expr.narrow.ast);
+                this.putList(adisp_types.astNode, expr.narrow.ast);
             }else if(expr.expr === "comptime:ns_list_append") {
                 this.put(` key=${expr.key} list=${expr.list} value=${expr.value}`);
                 this.putSrc(expr.pos);
@@ -151,54 +151,6 @@ export class Adisp {
             this.putSrc(type.pos);
         }
     }
-    putAstList(ast: SyntaxNode[]) {
-        using _ = this.indent();
-        if (this.putCheckDepth()) return;
-        for (const node of ast) {
-            this.putAstNode(node);
-        }
-        if (ast.length === 0) {
-            this.putNewline();
-            this.put("*no children*", colors.black);
-        }
-    }
-    putAstNode(entity: SyntaxNode) {
-        this.putNewline();
-        this.put(entity.kind, colors.cyan);
-
-        if (entity.kind === "block") {
-            this.put(` ${entity.tag}`);
-            this.putSrc(entity.pos);
-            this.putAstList(entity.items);
-        } else if(entity.kind === "binary") {
-            this.put(` ${entity.tag}`);
-            this.putSrc(entity.pos);
-            this.putAstList(entity.items);
-        } else if(entity.kind === "op") {
-            this.put(` ${JSON.stringify(entity.op)}`, colors.yellow);
-            this.putSrc(entity.pos);
-        } else if(entity.kind === "opSeg") {
-            this.putSrc(entity.pos);
-            this.putAstList(entity.items);
-        } else if(entity.kind === "ws") {
-            this.put(` ${JSON.stringify(entity.nl ? "\n" : " ")}`);
-            this.putSrc(entity.pos);
-        } else if(entity.kind === "ident") {
-            const jstr = JSON.stringify(entity.str);
-            this.put(` ${entity.identTag}`);
-            this.put(` ${(jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr)}`, colors.blue);
-            this.putSrc(entity.pos);
-        } else if(entity.kind === "strSeg") {
-            this.put(` ${JSON.stringify(entity.str)}`, colors.green);
-            this.putSrc(entity.pos);
-        } else if(entity.kind === "raw") {
-            this.put(` ${entity.tag}`);
-            this.putSrc(entity.pos);
-        } else {
-            this.put(` %%TODO%%`);
-            this.putSrc(entity.pos);
-        }
-    }
     putDestructure(destructure: Destructure) {
         if (this.putCheckDepth()) return;
         this.putNewline();
@@ -233,10 +185,18 @@ export class Adisp {
     }
 
     putSingle<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>) {
-
+        printer(this, value);
     }
-    putList<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>[]) {
-
+    putList<T>(printer: AdispSingleItemPrinter<T>, children: NoInfer<T>[]) {
+        using _ = this.indent();
+        if (this.putCheckDepth()) return;
+        for (const child of children) {
+            this.putSingle(printer, child);
+        }
+        if (children.length === 0) {
+            this.putNewline();
+            this.put("*no children*", colors.black);
+        }
     }
     static dump<T>(printer: AdispSingleItemPrinter<T>, value: NoInfer<T>, depth: number = Infinity): string {
         const res = new Adisp(depth);
@@ -245,7 +205,7 @@ export class Adisp {
     }
     static dumpAst(ast: SyntaxNode[], depth: number = Infinity): string {
         const res = new Adisp(depth);
-        res.putAstList(ast);
+        res.putList(adisp_types.astNode, ast);
         return res.end();
     }
     static dumpDestructure(destructure: Destructure, depth: number = Infinity): string {
@@ -259,4 +219,42 @@ export class Adisp {
 }
 
 export type AdispSingleItemPrinter<T> = (adisp: Adisp, item: T) => void;
-export const adisp_types = {} satisfies Record<string, AdispSingleItemPrinter<unknown>>;
+export const adisp_types = {
+    astNode(adisp: Adisp, entity: SyntaxNode): void {
+        adisp.putNewline();
+        adisp.put(entity.kind, colors.cyan);
+
+        if (entity.kind === "block") {
+            adisp.put(` ${entity.tag}`);
+            adisp.putSrc(entity.pos);
+            adisp.putList(adisp_types.astNode, entity.items);
+        } else if(entity.kind === "binary") {
+            adisp.put(` ${entity.tag}`);
+            adisp.putSrc(entity.pos);
+            adisp.putList(adisp_types.astNode, entity.items);
+        } else if(entity.kind === "op") {
+            adisp.put(` ${JSON.stringify(entity.op)}`, colors.yellow);
+            adisp.putSrc(entity.pos);
+        } else if(entity.kind === "opSeg") {
+            adisp.putSrc(entity.pos);
+            adisp.putList(adisp_types.astNode, entity.items);
+        } else if(entity.kind === "ws") {
+            adisp.put(` ${JSON.stringify(entity.nl ? "\n" : " ")}`);
+            adisp.putSrc(entity.pos);
+        } else if(entity.kind === "ident") {
+            const jstr = JSON.stringify(entity.str);
+            adisp.put(` ${entity.identTag}`);
+            adisp.put(` ${(jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr)}`, colors.blue);
+            adisp.putSrc(entity.pos);
+        } else if(entity.kind === "strSeg") {
+            adisp.put(` ${JSON.stringify(entity.str)}`, colors.green);
+            adisp.putSrc(entity.pos);
+        } else if(entity.kind === "raw") {
+            adisp.put(` ${entity.tag}`);
+            adisp.putSrc(entity.pos);
+        } else {
+            adisp.put(` %%TODO%%`);
+            adisp.putSrc(entity.pos);
+        }
+    },
+} satisfies Record<string, AdispSingleItemPrinter<any>>;
