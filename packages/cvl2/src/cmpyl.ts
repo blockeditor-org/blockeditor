@@ -307,7 +307,8 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         };
         console.log("in slot", printers.type.dump(slot));
         console.log("result type", printers.type.dump(retTy));
-        throwErr(env, expr.pos, "TODO implement function expression:"+printers.astNode.dumpList([expr], 2));
+        const idx = blockAppend(block, {expr: "comptime:only", pos: expr.pos});
+        return {idx, type: retTy};
     }
     
     if (index === 0) {
