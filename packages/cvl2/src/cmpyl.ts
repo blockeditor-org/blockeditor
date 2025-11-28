@@ -115,6 +115,7 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
 type ComptimeValueDeclaration = {
     ast: ComptimeValueAst,
     env: Env,
+    valueCache: {match: Map<symbol, unknown>, result: unknown}[],
 };
 /*
 function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
@@ -346,8 +347,10 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         };
         console.log("in slot", printers.type.dump(slot));
         console.log("result type", printers.type.dump(retTy));
-        const idx = blockAppend(block, {expr: "comptime:only", pos: expr.pos});
-        return {idx, type: retTy};
+        throwErr(env, expr.pos, "TODO: analyze the function now"); // we need to analyze the function to determine which runtime envs it depends on
+        // this will require manual disambiguation for loops (like zig error sets).
+        // const idx = blockAppend(block, {expr: "comptime:only", pos: expr.pos};
+        // return {idx, type: retTy};
     }
     
     if (index === 0) {
