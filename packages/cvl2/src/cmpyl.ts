@@ -22,8 +22,11 @@ function importFile(filename: string, contents: string) {
     const env: Env = {
         trace: [],
         errors: [...tokenized.errors],
-        target: {kind: "comptime"},
+        comptime: new Map(),
     };
+    env.comptime.set(target_env_symbol, {
+        kind: "comptime",
+    } satisfies TargetEnv);
     try {
         const block: AnalysisBlock = {
             lines: [],
@@ -47,13 +50,14 @@ function importFile(filename: string, contents: string) {
 export type Env = {
     trace: TraceEntry[],
     errors: TokenizationError[],
-    target: TargetEnv,
+    comptime: Map<symbol, unknown>,
 };
 export type TargetEnv = {
     kind: "comptime"
 } | {
     kind: "todo",
 };
+const target_env_symbol = Symbol("target_env");
 type ComptimeNamespace = {
     getString(env: Env, pos: TokenPosition, field: string, block: AnalysisBlock): AnalysisResult,
     getSymbol(env: Env, pos: TokenPosition, keychild: ComptimeType, field: symbol, block: AnalysisBlock): AnalysisResult | undefined,
