@@ -108,6 +108,41 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
         },
     };
 }
+type ComptimeValueDeclaration = {
+    ast: ComptimeValueAst,
+    env: Env,
+};
+/*
+function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
+
+}
+function analyzeDeclaration(outerEnv: Env, ast: ComptimeValueAst): AnalysisResult {
+    / *
+    - first we check the cache to see if we have already analyzed the declaraion for our set of env values
+    - no? analyze:
+      - set analyzing=true
+      - while analyzing, track which env values are used
+      - when complete, store the mapping of (only referenced env values) -> (resolved)
+      - we can also enable postType.
+    - issues:
+      - consider:
+        ```
+        a :: env(1) b
+        b :: env == 1 ? env(0) b : 0
+
+        analyze a (env=1)
+        - analyze b (env=1)
+          - analyze b (env=0) <- we're already analyzing!
+      - we will need to just allow this and dependency loops are just like "stack overflow while analyzing x"
+        ```
+    * /
+    const block: AnalysisBlock = {lines: []};
+    // set (type, ast) => (resolving)
+    // set (type, ast) => (resolved type)
+    // set (type, ast) => (resolved value)
+    analyze(env, childt, value.ast.pos, value.ast.ast, block);
+}
+*/
 function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: SyntaxNode[], block: AnalysisBlock, cfg: {
     analyzeBind(env: Env, b2: Binary2, block: AnalysisBlock): AnalysisResult,
 }): AnalysisResult {
