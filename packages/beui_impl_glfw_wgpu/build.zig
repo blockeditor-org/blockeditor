@@ -102,7 +102,7 @@ pub fn runApp(self_dep: *std.Build.Dependency, app: std.Build.LazyPath) *std.Bui
         run_step.addArtifactArg(multirun_exe);
 
         run_step.addArg("|-|");
-        run_step.addArtifactArg(tracy_dep.artifact("tracy"));
+        run_step.addArtifactArg(tracy_dep.artifact("tracy-profiler"));
         run_step.addArg("-a");
         run_step.addArg("127.0.0.1");
 

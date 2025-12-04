@@ -5,16 +5,8 @@
     .paths = .{""},
     .dependencies = .{
         .tracy = .{
-            .url = "https://github.com/wolfpld/tracy/archive/8b9da2efba6937b66085a52f7281c59293ffe985.tar.gz",
-            .hash = "N-V-__8AAK9SmgEI82gkfar3CwxygNN0iYKqdLqsS0mKtxAI",
-        },
-        .zglfw = .{
-            .url = "https://github.com/zig-gamedev/zglfw/archive/feeeff9386dd44ba2c18488113023865c41b80a4.tar.gz",
-            .hash = "zglfw-0.10.0-dev-zgVDNLyhIQCZR_rbIf7hnCKuifzcmPOLOQhd_hrqq8cl",
-        },
-        .zstd = .{
-            .url = "https://github.com/allyourcodebase/zstd/archive/01327d49cbc56dc24c20a167bb0055d7fc23de84.zip",
-            .hash = "zstd-1.5.7-KEItkJ8vAAC5_rRlKmLflYQ-eKXbAIQBWZNmmJtS18q0",
+            .url = "https://github.com/allyourcodebase/tracy/archive/751c6afc8d3dacba99079918f0db939b34f6fc89.zip",
+            .hash = "tracy-0.12.2-zvQnzVApAQE7kPh9OmqCT8vh0GkYmNGXLheF4edN6EGV",
         },
     },
 }
