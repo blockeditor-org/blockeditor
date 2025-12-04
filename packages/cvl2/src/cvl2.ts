@@ -1,3 +1,5 @@
+import { Adisp, printers } from "./cte";
+
 function unreachable(): never {
     throw new Error("unreachable");
 }
@@ -6,63 +8,82 @@ type TokenizerMode = "regular" | "in_string";
 type Config = {
     style: "open" | "close" | "join",
     prec: number,
+    precStr: string,
     close?: string,
     autoOpen?: boolean,
     setMode?: TokenizerMode,
-    joinTag?: string,
+    opTag?: OpTag,
+    bracketTag?: BracketTag,
 };
 
-const mkconfig: Record<string, Omit<Config, "prec">>[] = [
-    {
-        "(": {style: "open", close: ")"},
-        "{": {style: "open", close: "}"},
-        "[": {style: "open", close: "]"},
-        ")": {style: "close"},
-        "}": {style: "close"},
-        "]": {style: "close"},
+export type OpTag = "sep" | "def" | "pub" | "var" | "assign" | "";
+export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "";
+export type RawTag = "return" | "discard";
+export type IdentifierTag = "normal" | "access" | "builtin";
+
+const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>> = {
+    paren: {
+        "(": {style: "open", close: ")", bracketTag: "list"},
+        "{": {style: "open", close: "}", bracketTag: "code"},
+        "[": {style: "open", close: "]", bracketTag: "map"},
+        ")": {style: "close", bracketTag: "list"},
+        "}": {style: "close", bracketTag: "code"},
+        "]": {style: "close", bracketTag: "map"},
     },
-    {
-        ",": {style: "join", joinTag: "sep"},
-        ";": {style: "join", joinTag: "sep"},
-        "\n": {style: "join", joinTag: "sep"},
+    sep: {
+        ",": {style: "join", opTag: "sep"},
+        ";": {style: "join", opTag: "sep"},
+        "\n": {style: "join", opTag: "sep"},
     },
-    {
-        "::": {style: "join", joinTag: "bind"},
+    bind: {
+        // name :: value (pub name = value)
+        "::": {style: "join", opTag: "def"},
+        // .name .= value (def name = value)
+        ".=": {style: "join", opTag: "pub"},
+        ":=": {style: "join", opTag: "var"},
     },
-    {
-        "=>": {style: "join"},
+    right_associative: {
+        ":": {style: "open", bracketTag: "colon_call"},
+        "=>": {style: "open", bracketTag: "arrow_fn"},
     },
-    {
-        ":": {style: "open"},
+    equals: {
+        "=": {style: "join", opTag: "assign"},
     },
-    {
-        "=": {style: "join", joinTag: "assign"},
-    },
-    {
-        ".": {style: "close", autoOpen: true},
-    },
-    {
-        "\"": {style: "open", close: "<in_string>\"", setMode: "in_string"},
-        "<in_string>\"": {style: "close", setMode: "regular"},
+    string: {
+        "\"": {style: "open", close: "<in_string>\"", setMode: "in_string", bracketTag: "string"},
+        "<in_string>\"": {style: "close", setMode: "regular", bracketTag: "string"},
     },
 
     // TODO: "=>"
     // TODO: "\()" as style open prec 0 autoclose display{open: "(", close: ")"}
-];
+};
+const rawconfig: Record<string, RawTag> = {
+    "->": "return",
+    "_": "discard",
+};
+const identtag: Record<string, IdentifierTag> = {
+    ".": "access",
+    "#": "builtin",
+};
 
 const config: Record<string, Config> = {};
-for(const [i, segment] of mkconfig.entries()) {
-    for(const [key, value] of Object.entries(segment)) {
-        config[key] = {...value, prec: i};
+{
+    let i = 0;
+    for(const [name, segment] of Object.entries(mkconfig)) {
+        for(const [key, value] of Object.entries(segment)) {
+            config[key] = {...value, prec: i, precStr: name};
+        }
+        i += 1;
     }
 }
 
-const referenceTrace: TokenPosition[] = [];
-function withReferenceTrace(pos: TokenPosition): {[Symbol.dispose]: () => void} {
-    referenceTrace.push(pos);
+const referenceTrace: TraceEntry[] = [];
+function withReferenceTrace(pos: TokenPosition, text: string): {[Symbol.dispose]: () => void} {
+    const appended: TraceEntry = {pos, text};
+    referenceTrace.push(appended);
     return {[Symbol.dispose]() {
         const popped = referenceTrace.pop();
-        if(popped !== pos) unreachable();
+        if(popped !== appended) unreachable();
     }};
 }
 
@@ -100,6 +121,12 @@ export class Source {
         }
         return character;
     }
+    revert(pos: TokenPosition) {
+        this.filename = pos.fyl;
+        this.currentIndex = pos.idx;
+        this.currentLine = pos.lyn;
+        this.currentCol = pos.col;
+    }
 
     private calculateIndent(): number {
         const subString = this.text.substring(this.currentIndex);
@@ -117,60 +144,75 @@ export class Source {
     }
 }
 
-interface TokenPosition {
+export interface TokenPosition {
     fyl: string;
     idx: number;
     lyn: number;
     col: number;
 }
 
-interface IdentifierToken {
+export interface IdentifierToken {
     kind: "ident";
     pos: TokenPosition;
     str: string;
+    identTag: IdentifierTag;
+    identTagRaw: string;
 }
 
-interface WhitespaceToken {
+export interface WhitespaceToken {
     kind: "ws";
     pos: TokenPosition;
     nl: boolean;
 }
 
-interface OperatorToken {
+export interface OperatorToken {
     kind: "op";
     pos: TokenPosition;
     op: string;
 }
 
-interface OperatorSegmentToken {
+export interface OperatorSegmentToken {
     kind: "opSeg";
     pos: TokenPosition;
     items: SyntaxNode[],
 }
 
-interface BlockToken {
+export interface BlockToken {
     kind: "block";
     pos: TokenPosition;
     start: string;
     end: string;
     items: SyntaxNode[];
+    tag: BracketTag;
 }
 
-interface BinaryExpressionToken {
+export interface BinaryExpressionToken {
     kind: "binary";
     pos: TokenPosition;
     prec: number;
-    tag: string;
+    tag: OpTag;
     items: SyntaxNode[];
 }
 
-interface StrSegToken {
+export interface StrSegToken {
     kind: "strSeg";
     pos: TokenPosition;
     str: string;
 }
 
-type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken;
+export interface RawToken {
+    kind: "raw";
+    pos: TokenPosition;
+    raw: string;
+    tag: RawTag;
+}
+
+export interface ErrToken {
+    kind: "err";
+    pos: TokenPosition;
+}
+
+export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | RawToken | ErrToken;
 
 interface TokenizerStackItem {
     pos: TokenPosition,
@@ -183,23 +225,27 @@ interface TokenizerStackItem {
     tag?: string;
 }
 
-type TokenizationErrorEntry = {
+export type TokenizationErrorEntry = {
     pos?: TokenPosition,
     style: "note" | "error",
     message: string,
 };
-type TokenizationError = {
-    entries: TokenizationErrorEntry[],
-    trace: TokenPosition[],
+export type TraceEntry = {
+    pos: TokenPosition,
+    text: string,
 };
-interface TokenizationResult {
+export type TokenizationError = {
+    entries: TokenizationErrorEntry[],
+    trace: TraceEntry[],
+};
+export interface TokenizationResult {
     result: SyntaxNode[];
     errors: TokenizationError[];
 }
 
 const identifierRegex = /^[a-zA-Z0-9]$/;
 const whitespaceRegex = /^\s$/;
-const operatorChars = [..."~!@#$%^&*-=+|/<>:"];
+const operatorChars = [..."~!@$%^&*-=+|/<>:."];
 
 export function tokenize(source: Source): TokenizationResult {
     let currentSyntaxNodes: SyntaxNode[] = [];
@@ -223,8 +269,31 @@ export function tokenize(source: Source): TokenizationResult {
                     kind: "ident",
                     pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                     str: source.text.substring(start.idx, source.currentIndex),
+                    identTag: "normal",
+                    identTagRaw: "",
                 });
                 continue;
+            }
+            if (identtag[firstChar]) {
+                const beforeAttempt = source.getPosition();
+                
+                while (source.peek().match(identifierRegex)) {
+                    source.take();
+                }
+                const len = source.currentIndex - start.idx - 1;
+                if (len > 0) {
+                    currentSyntaxNodes.push({
+                        kind: "ident",
+                        pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                        str: source.text.substring(start.idx + 1, source.currentIndex),
+                        identTag: identtag[firstChar]!,
+                        identTagRaw: firstChar,
+                    });
+                    continue;
+                } else {
+                    // failed to match identtag; revert
+                    source.revert(beforeAttempt);
+                }
             }
 
             if (firstChar.match(whitespaceRegex)) {
@@ -232,7 +301,7 @@ export function tokenize(source: Source): TokenizationResult {
                     source.take();
                 }
                 currentToken = source.text.substring(start.idx, source.currentIndex).includes("\n") ? "\n" : " ";
-            }else if ("()[]{},;\"'.`".includes(firstChar)) {
+            }else if ("()[]{},;\"'`".includes(firstChar)) {
                 currentToken = source.text.substring(start.idx, source.currentIndex);
             }else if(operatorChars.includes(firstChar)) {
                 while (operatorChars.includes(source.peek())) {
@@ -275,6 +344,7 @@ export function tokenize(source: Source): TokenizationResult {
                 start: currentToken,
                 end: cfg.close ?? "",
                 items: newBlockItems,
+                tag: cfg.bracketTag ?? "",
             });
             parseStack.push({
                 pos: start,
@@ -288,7 +358,7 @@ export function tokenize(source: Source): TokenizationResult {
         } else if (cfg?.style === "close") {
             const currentIndent = source.currentLineIndentLevel;
 
-            while (parseStack.length > 1) {
+            while (parseStack.length > 0) {
                 const lastStackItem = parseStack.pop();
                 if (!lastStackItem) unreachable();
 
@@ -313,6 +383,7 @@ export function tokenize(source: Source): TokenizationResult {
                             start: "",
                             end: currentToken,
                             items: prevItems,
+                            tag: cfg.bracketTag ?? "",
                         });
                     }else{
                         errors.push({
@@ -343,6 +414,7 @@ export function tokenize(source: Source): TokenizationResult {
                     currentSyntaxNodes = parseStack[parseStack.length - 1]!.val;
                 }
             }
+            if (parseStack.length === 0) throw new Error("ups parsestack len 0!");
         } else if (cfg?.style === "join") {
             const operatorPrecedence = cfg.prec;
             let targetCommaBlock: TokenizerStackItem | undefined;
@@ -351,7 +423,7 @@ export function tokenize(source: Source): TokenizationResult {
                 const lastStackItem = parseStack[parseStack.length - 1]!;
 
                 if (lastStackItem.prec === operatorPrecedence) {
-                    if (lastStackItem.tag !== cfg.joinTag) {
+                    if (lastStackItem.tag !== cfg.opTag) {
                         errors.push({
                             entries: [{
                                 message: "mixing operators disallowed",
@@ -384,7 +456,7 @@ export function tokenize(source: Source): TokenizationResult {
                         indent: lastStackItem.indent,
                         autoClose: true,
                         prec: operatorPrecedence,
-                        tag: cfg.joinTag ?? "",
+                        tag: cfg.opTag ?? "",
                     };
                     parseStack.push(targetCommaBlock);
                     lastStackItem.val.splice(valStartIdx, lastStackItem.val.length, {
@@ -392,7 +464,7 @@ export function tokenize(source: Source): TokenizationResult {
                         pos: start,
                         prec: operatorPrecedence,
                         items: opSupVal,
-                        tag: cfg.joinTag ?? "",
+                        tag: cfg.opTag ?? "",
                     });
                     break;
                 } else {
@@ -435,19 +507,18 @@ export function tokenize(source: Source): TokenizationResult {
             });
             targetCommaBlock.val = nextVal;
             currentSyntaxNodes = targetCommaBlock.val;
-
-            if(currentToken === "\n") {
-                nextVal.push({
-                    kind: "ws",
-                    pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
-                    nl: true,
-                });
-            }
         }else if(currentToken === " ") {
             currentSyntaxNodes.push({
                 kind: "ws",
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                 nl: false,
+            });
+        }else if(Object.hasOwn(rawconfig, currentToken)) {
+            currentSyntaxNodes.push({
+                kind: "raw",
+                pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                raw: currentToken,
+                tag: rawconfig[currentToken]!,
             });
         } else {
             errors.push({
@@ -464,12 +535,16 @@ export function tokenize(source: Source): TokenizationResult {
     return { result: parseStack[0]!.val, errors };
 }
 
-interface RenderConfig {
+interface RenderConfigAdisp {
     indent: string;
-    style?: "s" | "s2";
 }
 
-function renderEntityList(config: RenderConfig, entities: SyntaxNode[], level: number, isTopLevel: boolean): string {
+
+interface RenderConfig {
+    indent: string;
+    reveal: boolean,
+}
+function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], indent: number, depth: number, isTopLevel: boolean): string {
     let result = "";
     let needsDeeperIndent = false;
     let didInsertNewline = false;
@@ -477,150 +552,94 @@ function renderEntityList(config: RenderConfig, entities: SyntaxNode[], level: n
 
     entities = entities.flatMap(nt => nt.kind === "opSeg" ? nt.items : [nt]); // hacky
 
+    const isNl = (entity: SyntaxNode) => (entity.kind === "ws" && entity.nl) || (entity.kind === "op" && entity.op === "\n");
     for (let i = 0; i < entities.length; i++) {
         const entity = entities[i]!;
-        if (entity.kind === "ws" && entity.nl) {
+        if (isNl(entity)) {
             lastNewlineIndex = i;
         }
     }
 
+    let revealColor = rainbow[depth % rainbow.length]!;
+    if (config.reveal) result += revealColor + "<" + colors.reset;
+
     for (let i = 0; i < entities.length; i++) {
         const entity = entities[i]!;
-        if (entity.kind === "ws") {
-            if (entity.nl && !didInsertNewline) {
+        if (isNl(entity)) {
+            if (!didInsertNewline) {
                 needsDeeperIndent = !isTopLevel && i < lastNewlineIndex;
                 didInsertNewline = true;
-                result += "\n" + config.indent.repeat(level + (needsDeeperIndent ? 1 : 0));
+                result += "\n" + config.indent.repeat(indent + (needsDeeperIndent ? 1 : 0));
             } else {
                 result += " ";
             }
         } else {
             didInsertNewline = false;
-            result += renderEntity(config, entity, level + (needsDeeperIndent ? 1 : 0), isTopLevel);
+            result += renderEntityPretty(config, entity, indent + (needsDeeperIndent ? 1 : 0), depth + 1, isTopLevel);
         }
     }
+    if (config.reveal) result += revealColor + ">" + colors.reset;
     return result;
 }
-
-function renderEntityJ(entity: SyntaxNode): unknown {
-    const kind = `${entity.kind}:${entity.pos.lyn}:${entity.pos.col}`;
-    if(entity.kind === "block") {
-        return {
-            kind,
-            start: entity.start,
-            end: entity.end,
-            items: entity.items.map(renderEntityJ),
-        };
-    }else if(entity.kind === "binary") {
-        return {
-            kind,
-            prec: entity.prec,
-            items: entity.items.map(renderEntityJ),
-        };
-    }else if(entity.kind === "ws") {
-        return {
-            kind: kind,
-            nl: entity.nl,
-        }
-    }else if(entity.kind === "op") {
-        return {
-            kind,
-            op: entity.op,
-        }
-    }else if(entity.kind === "opSeg") {
-        return {
-            kind,
-            items: entity.items.map(renderEntityJ),
-        };
-    }else if(entity.kind === "strSeg") {
-        return {
-            kind,
-            str: entity.str,
-        };
-    }else if(entity.kind === "ident") {
-        return {
-            kind,
-            str: entity.str,
-        }
-    }else return {
-        kind,
-        TODO: true,
-    };
-}
-function renderS(config: RenderConfig, tag: string, s: (SyntaxNode | string)[], level: number, s0?: string, inh?: boolean): string {
-    const sub = (itm: string | SyntaxNode, level: number) => (typeof itm === "string" ? itm : renderEntity(config, itm, level, false));
-    if(s.length === 0) return `${tag}(${s0 ?? ""})`;
-    if(s.length === 1 && !s0 && !inh) return `${tag}(${s0 ? s0 + " " : ""}${sub(s[0]!, level)})`;
-    return tag + "(" + (s0 ?? "") + s.map(itm => "\n" + config.indent.repeat(level + 1) + sub(itm, level + 1)).join("") + "\n" + config.indent.repeat(level) + ")";
-}
-function renderEntity(config: RenderConfig, entity: SyntaxNode, level: number, isTopLevel: boolean): string {
-    if(config.style === "s2") {
-        if(entity.kind === "block") {
-            return renderS(config, "block", entity.items, level, JSON.stringify(entity.start + entity.end));
-        }else if(entity.kind === "binary") {
-            return "binary " + entity.items.map(item => renderEntity(config, item, level, false)).join(" ");
-        }else if(entity.kind === "ident") {
-            return "@" + entity.str;
-        }else if(entity.kind === "op") {
-            return "op" + JSON.stringify(entity.op);
-        }else if(entity.kind === "opSeg") {
-            return renderS(config, "", entity.items, level, undefined, true);
-        }else if(entity.kind === "strSeg") {
-            return renderS(config, "strSeg", [], level, JSON.stringify(entity.str));
-        }else if(entity.kind === "ws") {
-            return entity.nl ? "<spc>" : "<nl>";
-        }else{
-            return renderS(config, (entity as SyntaxNode).kind, [], level);
-        }
-    }else if (config.style === "s") {
-        if (entity.kind === "block") {
-            return `(${JSON.stringify(entity.start + entity.end)} ` + renderEntityList(config, entity.items, level, false) + ")";
-        } else if (entity.kind === "binary") {
-            return "(" + renderEntityList(config, entity.items, level, isTopLevel) + ")";
-        } else if (entity.kind === "ws") {
-            throw new Error("Unreachable: Whitespace should be handled by renderEntityList.");
-        } else if (entity.kind === "ident") {
-            return "$" + entity.str;
-        } else if (entity.kind === "op") {
-            return JSON.stringify(entity.op);
-        } else if (entity.kind === "opSeg") {
-            return "(" + renderEntityList(config, entity.items, level, isTopLevel) + ")";
-        } else if (entity.kind === "strSeg") {
-            return JSON.stringify(entity.str);
-        } else {
-            return `(TODO $${(entity as {kind: string}).kind})`;
-        }
+function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: number, depth: number, isTopLevel: boolean): string {
+    if (entity.kind === "block") {
+        return entity.start + renderEntityPrettyList(config, entity.items, indent, depth, false) + entity.end.replaceAll("<in_string>", "");
+    } else if (entity.kind === "binary") {
+        return renderEntityPrettyList(config, entity.items, indent, depth, isTopLevel);
+    } else if (entity.kind === "ws") {
+        if(entity.nl) return "";
+        return " ";
+    } else if (entity.kind === "ident") {
+        return entity.identTagRaw + entity.str;
+    } else if (entity.kind === "op") {
+        if(entity.op === "\n") return "";
+        return entity.op;
+    }else if (entity.kind === "opSeg") {
+        throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
+    }else if (entity.kind === "strSeg") {
+        return entity.str;
+    }else if (entity.kind === "raw") {
+        return entity.raw;
     } else {
-        if (entity.kind === "block") {
-            return entity.start + renderEntityList(config, entity.items, level, false) + entity.end;
-        } else if (entity.kind === "binary") {
-            return renderEntityList(config, entity.items, level, isTopLevel);
-        } else if (entity.kind === "ws") {
-            throw new Error("Unreachable: Whitespace should be handled by renderEntityList.");
-        } else if (entity.kind === "ident") {
-            return entity.str;
-        } else if (entity.kind === "op") {
-            if(entity.op === "\n") return "";
-            return entity.op;
-        }else if (entity.kind === "opSeg") {
-            throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
-        }else if (entity.kind === "strSeg") {
-            return entity.str;
-        } else {
-            return `%TODO<${(entity as {kind: string}).kind}>%`;
-        }
+        return `%TODO<${(entity as {kind: string}).kind}>%`;
     }
 }
 
-const colors = {
+export const colors = {
+    black: "\x1b[30m",
     red: "\x1b[31m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
     blue: "\x1b[34m",
+    magenta: "\x1b[35m",
     cyan: "\x1b[36m",
-    bold: "\x1b[1m",
-    reset: "\x1b[0m",
-};
+    white: "\x1b[37m",
 
-function prettyPrintErrors(source: Source, errors: TokenizationError[]): string {
+    brblack: "\x1b[90m",
+    brred: "\x1b[91m",
+    brgreen: "\x1b[92m",
+    bryellow: "\x1b[93m",
+    brblue: "\x1b[94m",
+    brmagenta: "\x1b[95m",
+    brcyan: "\x1b[96m",
+    brwhite: "\x1b[97m",
+
+    reset: "\x1b[0m",
+    bold: "\x1b[1m",
+    dim: "\x1b[2m",
+    italic: "\x1b[3m",
+    underline: "\x1b[4m",
+    blink: "\x1b[5m",
+    inverse: "\x1b[7m",
+    hidden: "\x1b[8m",
+    strikethrough: "\x1b[9m",
+};
+const styles = {
+    string: colors.green,
+};
+const rainbow = [colors.red, colors.yellow, colors.green, colors.cyan, colors.blue, colors.magenta];
+
+export function prettyPrintErrors(source: Source, errors: TokenizationError[]): string {
     if (errors.length === 0) return "";
 
     const sourceLines = source.text.split('\n');
@@ -651,7 +670,7 @@ function prettyPrintErrors(source: Source, errors: TokenizationError[]): string 
         }
         if (error.trace.length > 0) {
             for(const line of error.trace) {
-                output += `At ${line.fyl}:${line.lyn}:${line.col}\n`;
+                output += ` at ${line.pos.fyl}:${line.pos.lyn}:${line.pos.col} (${line.text})\n`;
             }
         }
     }
@@ -660,16 +679,14 @@ function prettyPrintErrors(source: Source, errors: TokenizationError[]): string 
 }
 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
-    const formattedCode = renderEntityList({ indent: "  " }, tokenizationResult.result, 0, true);
-    const sExpression = renderEntityList({ indent: "  ", style: "s" }, tokenizationResult.result, 0, true);
-    const s2Expression = renderEntityList({ indent: "  ", style: "s2" }, tokenizationResult.result, 0, true);
-    const jsonCode = JSON.stringify(tokenizationResult.result.map(renderEntityJ), null, 1);
+    const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false }, tokenizationResult.result, 0, 0, true);
+    const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true }, tokenizationResult.result, 0, 0, true);
+    const adisp = printers.astNode.dumpList(tokenizationResult.result);
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
     return (
-        `// json:\n${jsonCode}\n\n` +
-        `// s2-expr:\n${s2Expression}\n\n` +
-        `// s-expr:\n${sExpression}\n\n` +
+        `// adisp:${adisp}\n\n` +
+        `// ugly\n${uglyCode}\n\n` +
         `// formatted\n${formattedCode}\n\n` +
         `// errors:\n${prettyErrors}`
     );

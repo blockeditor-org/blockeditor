@@ -504,7 +504,7 @@ pub const T3dsBuildHelper = struct {
                 const g_pica_lazypath = v_pica.dirname().path(bh.owner, bh.owner.fmt("{s}.g.pica", .{fileflatname}));
                 std.debug.assert(files_root == .dependency);
                 const g_pica_file_path = g_pica_lazypath.getPath(bh.owner);
-                const g_pica: ?std.Build.LazyPath = if (std.fs.accessAbsolute(g_pica_file_path, .{})) |_| blk: {
+                const g_pica: ?std.Build.LazyPath = if (std.fs.cwd().access(g_pica_file_path, .{})) |_| blk: {
                     // @panic("has .g.pica file");
                     break :blk g_pica_lazypath;
                 } else |_| null;
