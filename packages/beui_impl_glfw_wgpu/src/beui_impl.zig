@@ -7,7 +7,7 @@ const tracy = anywhere.tracy;
 const build_options = @import("build_options");
 const App = @import("app");
 const ImageCache = B2.ImageCache;
-const using_zgui = true;
+const using_zgui = false;
 
 // TODO:
 // - [ ] beui needs to be able to render render_list
@@ -958,28 +958,6 @@ pub fn main() !void {
                 b2.endFrame(rdl, &draw_list);
             }
         }
-
-        // zgui.showDemoWindow(null);
-
-        // zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .first_use_ever });
-        // zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
-
-        // if (zgui.begin("Demo Settings", .{})) {
-        //     zgui.text(
-        //         "Average : {d:.3} ms/frame ({d:.1} fps)",
-        //         .{ demo.gctx.stats.average_cpu_time, demo.gctx.stats.fps },
-        //     );
-        //     zgui.text("draw_list items: {d} / {d}", .{ draw_list.vertices.items.len, draw_list.indices.items.len });
-        //     zgui.text("click_count: {d}", .{beui.leftMouseClickedCount()});
-        //     zgui.text("frame non-wait time: {d}", .{std.fmt.fmtDuration(last_frame_time)});
-        //     zgui.text("ns per vertex: {d:0.3}", .{@as(f64, @floatFromInt(last_frame_time)) / @as(f64, @floatFromInt(draw_list.vertices.items.len))});
-        //     zgui.text("reduce latency: {d}", .{std.fmt.fmtDuration(reduce_input_latency)});
-        //     if (zgui.radioButton("none", .{ .active = reduce_latency_target == target_none })) reduce_latency_target = target_none;
-        //     if (zgui.radioButton("60hz", .{ .active = reduce_latency_target == target_60hz })) reduce_latency_target = target_60hz;
-        //     if (zgui.radioButton("239.75hz", .{ .active = reduce_latency_target == target_239_75hz })) reduce_latency_target = target_239_75hz;
-        //     _ = zgui.checkbox("Update tex", .{ .v = &demo.update_tex });
-        // }
-        // zgui.end();
 
         draw(demo, &draw_list, &b2, &frame_timer, &last_frame_time, add_us);
         frame_num += 1;
