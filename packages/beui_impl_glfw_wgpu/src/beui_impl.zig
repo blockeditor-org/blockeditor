@@ -7,7 +7,6 @@ const tracy = anywhere.tracy;
 const build_options = @import("build_options");
 const App = @import("app");
 const ImageCache = B2.ImageCache;
-const using_zgui = false;
 
 // TODO:
 // - [ ] beui needs to be able to render render_list
@@ -18,7 +17,6 @@ const math = std.math;
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
-// const zgui = @import("zgui");
 const zm = @import("zmath");
 
 pub const std_options = if (@hasDecl(App, "std_options")) App.std_options else std.Options{};
@@ -39,7 +37,6 @@ const window_title = "zig-gamedev: textured quad (wgpu)";
 
 pub const anywhere_cfg: anywhere.AnywhereCfg = .{
     .tracy = if (build_options.enable_tracy) @import("tracy__impl") else null,
-    // .zgui = zgui,
 };
 
 const wgsl_common = (
@@ -316,16 +313,6 @@ fn destroy(allocator: std.mem.Allocator, demo: *DemoState) void {
     allocator.destroy(demo);
 }
 
-fn update(demo: *DemoState) void {
-    // zgui.backend.newFrame(
-    //     demo.gctx.swapchain_descriptor.width,
-    //     demo.gctx.swapchain_descriptor.height,
-    // );
-
-    // _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
-    _ = demo;
-}
-
 fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, frame_timer: *std.time.Timer, last_frame_time: *u64, add_us: u64) void {
     const b2ft = tracy.traceNamed(@src(), "draw & wait");
     defer b2ft.end();
@@ -548,8 +535,6 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
                 pass.end();
                 pass.release();
             }
-
-            // zgui.backend.draw(pass);
         }
 
         break :commands encoder.finish(null);
@@ -803,25 +788,6 @@ pub fn main() !void {
     defer for (cursors.values) |c| if (c) |d| d.destroy();
     var current_cursor: Beui.Cursor = .arrow;
 
-    // zgui.init(gpa);
-    // defer zgui.deinit();
-
-    // zgui.backend.init(
-    //     window,
-    //     demo.gctx.device,
-    //     @intFromEnum(zgpu.GraphicsContext.swapchain_format),
-    //     @intFromEnum(wgpu.TextureFormat.undef),
-    // );
-    // defer zgui.backend.deinit();
-
-    // zgui.io.setConfigFlags(.{
-    //     .nav_enable_keyboard = true,
-    //     .dock_enable = true,
-    //     .dpi_enable_scale_fonts = true,
-    // });
-
-    // zgui.getStyle().scaleAllSizes(scale_factor);
-
     var draw_list = draw_lists.RenderList.init(gpa);
     defer draw_list.deinit();
 
@@ -852,8 +818,8 @@ pub fn main() !void {
 
         var beui_vtable: BeuiVtable = .{ .window = window };
         beui.newFrame(.{
-            .can_capture_keyboard = true, // !zgui.io.getWantCaptureKeyboard(),
-            .can_capture_mouse = true, // !zgui.io.getWantCaptureMouse(),
+            .can_capture_keyboard = true,
+            .can_capture_mouse = true,
             .arena = arena,
             .now_ms = std.time.milliTimestamp(),
             .user_data = @ptrCast(@alignCast(&beui_vtable)),
@@ -894,8 +860,6 @@ pub fn main() !void {
             beui.frame.scroll_px += beui.frame.mouse_offset;
         }
 
-        update(demo);
-
         // transparency test rainbows
         if (false) {
             for (0..11) |i| {
@@ -926,24 +890,11 @@ pub fn main() !void {
                 break :blk b2.newFrame(.{ .size = .{ @floatFromInt(fb_width), @floatFromInt(fb_height) } });
             };
 
-            if (using_zgui) {
-                // can't call zglfw setCursor because it gets immediately overwritten by dear imgui glfw backend
-                // if (beui.frame.cursor != .arrow) zgui.setMouseCursor(switch (beui.frame.cursor) {
-                //     .arrow => .arrow,
-                //     .pointer => .hand,
-                //     .text_input => .text_input,
-                //     .resize_nw_se => .resize_nwse,
-                //     .resize_ns => .resize_ns,
-                //     .resize_ne_sw => .resize_nesw,
-                //     .resize_ew => .resize_ew,
-                // });
-            } else {
-                if (beui.frame.cursor != current_cursor) {
-                    current_cursor = beui.frame.cursor;
+            if (beui.frame.cursor != current_cursor) {
+                current_cursor = beui.frame.cursor;
 
-                    std.log.info("setCursor: {}", .{beui.frame.cursor});
-                    window.setCursor(cursors.get(current_cursor));
-                }
+                std.log.info("setCursor: {}", .{beui.frame.cursor});
+                window.setCursor(cursors.get(current_cursor));
             }
 
             const rdl = blk: {
