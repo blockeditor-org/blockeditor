@@ -484,12 +484,14 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
             //   at the end?
             // - should all images be .rgba and we pay the cost on the cpu?
             // - ??
+            const screen_size_int: @Vector(2, u32) = .{ fb_width, fb_height };
+            const screen_size: @Vector(2, f32) = @floatFromInt(screen_size_int);
             mem.slice[0] = .{
-                .screen_size = .{ @floatFromInt(fb_width), @floatFromInt(fb_height) },
+                .screen_size = screen_size,
                 .image_r = 0,
             };
             mem2.slice[0] = .{
-                .screen_size = .{ @floatFromInt(fb_width), @floatFromInt(fb_height) },
+                .screen_size = screen_size,
                 .image_r = 1,
             };
             // either this or writing a texture every frame has caused after like 10sec on mac the application
@@ -513,7 +515,13 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
                 const bind_group = gctx.lookupResource(bind_group_handle) orelse break :pass;
 
                 pass.setBindGroup(0, bind_group, &.{if (command.image == .grayscale) mem2.offset else mem.offset});
-                pass.setScissorRect(command.clip.x, command.clip.y, command.clip.w, command.clip.h);
+
+                const clip_ul: @Vector(2, u32) = .{ command.clip.x, command.clip.y };
+                const clip_br = clip_ul + @Vector(2, u32){ command.clip.w, command.clip.h };
+                const clip_ul_clamped = @max(@min(clip_ul, screen_size_int), @Vector(2, u32){ 0, 0 });
+                const clip_br_clamped = @max(@min(clip_br, screen_size_int), @Vector(2, u32){ 0, 0 });
+                const clip_wh_clamped = clip_br_clamped - clip_ul_clamped;
+                pass.setScissorRect(clip_ul_clamped[0], clip_ul_clamped[1], clip_wh_clamped[0], clip_wh_clamped[1]);
 
                 pass.drawIndexed(command.index_count, 1, command.first_index, command.base_vertex, 0);
             }
