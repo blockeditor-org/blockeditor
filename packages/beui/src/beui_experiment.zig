@@ -71,6 +71,11 @@ const Beui2Frame = struct {
     frame_cfg: Beui2FrameCfg,
     scroll_target: ?ScrollTarget,
     overlay_rdl: *RepositionableDrawList,
+    next_frame_request: Beui2NextFrameRequest,
+};
+pub const Beui2NextFrameRequest = enum {
+    none,
+    animation,
 };
 const ScrollTarget = struct {
     id: ID,
@@ -415,6 +420,7 @@ pub const Beui2 = struct {
             .frame_cfg = frame_cfg,
             .scroll_target = scroll_target,
             .overlay_rdl = undefined,
+            .next_frame_request = .none,
         };
         self.frame.overlay_rdl = self.draw();
 
@@ -541,6 +547,10 @@ pub const Beui2 = struct {
 
     pub fn fmt(self: *Beui2, comptime format: []const u8, args: anytype) []u8 {
         return std.fmt.allocPrint(self.frame.arena, format, args) catch @panic("oom");
+    }
+
+    pub fn isAnimation(self: *Beui2) void {
+        self.frame.next_frame_request = .animation;
     }
 };
 const GenericDrawListState = struct {

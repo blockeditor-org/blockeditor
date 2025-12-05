@@ -31,7 +31,7 @@ pub const std_options = if (@hasDecl(App, "std_options")) App.std_options else s
 /// - ask beui2 to see if we want to rerender given the current events. if not, wait, capture some more
 ///   events, and retry. beui2 will see if the mouse moved but no one can see its position then it doesn't
 ///   need to rerender.
-const allow_skip_frames = false;
+const allow_skip_frames = true;
 
 const window_title = "zig-gamedev: textured quad (wgpu)";
 
@@ -799,6 +799,8 @@ pub fn main() !void {
     var reduce_latency_target: u64 = target_none;
     _ = &reduce_latency_target;
 
+    var last_frame_was_wait = true;
+
     while (!window.shouldClose()) {
         var add_us: u64 = 0;
         const reduce_input_latency: usize = if (reduce_latency_target != 0) (reduce_latency_target -| last_frame_time) -| (1 * std.time.ns_per_ms) else 0;
@@ -832,13 +834,6 @@ pub fn main() !void {
             beui.frame.has_events = true;
         }
 
-        if (!beui.frame.has_events and allow_skip_frames) {
-            // skip this frame
-            // eventually we could even ignore frames that have a mouse move event but there is no
-            // beui2 item that asks for the mouse position event
-            std.Thread.sleep(std.time.ns_per_ms * 4);
-            continue;
-        }
         if (beui.isKeyHeld(.escape)) {
             // used to pause input to reveal bugs
             // eg: right now, you can hold escape, click the close button on a window, and then
@@ -854,7 +849,7 @@ pub fn main() !void {
             // this is a pretty bad option. don't want it.
             continue;
         }
-        if (allow_skip_frames) std.log.info("frame: {d}", .{frame_num});
+        if (last_frame_was_wait) std.log.info("frame: {d}", .{frame_num});
 
         if (beui.isKeyHeld(.mouse_middle)) {
             beui.frame.scroll_px += beui.frame.mouse_offset;
@@ -912,6 +907,21 @@ pub fn main() !void {
 
         draw(demo, &draw_list, &b2, &frame_timer, &last_frame_time, add_us);
         frame_num += 1;
+
+        if (!beui.frame.has_events and allow_skip_frames) {
+            switch (b2.frame.next_frame_request) {
+                .none => {
+                    // wait until there are events to start the next frame
+                    // eventually we could even ignore frames that have a mouse move event but there is no
+                    // beui2 item that asks for the mouse position event
+                    zglfw.waitEvents();
+                    last_frame_was_wait = true;
+                },
+                .animation => {
+                    last_frame_was_wait = false;
+                },
+            }
+        }
     }
 }
 

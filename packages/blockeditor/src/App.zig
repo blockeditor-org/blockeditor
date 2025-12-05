@@ -305,6 +305,7 @@ fn render__bounceBall(call_info: B2.StandardCallInfo) *B2.RepositionableDrawList
             state.ball_pos_px[1] = whole_size[1] - ball_size_half[1];
         }
     }
+    b2.isAnimation();
 
     // TODO:
     // - [x] drag with mouse
