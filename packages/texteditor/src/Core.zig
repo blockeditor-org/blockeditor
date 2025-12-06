@@ -601,6 +601,35 @@ pub fn executeCommand(self: *Core, command: EditorCommand) void {
                 }
             }
         },
+        .duplicate_cursor => |dupe_cmd| {
+            // if the last cursor has a selection, duplicate the selection
+            // else, have the last cursor up-select a word
+            const last_cursor = self.cursor_positions.getLastOrNull() orelse return;
+            const a = block.docbyteFromPosition(last_cursor.pos.focus);
+            const b = block.docbyteFromPosition(last_cursor.pos.anchor);
+            const start = @min(a, b);
+            const end = @max(a, b);
+            if (start == end) {
+                // todo: up-select dupe_cmd.empty_stop
+                return;
+            }
+            // TODO implement as 0-allocation or similar
+            const find_str = self.gpa.alloc(u8, end - start) catch @panic("oom");
+            defer self.gpa.free(find_str);
+            block.readSlice(block.positionFromDocbyte(start), find_str);
+            const left_str = self.gpa.alloc(u8, start) catch @panic("oom");
+            defer self.gpa.free(left_str);
+            block.readSlice(block.positionFromDocbyte(0), left_str);
+            const right_str = self.gpa.alloc(u8, block.length() - end) catch @panic("oom");
+            defer self.gpa.free(right_str);
+            block.readSlice(block.positionFromDocbyte(end), right_str);
+
+            const next = switch (dupe_cmd.direction) {
+                .right => if (std.mem.indexOf(u8, right_str, find_str)) |r| end + r else if (std.mem.indexOf(u8, left_str, find_str)) |r| r else return,
+                .left => if (std.mem.lastIndexOf(u8, left_str, find_str)) |r| r else if (std.mem.lastIndexOf(u8, right_str, find_str)) |r| end + r else return,
+            };
+            self.cursor_positions.append(.range(block.positionFromDocbyte(next), block.positionFromDocbyte(next + end - start))) catch @panic("oom");
+        },
         .ts_select_node => |ts_sel| {
             const syn_hl_ctx = if (self.syn_hl_ctx) |*v| v else return; // no syn hl ctx; can't. todo: at least we could support select full file.
             const tree = syn_hl_ctx.getTree();
@@ -1221,6 +1250,16 @@ pub const LRDirection = enum {
         };
     }
 };
+pub const UDDirection = enum {
+    up,
+    down,
+    pub fn value(dir: UDDirection) i2 {
+        return switch (dir) {
+            .left => -1,
+            .right => 1,
+        };
+    }
+};
 pub const EditorCommand = union(enum) {
     move_cursor_left_right: struct {
         mode: enum { move, select },
@@ -1232,7 +1271,7 @@ pub const EditorCommand = union(enum) {
         stop: CursorLeftRightStop,
     },
     move_cursor_up_down: struct {
-        direction: enum { up, down },
+        direction: UDDirection,
         mode: enum { move, select, duplicate },
         metric: CursorHorizontalPositionMetric,
         stop: CursorLeftRightStop,
@@ -1246,7 +1285,7 @@ pub const EditorCommand = union(enum) {
     },
     newline: void,
     insert_line: struct {
-        direction: enum { up, down },
+        direction: UDDirection,
     },
     indent_selection: struct {
         direction: LRDirection,
@@ -1260,7 +1299,10 @@ pub const EditorCommand = union(enum) {
         position: Position,
     },
     duplicate_line: struct {
-        direction: enum { up, down },
+        direction: UDDirection,
+    },
+    duplicate_cursor: struct {
+        direction: LRDirection,
     },
 
     click: struct {
@@ -2166,6 +2208,54 @@ test Core {
         tester.editor.executeCommand(.undo);
     }
     try tester.expectContent("|hello!");
+}
+
+test "ctrl+d" {
+    var tester: EditorTester = undefined;
+    tester.init(std.testing.allocator, "example example wow example");
+    defer tester.deinit();
+
+    try tester.expectContent("example example wow example");
+    tester.executeCommand(.{ .set_cursor_pos = .{ .position = tester.pos(0) } });
+    try tester.expectContent("|example example wow example");
+    // tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .right, .stop = .word } }); // vscode will up-select a word if there is nothing selected
+    tester.executeCommand(.{ .move_cursor_left_right = .{ .direction = .right, .mode = .select, .stop = .word } });
+    try tester.expectContent("[example| example wow example");
+    tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .right } });
+    try tester.expectContent("[example| [example| wow example");
+    tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .right } });
+    try tester.expectContent("[example| [example| wow [example|");
+    tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .right } });
+    try tester.expectContent("[example| [example| wow [example|");
+    tester.executeCommand(.{ .set_cursor_pos = .{ .position = tester.pos(15) } });
+    try tester.expectContent("example example| wow example");
+    tester.executeCommand(.{ .move_cursor_left_right = .{ .direction = .left, .mode = .select, .stop = .word } });
+    try tester.expectContent("example |example] wow example");
+    tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .right } });
+    try tester.expectContent("example |example] wow [example|");
+    tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .right } });
+    try tester.expectContent("[example| |example] wow [example|");
+    tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .right } });
+    try tester.expectContent("[example| |example] wow [example|");
+    tester.executeCommand(.{ .insert_text = .{ .text = "blah" } });
+    try tester.expectContent("blah| blah| wow blah|");
+    tester.executeCommand(.{ .set_cursor_pos = .{ .position = tester.pos(9) } });
+    try tester.expectContent("blah blah| wow blah");
+    tester.executeCommand(.{ .move_cursor_left_right = .{ .direction = .left, .mode = .select, .stop = .word } });
+    try tester.expectContent("blah |blah] wow blah");
+    tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .left } });
+    try tester.expectContent("[blah| |blah] wow blah");
+    // TODO: we can't be sorting the cursors, we need to know which one was most recently added
+    // tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .left } });
+    // try tester.expectContent("[blah| |blah] wow [blah|");
+    // tester.executeCommand(.{ .duplicate_cursor = .{ .direction = .left } });
+    // try tester.expectContent("[blah| |blah] wow [blah|");
+
+    // TODO: support:
+    // [abc|[abc|
+    // from [abc|abc duplicate
+
+    // abcabcabc
 }
 
 fn usi(a: u64) usize {

@@ -31,7 +31,7 @@ pub const std_options = if (@hasDecl(App, "std_options")) App.std_options else s
 /// - ask beui2 to see if we want to rerender given the current events. if not, wait, capture some more
 ///   events, and retry. beui2 will see if the mouse moved but no one can see its position then it doesn't
 ///   need to rerender.
-const allow_skip_frames = true;
+const allow_skip_frames = false;
 
 const window_title = "zig-gamedev: textured quad (wgpu)";
 
@@ -922,7 +922,7 @@ pub fn main() !void {
                     // wait until there are events to start the next frame
                     // eventually we could even ignore frames that have a mouse move event but there is no
                     // beui2 item that asks for the mouse position event
-                    zglfw.waitEvents();
+                    zglfw.waitEvents(); // oops this doesn't work, it eats the events up
                     last_frame_was_wait = true;
                 },
                 .animation => {
