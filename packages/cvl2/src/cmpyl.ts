@@ -343,6 +343,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         console.log("result type", printers.type.dump(retTy));
         assert(false, env, expr.pos, "TODO: analyze the function now"); // we need to analyze the function to determine which runtime envs it depends on
         // this will require manual disambiguation for loops (like zig error sets).
+        // no we don't. can't we do that later? as a second pass?
     }
     
     if (index === 0) {
