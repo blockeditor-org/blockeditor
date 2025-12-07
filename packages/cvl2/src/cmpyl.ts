@@ -262,6 +262,9 @@ export type AnalysisBlock = {
     lines: AnalysisLine[],
 };
 export type AnalysisResult = {
+    // TODO:
+    // - remove narrow in types
+    // - return the comptime value here if it is known, else the block idx
     idx: BlockIdx,
     type: ComptimeType,
 };
