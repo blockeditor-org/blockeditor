@@ -1,4 +1,4 @@
-import { Adisp, comptimeEval, printers } from "./cte";
+import { Adisp, comptimeEval, getComptime, printers } from "./cte";
 import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenizationErrorStyle, type TokenPosition, type TraceEntry } from "./cvl2";
 import { isAbsolute, relative } from "path";
 
@@ -36,8 +36,8 @@ function importFile(filename: string, contents: string) {
         const mainFn = ns.getSymbol(env, rootPos, mainSymbolChildType, mainSymbolSymbol, block);
         if (!mainFn) throwErr(env, rootPos, "expected main fn");
         const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, (env, slot, pos, block) => ({value: {kind: "void"}, type: {type: "void", pos: compilerPos()}}), block);
-        // blockAppend(block, {expr: "break", value: callResult.idx, pos: rootPos});
-        comptimeEval(env, block);
+        const result = getComptime(env, "void", comptimeEval(env, block, callResult.value, rootPos), rootPos);
+        throwErr(env, rootPos, "todo handle result");
     }catch(err) {
         handleErr(env, err);
     }
@@ -68,7 +68,7 @@ type ComptimeValueNamespace = {
 export type NsFields = {
     kind: "ns_fields",
     locked: boolean,
-    registered: Map<string | symbol, {key: ComptimeValueKey, ast: ComptimeValueAst}>,
+    registered: Map<string | symbol, {key: ComptimeValueKey, decl: ComptimeValueDeclaration}>,
 };
 
 function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeValueNamespace {
@@ -92,8 +92,7 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
             return {type: {type: "void", pos: compilerPos()}, value: ret};
         },
     });
-    const results = comptimeEval(env, block);
-    const arrValue = results[arrEntry.idx] as NsFields;
+    const arrValue = getComptime(env, "ns_fields", comptimeEval(env, block, arrEntry, pos), pos);
     arrValue.locked = true;
     return {
         kind: "namespace",
@@ -106,12 +105,12 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
                 [pos, "namespace declared here"],
             ]);
         },
-        getSymbol(env, pos, childt, field, outerBlock) {
+        getSymbol(env, pos, childt, field, outerBlock): AnalysisResult | undefined {
             const value = arrValue.registered.get(field);
             if (value) {
-                const block: AnalysisBlock = {lines: [], validate: Symbol()};
-                const result = analyze(env, childt, value.ast.pos, value.ast.ast, block);
-                throwErr(env, pos, "todo handle analyzed result");
+                const result = getDeclaration(env, childt, value.decl);
+                return result;
+                // return {value: {kind: "optional", some: result.value}, type: {type: "optional", some: result.type}};
             }
             return undefined;
         },
@@ -120,8 +119,22 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
 type ComptimeValueDeclaration = {
     ast: ComptimeValueAst,
     env: Env,
-    valueCache: {match: Map<symbol, unknown>, result: unknown}[],
+    valueCache: {match: Map<symbol, unknown>, result: ComptimeAnalysisResult}[],
+    _tmpValueCache?: "inprogress" | ComptimeAnalysisResult,
 };
+export function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
+    return {ast, env, valueCache: []};
+}
+export function getDeclaration(env: Env, slott: ComptimeType, decl: ComptimeValueDeclaration): ComptimeAnalysisResult {
+    if (decl._tmpValueCache === "inprogress") throwErr(env, decl.ast.pos, "analysis cycle");
+    if (decl._tmpValueCache) return decl._tmpValueCache;
+    decl._tmpValueCache = "inprogress";
+    const block: AnalysisBlock = {lines: [], validate: Symbol()};
+    const result = analyze(decl.env, slott, decl.ast.pos, decl.ast.ast, block);
+    const evald = comptimeEval(decl.env, block, result.value, decl.ast.pos);
+    decl._tmpValueCache = {type: result.type, value: evald};
+    return decl._tmpValueCache;
+}
 /*
 function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
 
@@ -204,7 +217,12 @@ export type ComptimeTypeTuple = {
     pos: TokenPosition,
     children: ComptimeType[],
 };
-export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple;
+export type ComptimeTypeOptional = {
+    type: "optional",
+    pos: TokenPosition,
+    some: ComptimeType,
+};
+export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple | ComptimeTypeOptional;
 
 export type ComptimeValueKey = {
     kind: "key",
@@ -260,6 +278,13 @@ export type AnalysisResult = {
     // - return the comptime value here if it is known, else the block idx
     type: ComptimeType,
     value: RuntimeValue,
+};
+export type ComptimeAnalysisResult = {
+    // TODO:
+    // - remove narrow in types
+    // - return the comptime value here if it is known, else the block idx
+    type: ComptimeType,
+    value: ComptimeValue,
 };
 type BlockIdx = number & {__is_block_idx: true};
 function blockAppend(block: AnalysisBlock, instr: AnalysisLine): RuntimeValueRuntime {
@@ -386,7 +411,11 @@ type ComptimeValueFn = {
     args: Destructure,
     body: ComptimeValueAst,
 };
-export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn;
+type ComptimeValueOptional = {
+    kind: "optional",
+    some?: ComptimeValue,
+};
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional;
 export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
 export type RuntimeValueRuntime = {
     kind: "runtime",

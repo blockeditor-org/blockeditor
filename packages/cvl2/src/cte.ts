@@ -1,8 +1,9 @@
-import { assert, throwErr, type AnalysisBlock, type ComptimeValueKey, type ComptimeType, type ComptimeValue, type ComptimeValueAst, type Destructure, type DestructureExtract, type Env, type NsFields, type RuntimeValue } from "./cmpyl";
+import { assert, throwErr, type AnalysisBlock, type ComptimeValueKey, type ComptimeType, type ComptimeValue, type ComptimeValueAst, type Destructure, type DestructureExtract, type Env, type NsFields, type RuntimeValue, createDeclaration } from "./cmpyl";
 import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 type RuntimeData = {block: AnalysisBlock, results: (ComptimeValue | undefined)[]};
-export function getComptime<K extends ComptimeValue["kind"]>(env: Env, k: K, v: RuntimeValue, pos: TokenPosition, runtime?: RuntimeData): Extract<ComptimeValue, {kind: NoInfer<K>}> {
+type VK<K extends ComptimeValue["kind"]> = Extract<ComptimeValue, {kind: NoInfer<K>}>;
+export function getComptime<K extends ComptimeValue["kind"]>(env: Env, k: K | null, v: RuntimeValue, pos: TokenPosition, runtime?: RuntimeData): VK<K> {
     if (v.kind === "runtime") {
         if (!runtime) assert(false, env, pos, `Value must be known at comptime.`);
         if (v.validate !== runtime.block.validate) {
@@ -10,17 +11,17 @@ export function getComptime<K extends ComptimeValue["kind"]>(env: Env, k: K, v: 
         }
         const q = runtime.results[v.idx]!;
         return getComptime<K>(env, k, q, pos);
-    } else if (v.kind === k) {
+    } else if (k == null || v.kind === k) {
         return v as unknown as Extract<ComptimeValue, {kind: NoInfer<K>}>;
     } else {
         assert(false, env, pos, `Expected value of type ${JSON.stringify(k)}, got ${JSON.stringify(v.kind)}`);
     }
 };
 
-export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
+export function comptimeEval(env: Env, block: AnalysisBlock, v: RuntimeValue, pos: TokenPosition): ComptimeValue {
     console.log("comptimeEval" + printers.block.dump(block, 2));
 
-    const getas = <K extends ComptimeValue["kind"]>(k: K, v: RuntimeValue, pos: TokenPosition) => getComptime(env, k, v, pos, rt);
+    const getas = <K extends ComptimeValue["kind"]>(k: K | null, v: RuntimeValue, pos: TokenPosition): VK<K> => getComptime(env, k, v, pos, rt);
 
     const results = Array.from({length: block.lines.length}, () => undefined) as (ComptimeValue | undefined)[];
     const rt: RuntimeData = {block, results};
@@ -40,17 +41,17 @@ export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
             const ast = getas("ast", instr.value, instr.pos);
             if (prevdef) {
                 throwErr(env, ast.pos, "already declared", [
-                    [prevdef.ast.pos, "previous definition here"],
+                    [prevdef.decl.ast.pos, "previous definition here"],
                 ]);
             }
-            fields.registered.set(key.key, {key, ast});
+            fields.registered.set(key.key, {key, decl: createDeclaration(env, ast)});
 
             results[i] = undefined;
         } else {
-            throw new Error("todo: comptime eval expr: "+instr.expr);
+            throwErr(env, instr.pos, "todo: comptime eval expr: "+instr.expr);
         }
     }
-    return results;
+    return getas(null, v, pos);
 }
 
 type PrintCfg = {indent: string};
