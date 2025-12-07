@@ -341,9 +341,14 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         };
         console.log("in slot", printers.type.dump(slot));
         console.log("result type", printers.type.dump(retTy));
-        assert(false, env, expr.pos, "TODO: analyze the function now"); // we need to analyze the function to determine which runtime envs it depends on
-        // this will require manual disambiguation for loops (like zig error sets).
-        // no we don't. can't we do that later? as a second pass?
+        return {
+            type: retTy,
+            value: {
+                kind: "fn",
+                args,
+                body: {kind: "ast", ast: expr.items, pos: expr.pos},
+            },
+        };
     }
     
     if (index === 0) {
@@ -376,7 +381,12 @@ type ComptimeValueType = {
     kind: "type",
     type: ComptimeType,
 };
-export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields;
+type ComptimeValueFn = {
+    kind: "fn",
+    args: Destructure,
+    body: ComptimeValueAst,
+};
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn;
 export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
 export type RuntimeValueRuntime = {
     kind: "runtime",
