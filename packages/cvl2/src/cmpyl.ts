@@ -1,5 +1,5 @@
 import { Adisp, comptimeEval, printers } from "./cte";
-import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenPosition, type TraceEntry } from "./cvl2";
+import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenizationErrorStyle, type TokenPosition, type TraceEntry } from "./cvl2";
 import { isAbsolute, relative } from "path";
 
 class PositionedError extends Error {
@@ -341,7 +341,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         };
         console.log("in slot", printers.type.dump(slot));
         console.log("result type", printers.type.dump(retTy));
-        throwErr(env, expr.pos, "TODO: analyze the function now"); // we need to analyze the function to determine which runtime envs it depends on
+        assert(false, env, expr.pos, "TODO: analyze the function now"); // we need to analyze the function to determine which runtime envs it depends on
         // this will require manual disambiguation for loops (like zig error sets).
     }
     
@@ -564,17 +564,17 @@ function readBinary(env: Env, pos: TokenPosition, src: SyntaxNode[], kw: OpTag):
     });
 }
 type Notes = [pos: TokenPosition | undefined, msg: string][];
-export function throwErr(env: Env | undefined, pos: TokenPosition | undefined, msg: string, notes?: Notes): never {
-    throw new PositionedError(getErr(env, pos, msg, notes))
+export function throwErr(env: Env | undefined, pos: TokenPosition | undefined, msg: string, notes?: Notes, style?: TokenizationErrorStyle): never {
+    throw new PositionedError(getErr(env, pos, msg, notes, style))
 }
 export function addErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: Notes): void {
     env.errors.push(getErr(env, pos, msg, notes))
 }
-export function getErr(env: Env | undefined, pos: TokenPosition | undefined, msg: string, notes?: Notes): TokenizationError {
+export function getErr(env: Env | undefined, pos: TokenPosition | undefined, msg: string, notes?: Notes, style: TokenizationErrorStyle = "error"): TokenizationError {
     const constructionLocation = parseErrorStack(new Error()).filter(line => line.text !== "getErr" && line.text !== "throwErr");
     return {
         entries: [
-            {pos: pos, style: "error", message: msg},
+            {pos, style, message: msg},
             ...(notes ?? []).map((note): TokenizationErrorEntry => ({pos: note[0], style: "note", message: note[1]}))
         ],
         trace: [...env?.trace ?? [], ...constructionLocation],
@@ -607,7 +607,7 @@ function handleErr(env: Env, err: unknown): void {
     }
 }
 export function assert(a: boolean, env?: Env, pos?: TokenPosition, msg?: string, notes?: Notes): asserts a {
-    if (!a) throwErr(env, pos, `Internal assertion failure: ${msg ?? "no details provided"}`, notes);
+    if (!a) throwErr(env, pos, msg ?? "no details provided", notes, "unreachable");
 }
 
 if(import.meta.main) {
