@@ -30,11 +30,12 @@ function importFile(filename: string, contents: string) {
     try {
         const block: AnalysisBlock = {
             lines: [],
+            validate: Symbol(),
         };
         const ns = analyzeNamespace(env, {fyl: filename, lyn: 0, col: 0, idx: 0}, tokenized.result);
         const mainFn = ns.getSymbol(env, rootPos, mainSymbolChildType, mainSymbolSymbol, block);
         if (!mainFn) throwErr(env, rootPos, "expected main fn");
-        const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, (env, slot, pos, block) => ({idx: blockAppend(block, {expr: "void", pos: compilerPos()}), type: {type: "void", pos: compilerPos()}}), block);
+        const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, (env, slot, pos, block) => ({value: {kind: "void"}, type: {type: "void", pos: compilerPos()}}), block);
         // blockAppend(block, {expr: "break", value: callResult.idx, pos: rootPos});
         comptimeEval(env, block);
     }catch(err) {
@@ -58,19 +59,22 @@ export type TargetEnv = {
     kind: "todo",
 };
 const target_env_symbol = Symbol("target_env");
-type ComptimeNamespace = {
+type ComptimeValueNamespace = {
+    kind: "namespace",
     getString(env: Env, pos: TokenPosition, field: string, block: AnalysisBlock): AnalysisResult,
     getSymbol(env: Env, pos: TokenPosition, keychild: ComptimeType, field: symbol, block: AnalysisBlock): AnalysisResult | undefined,
 };
 
 export type NsFields = {
+    kind: "ns_fields",
     locked: boolean,
-    registered: Map<string | symbol, {key: ComptimeNarrowKey, ast: ComptimeValueAst}>,
+    registered: Map<string | symbol, {key: ComptimeValueKey, ast: ComptimeValueAst}>,
 };
 
-function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeNamespace {
+function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeValueNamespace {
     const block: AnalysisBlock = {
         lines: [],
+        validate: Symbol(),
     };
     const arrEntry = blockAppend(block, {expr: "comptime:ns_list_init", pos});
     let locked = false;
@@ -78,20 +82,21 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
         analyzeBind(env, [lhs, op, rhs], block): AnalysisResult {
             const key = analyze(env, {type: "key", pos: compilerPos()}, lhs.pos, lhs.items, block);
             if (key.type.type !== "key") throw new Error("unreachable");
-            if (!key.type.narrow) throwErr(env, lhs.pos, "Expected narrowed key, got un-narrowed key", [
+            if (key.value.kind !== "key") throwErr(env, lhs.pos, `Expected key, got ${key.value.kind}`, [
                 [undefined, "This error is unnecessary because we're not varying the slot type of the value based on the type of the key"],
             ]);
             const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
             // insert an instruction to append the value to the children list
             // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
-            const ret = blockAppend(block, {expr: "comptime:ns_list_append", pos: op.pos, list: arrEntry, key: key.idx, value: value.idx});
-            return {type: {type: "void", pos: compilerPos()}, idx: ret};
+            const ret = blockAppend(block, {expr: "comptime:ns_list_append", pos: op.pos, list: arrEntry, key: key.value, value: value.value});
+            return {type: {type: "void", pos: compilerPos()}, value: ret};
         },
     });
     const results = comptimeEval(env, block);
-    const arrValue = results[arrEntry] as NsFields;
+    const arrValue = results[arrEntry.idx] as NsFields;
     arrValue.locked = true;
     return {
+        kind: "namespace",
         getString(env, pos, field, block) {
             const value = arrValue.registered.get(field);
             if (value) {
@@ -104,7 +109,7 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
         getSymbol(env, pos, childt, field, outerBlock) {
             const value = arrValue.registered.get(field);
             if (value) {
-                const block: AnalysisBlock = {lines: []};
+                const block: AnalysisBlock = {lines: [], validate: Symbol()};
                 const result = analyze(env, childt, value.ast.pos, value.ast.ast, block);
                 throwErr(env, pos, "todo handle analyzed result");
             }
@@ -166,13 +171,11 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
     }
 
 
-    const ret = blockAppend(block, {expr: "void", pos});
-    return {idx: ret, type: {type: "void", pos: pos}};
+    return {type: {type: "void", pos: pos}, value: {kind: "void"}};
 }
 export type ComptimeTypeVoid = {type: "void", pos: TokenPosition};
 export type ComptimeTypeKey = {
     type: "key", pos: TokenPosition,
-    narrow?: ComptimeNarrowKey,
 };
 export type ComptimeTypeAst = {
     type: "ast", pos: TokenPosition,
@@ -181,10 +184,10 @@ export type ComptimeTypeUnknown = {
     type: "unknown", pos: TokenPosition,
 };
 export type ComptimeTypeType = {
-    type: "type", narrow?: ComptimeType, pos: TokenPosition,
+    type: "type", pos: TokenPosition,
 };
 export type ComptimeTypeNamespace = {
-    type: "namespace", narrow?: ComptimeNamespace, pos: TokenPosition,
+    type: "namespace", pos: TokenPosition,
 };
 export type ComptimeTypeFn = {
     type: "fn",
@@ -203,16 +206,19 @@ export type ComptimeTypeTuple = {
 };
 export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple;
 
-export type ComptimeNarrowKey = {
+export type ComptimeValueKey = {
+    kind: "key",
     type: "symbol",
     key: symbol,
     child: ComptimeType,
 } | {
+    kind: "key",
     type: "string",
     key: string,
 };
 
 export type ComptimeValueAst = {
+    kind: "ast",
     ast: SyntaxNode[],
     pos: TokenPosition,
     // TODO: some env stuff in here (ie scope)
@@ -225,71 +231,57 @@ export type ComptimeValueAst = {
 // (it will assemble a plan for each unsupported instruction that uses the lowest cost list of
 //  transforms to convert to a supported instruction)
 export type AnalysisLine = {
-    expr: "comptime:only",
-    pos: TokenPosition,
-} | {
     expr: "comptime:ns_list_init",
     pos: TokenPosition,
 } | {
-    expr: "comptime:key",
-    pos: TokenPosition,
-    narrow: ComptimeNarrowKey,
-} | {
-    expr: "comptime:ast",
-    pos: TokenPosition,
-    narrow: ComptimeValueAst,
-} | {
     expr: "comptime:ns_list_append",
     pos: TokenPosition,
-    key: BlockIdx,
-    list: BlockIdx,
-    value: BlockIdx,
-} | {
-    expr: "void",
-    pos: TokenPosition,
+    key: RuntimeValue,
+    list: RuntimeValue,
+    value: RuntimeValue,
 } | {
     expr: "call",
     pos: TokenPosition,
-    method: BlockIdx,
-    arg: BlockIdx,
+    method: RuntimeValue,
+    arg: RuntimeValue,
 } | {
     expr: "break",
     pos: TokenPosition,
     // target: ...
-    value: BlockIdx,
+    value: RuntimeValue,
 };
 export type AnalysisBlock = {
     lines: AnalysisLine[],
+    validate: symbol,
 };
 export type AnalysisResult = {
     // TODO:
     // - remove narrow in types
     // - return the comptime value here if it is known, else the block idx
-    idx: BlockIdx,
     type: ComptimeType,
+    value: RuntimeValue,
 };
 type BlockIdx = number & {__is_block_idx: true};
-function blockAppend(block: AnalysisBlock, instr: AnalysisLine): BlockIdx {
+function blockAppend(block: AnalysisBlock, instr: AnalysisLine): RuntimeValueRuntime {
     block.lines.push(instr);
-    return block.lines.length - 1 as BlockIdx;
+    return {kind: "runtime", idx: (block.lines.length - 1) as unknown as BlockIdx, validate: block.validate};
 }
 function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: AnalysisResult, getArg: (env: Env, slot: ComptimeType, pos: TokenPosition, block: AnalysisBlock) => AnalysisResult, block: AnalysisBlock): AnalysisResult {
     if (method.type.type === "fn") {
         const arg = getArg(env, method.type.arg, pos, block);
         return {
-            idx: blockAppend(block, {expr: "call", method: method.idx, arg: arg.idx, pos}),
+            value: blockAppend(block, {expr: "call", method: method.value, arg: arg.value, pos}),
             type: method.type.ret,
         };
     } else throwErr(env, pos, "not supported call type: " + method.type.type);
 }
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
     if (slot.type === "ast") {
-        const value: ComptimeValueAst = {ast: ast, pos};
-        const idx = blockAppend(block, {expr: "comptime:ast", pos, narrow: value});
-        return {idx, type: {
+        const value: ComptimeValueAst = {kind: "ast", ast: ast, pos};
+        return {type: {
             type: "ast",
             pos: pos,
-        }};
+        }, value};
     }
     ast = trimWs(ast);
     /*
@@ -319,20 +311,19 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         if (index >= 1) {
             lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
         } else {
-            const idx = blockAppend(block, {expr: "comptime:only", pos: expr.pos});
-            lhs = {idx, type: {
+            lhs = {type: {
                 type: "type",
                 pos: slot.pos,
-                narrow: rootSlot,
+            }, value: {
+                kind: "type",
+                type: rootSlot,
             }};
         }
-        const narrow: ComptimeNarrowKey = {type: "string", key: expr.str};
-        const idx = blockAppend(block, {expr: "comptime:key", pos: expr.pos, narrow});
-        return analyzeAccess(env, slot, lhs, expr.pos, {idx, type: {
+        const value: ComptimeValueKey = {kind: "key", type: "string", key: expr.str};
+        return analyzeAccess(env, slot, lhs, expr.pos, {type: {
             type: "key",
             pos: expr.pos,
-            narrow,
-        }}, block);
+        }, value: value}, block);
     } else if (expr.kind === "block" && expr.tag === "arrow_fn") {
         let argSlotType: ComptimeType = {type: "unknown", pos: expr.pos};
         let retSlotType: ComptimeType = {type: "unknown", pos: expr.pos};
@@ -352,8 +343,6 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         console.log("result type", printers.type.dump(retTy));
         throwErr(env, expr.pos, "TODO: analyze the function now"); // we need to analyze the function to determine which runtime envs it depends on
         // this will require manual disambiguation for loops (like zig error sets).
-        // const idx = blockAppend(block, {expr: "comptime:only", pos: expr.pos};
-        // return {idx, type: retTy};
     }
     
     if (index === 0) {
@@ -374,20 +363,31 @@ const mainSymbolChildType: ComptimeType = {
     ret: stdFolderOrFileType,
     pos: compilerPos(),
 };
-const mainSymbolNarrow: ComptimeNarrowKey = {
-    type: "symbol", key: mainSymbolSymbol, child: mainSymbolChildType,
+const mainSymbolValue: ComptimeValueKey = {
+    kind: "key", type: "symbol", key: mainSymbolSymbol, child: mainSymbolChildType,
 };
 const mainSymbolType: ComptimeTypeKey = {
     type: "key",
     pos: compilerPos(),
-    narrow: mainSymbolNarrow,
 };
-function builtinNamespace(env: Env): ComptimeNamespace {
+type ComptimeValueVoid = {kind: "void"};
+type ComptimeValueType = {
+    kind: "type",
+    type: ComptimeType,
+};
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields;
+export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
+export type RuntimeValueRuntime = {
+    kind: "runtime",
+    idx: BlockIdx,
+    validate: symbol,
+};
+function builtinNamespace(env: Env): ComptimeValueNamespace {
     return {
+        kind: "namespace",
         getString(env, pos, field, block): AnalysisResult {
             if (field === "main") {
-                const idx = blockAppend(block, {expr: "comptime:key", narrow: mainSymbolNarrow, pos});
-                return {idx, type: mainSymbolType};
+                return {type: mainSymbolType, value: mainSymbolValue};
             } else {
                 throwErr(env, pos, "builtin does not have field: "+field);
             }
@@ -400,12 +400,10 @@ function builtinNamespace(env: Env): ComptimeNamespace {
 function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
     if (ast.kind === "ident" && ast.identTag === "builtin") {
         if (ast.str === "builtin") {
-            const idx = blockAppend(block, {expr: "comptime:only", pos: ast.pos});
-            return {idx, type: {
+            return {type: {
                 type: "namespace",
-                narrow: builtinNamespace(env),
                 pos: compilerPos(),
-            }};
+            }, value: builtinNamespace(env)};
         }else {
             throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
         }
@@ -415,11 +413,11 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
 function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: AnalysisResult, block: AnalysisBlock): AnalysisResult {
     // TODO: this is only for comptime-known accesses but we should support runtime-known accesses
     if (obj.type.type === "namespace") {
-        if (!obj.type.narrow) throwErr(env, pos, "cannot access on non-narrowed namespace");
+        if (obj.value.kind !== "namespace") throwErr(env, pos, `cannot access on namespace type with value kind ${obj.value.kind}`);
         if (prop.type.type !== "key") throwErr(env, pos, "expected prop type key");
-        if (!prop.type.narrow) throwErr(env, pos, "cannot access on namespace with non-narrowed prop value");
-        if (prop.type.narrow.type === "string") {
-            return obj.type.narrow.getString(env, pos, prop.type.narrow.key, block);
+        if (prop.value.kind !== "key") throwErr(env, pos, "cannot access on namespace with non-narrowed prop value");
+        if (prop.value.type === "string") {
+            return obj.value.getString(env, pos, prop.value.key, block);
         }else{
             throwErr(env, pos, "TODO return ?symbolChildType .init(T) or .empty");
         }
@@ -453,7 +451,7 @@ export type DestructureExtract = {
     pos: TokenPosition,
 } | {
     kind: "map",
-    items: [ComptimeNarrowKey, DestructureExtract][],
+    items: [ComptimeValueKey, DestructureExtract][],
     pos: TokenPosition,
 };
 function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destructure {
@@ -565,20 +563,21 @@ function readBinary(env: Env, pos: TokenPosition, src: SyntaxNode[], kw: OpTag):
         throwErr(env, itm.pos, `Unexpected token in ${kw}: ${itm.kind}`);
     });
 }
-export function throwErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): never {
+type Notes = [pos: TokenPosition | undefined, msg: string][];
+export function throwErr(env: Env | undefined, pos: TokenPosition | undefined, msg: string, notes?: Notes): never {
     throw new PositionedError(getErr(env, pos, msg, notes))
 }
-export function addErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): void {
+export function addErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: Notes): void {
     env.errors.push(getErr(env, pos, msg, notes))
 }
-export function getErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: [pos: TokenPosition | undefined, msg: string][]): TokenizationError {
+export function getErr(env: Env | undefined, pos: TokenPosition | undefined, msg: string, notes?: Notes): TokenizationError {
     const constructionLocation = parseErrorStack(new Error()).filter(line => line.text !== "getErr" && line.text !== "throwErr");
     return {
         entries: [
             {pos: pos, style: "error", message: msg},
             ...(notes ?? []).map((note): TokenizationErrorEntry => ({pos: note[0], style: "note", message: note[1]}))
         ],
-        trace: [...env.trace, ...constructionLocation],
+        trace: [...env?.trace ?? [], ...constructionLocation],
     };
 }
 function parseErrorStack(error: Error): TraceEntry[] {
@@ -607,8 +606,8 @@ function handleErr(env: Env, err: unknown): void {
         throw err;
     }
 }
-export function assert(a: boolean): asserts a {
-    if (!a) throw new Error("assertion failed");
+export function assert(a: boolean, env?: Env, pos?: TokenPosition, msg?: string, notes?: Notes): asserts a {
+    if (!a) throwErr(env, pos, `Internal assertion failure: ${msg ?? "no details provided"}`, notes);
 }
 
 if(import.meta.main) {

@@ -1,31 +1,43 @@
-import { assert, throwErr, type AnalysisBlock, type ComptimeNarrowKey, type ComptimeType, type ComptimeValueAst, type Destructure, type DestructureExtract, type Env, type NsFields } from "./cmpyl";
+import { assert, throwErr, type AnalysisBlock, type ComptimeValueKey, type ComptimeType, type ComptimeValue, type ComptimeValueAst, type Destructure, type DestructureExtract, type Env, type NsFields, type RuntimeValue } from "./cmpyl";
 import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
+
+type RuntimeData = {block: AnalysisBlock, results: (ComptimeValue | undefined)[]};
+export function getComptime<K extends ComptimeValue["kind"]>(env: Env, k: K, v: RuntimeValue, pos: TokenPosition, runtime?: RuntimeData): Extract<ComptimeValue, {kind: NoInfer<K>}> {
+    if (v.kind === "runtime") {
+        if (!runtime) assert(false, env, pos, `Value must be known at comptime.`);
+        if (v.validate !== runtime.block.validate) {
+            throwErr(env, pos, `Assertion failure: Ex`)
+        }
+        const q = runtime.results[v.idx]!;
+        return getComptime<K>(env, k, q, pos);
+    } else if (v.kind === k) {
+        return v as unknown as Extract<ComptimeValue, {kind: NoInfer<K>}>;
+    } else {
+        assert(false, env, pos, `Expected value of type ${JSON.stringify(k)}, got ${JSON.stringify(v.kind)}`);
+    }
+};
 
 export function comptimeEval(env: Env, block: AnalysisBlock): unknown[] {
     console.log("comptimeEval" + printers.block.dump(block, 2));
 
-    const results = Array.from({length: block.lines.length}, () => undefined) as unknown[];
+    const getas = <K extends ComptimeValue["kind"]>(k: K, v: RuntimeValue, pos: TokenPosition) => getComptime(env, k, v, pos, rt);
+
+    const results = Array.from({length: block.lines.length}, () => undefined) as (ComptimeValue | undefined)[];
+    const rt: RuntimeData = {block, results};
     for (let i = 0; i < block.lines.length; i += 1) {
         const instr = block.lines[i]!;
-        if (instr.expr === "void") {
-            results[i] = undefined;
-        } else if (instr.expr === "comptime:only") {
-            results[i] = undefined;
-        } else if (instr.expr === "comptime:ast") {
-            results[i] = instr.narrow satisfies ComptimeValueAst;
-        } else if (instr.expr === "comptime:key") {
-            results[i] = instr.narrow satisfies ComptimeNarrowKey;
-        } else if (instr.expr === "comptime:ns_list_init") {
+        if (instr.expr === "comptime:ns_list_init") {
             results[i] = {
+                kind: "ns_fields",
                 locked: false,
                 registered: new Map(),
             } satisfies NsFields;
         } else if (instr.expr === "comptime:ns_list_append") {
-            const fields = (results[instr.list]! as NsFields);
-            assert(!fields.locked);
-            const key = results[instr.key] as ComptimeNarrowKey;
+            const fields = getas("ns_fields", instr.list, instr.pos);
+            assert(!fields.locked, env, instr.pos);
+            const key = getas("key", instr.key, instr.pos);
             const prevdef = fields.registered.get(key.key);
-            const ast = results[instr.value] as ComptimeValueAst;
+            const ast = getas("ast", instr.value, instr.pos);
             if (prevdef) {
                 throwErr(env, ast.pos, "already declared", [
                     [prevdef.ast.pos, "previous definition here"],
@@ -148,23 +160,8 @@ export const printers = {
             if (expr.expr === "call") {
                 adisp.put(` method=${expr.method} arg=${expr.arg}`);
                 adisp.putSrc(expr.pos);
-            }else if(expr.expr === "comptime:only") {
-                adisp.putSrc(expr.pos);
             }else if(expr.expr === "comptime:ns_list_init") {
                 adisp.putSrc(expr.pos);
-            }else if(expr.expr === "comptime:key") {
-                if(expr.narrow.type === "string") {
-                    adisp.put(` str=${JSON.stringify(expr.narrow.key)}`);
-                    adisp.putSrc(expr.pos);
-                }else{
-                    adisp.put(` str=${JSON.stringify(expr.narrow.key.description??"(unnamed)")}, type=`);
-                    adisp.putSrc(expr.pos);
-                    adisp.putSingle(printers.type, expr.narrow.child);
-                }
-            }else if(expr.expr === "comptime:ast") {
-                adisp.put(" ast:");
-                adisp.putSrc(expr.pos);
-                adisp.putList(printers.astNode, expr.narrow.ast);
             }else if(expr.expr === "comptime:ns_list_append") {
                 adisp.put(` key=${expr.key} list=${expr.list} value=${expr.value}`);
                 adisp.putSrc(expr.pos);
