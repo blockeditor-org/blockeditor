@@ -64,6 +64,8 @@ export class Adisp {
     indentCount: number = 0;
     depth: number;
     res: string[] = [];
+    cache: Map<SinglePrinter<any> | MultiPrinter<any>, Map<unknown, number>> = new Map();
+    referenceCount = 0;
     constructor(depth = Infinity) {
         this.cfg = {indent: "│ "};
         this.depth = depth;
@@ -75,6 +77,13 @@ export class Adisp {
     indent() {
         this.indentCount += 1;
         return {[Symbol.dispose]: () => this.indentCount -= 1};
+    }
+
+    getOrAddCache(printer: SinglePrinter<any> | MultiPrinter<any>, value: unknown): number | undefined {
+        if (!this.cache.has(printer)) this.cache.set(printer, new Map());
+        const cache = this.cache.get(printer)!;
+        if (cache.has(value)) return cache.get(value)!;
+        cache.set(value, this.referenceCount++);
     }
 
     put(msg: string, color?: string): void {
@@ -100,11 +109,18 @@ export class Adisp {
         return false;
     }
 
+    putInline<T>(printer: SinglePrinter<T>, value: NoInfer<T>) {
+        const cached = this.getOrAddCache(printer, value);
+        if (cached != null) {
+            this.put(`[referenced value ${cached}]`);
+        }
+        printer.single(this, value);
+    }
     putSingle<T>(printer: SinglePrinter<T>, value: NoInfer<T>) {
         using _ = this.indent();
         if (this.putCheckDepth()) return;
         this.putNewline();
-        printer.single(this, value);
+        this.putInline(printer, value);
     }
     putMulti<T>(printer: MultiPrinter<T>, value: NoInfer<T>) {
         using _ = this.indent();
@@ -121,7 +137,7 @@ export class Adisp {
         if (this.putCheckDepth(children.length)) return;
         for (const child of children) {
             this.putNewline();
-            printer.single(this, child);
+            this.putInline(printer, child);
         }
     }
 }
@@ -163,26 +179,68 @@ export const printers = {
             adisp.put(`${i} = `);
             adisp.put(expr.expr, colors.magenta);
             if (expr.expr === "call") {
-                adisp.put(` method=${expr.method} arg=${expr.arg}`);
                 adisp.putSrc(expr.pos);
+                using _ = adisp.indent();
+                adisp.putNewline();
+                adisp.put("method: ");
+                adisp.putInline(printers.runtimeValue, expr.method);
+                adisp.putNewline();
+                adisp.put("arg: ");
+                adisp.putInline(printers.runtimeValue, expr.arg);
             }else if(expr.expr === "comptime:ns_list_init") {
                 adisp.putSrc(expr.pos);
             }else if(expr.expr === "comptime:ns_list_append") {
-                adisp.put(` key=${expr.key} list=${expr.list} value=${expr.value}`);
                 adisp.putSrc(expr.pos);
+                using _ = adisp.indent();
+                adisp.putNewline();
+                adisp.put("key: ");
+                adisp.putInline(printers.runtimeValue, expr.key);
+                adisp.putNewline();
+                adisp.put("list: ");
+                adisp.putInline(printers.runtimeValue, expr.list);
+                adisp.putNewline();
+                adisp.put("value: ");
+                adisp.putInline(printers.runtimeValue, expr.value);
             } else {
                 adisp.put(" %%TODO%%");
                 adisp.putSrc(expr.pos);
             }
         }
     }),
+    runtimeValue: new SinglePrinter<RuntimeValue>((adisp, rtv) => {
+        adisp.put(rtv.kind, colors.green);
+        if (rtv.kind === "key") {
+            adisp.put(" " + rtv.type, colors.green);
+            if (rtv.type === "string") {
+                adisp.put(JSON.stringify(rtv.key));
+            } else if (rtv.type === "symbol") {
+                adisp.put(" " + rtv.key.toString());
+                using _ = adisp.indent();
+                adisp.putNewline();
+                adisp.put("child: ");
+                adisp.putInline(printers.type, rtv.child);
+            } else {
+                adisp.put(` %%TODO key kind%%`);
+            }
+        } else if (rtv.kind === "runtime") {
+            adisp.put(` ${rtv.idx}`);
+        } else if (rtv.kind === "ast") {
+            adisp.putList(printers.astNode, rtv.ast);
+        } else if (rtv.kind === "void") {
+            // empty
+        } else if (rtv.kind === "fn") {
+            // todo
+        } else {
+            adisp.put(` %%TODO%%`);
+        }
+    }),
     destructure: new MultiPrinter<Destructure>((adisp, destructure) => {
         adisp.putNewline();
-        adisp.put("extract=");
-        adisp.putSingle(printers.destructureExact, destructure.extract);
+        adisp.put("extract: ");
+        adisp.putInline(printers.destructureExact, destructure.extract);
         adisp.putNewline();
-        adisp.put("type=");
-        adisp.putSingle(printers.type, destructure.type);
+        adisp.put("type: ");
+        adisp.putInline(printers.type, destructure.type);
     }),
     destructureExact: new SinglePrinter<DestructureExtract>((adisp, extract) => {
         adisp.put(extract.kind, colors.cyan);
@@ -203,11 +261,11 @@ export const printers = {
             adisp.putSrc(type.pos);
             using _ = adisp.indent();
             adisp.putNewline();
-            adisp.put("arg=");
-            adisp.putSingle(printers.type, type.arg);
+            adisp.put("arg: ");
+            adisp.putInline(printers.type, type.arg);
             adisp.putNewline();
-            adisp.put("ret=");
-            adisp.putSingle(printers.type, type.ret);
+            adisp.put("ret: ");
+            adisp.putInline(printers.type, type.ret);
         }else if(type.type === "void") {
             adisp.putSrc(type.pos);
         }else if(type.type === "folder_or_file") {
