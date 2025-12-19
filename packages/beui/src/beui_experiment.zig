@@ -1175,34 +1175,6 @@ pub const RepositionableDrawList = struct {
     }
 };
 
-// fn harfbuzzText(call_info: StandardCallInfo, text: []const u8, color: Beui.Color) StandardChild {
-//     const ui = call_info.ui(@src());
-
-//     const draw = ui.id.b2.draw();
-// }
-
-pub fn textOnly(
-    call_info: StandardCallInfo,
-    text_v: []const u8,
-    color: Beui.Color,
-) StandardChild {
-    const ui = call_info.ui(@src());
-    const b2 = ui.id.b2;
-
-    const draw = b2.draw();
-
-    var char_pos: @Vector(2, f32) = .{ 0, 0 };
-    for (text_v) |char| {
-        draw.addChar(char, char_pos, color);
-        char_pos += .{ 6, 0 };
-    }
-
-    return .{
-        .size = .{ char_pos[0], 10 },
-        .rdl = draw,
-    };
-}
-
 const TextLine = struct {
     text: []const u8,
 };
@@ -1328,19 +1300,6 @@ pub fn Component(comptime Arg1: type, comptime Arg2: type, comptime Ret: type) t
             return self.fn_ptr(self.ctx, arg1, arg2);
         }
     };
-}
-fn defaultTextButton(call_info: StandardCallInfo, msg: []const u8, ehdl: ButtonEhdl) StandardChild {
-    const ui = call_info.ui(@src());
-    return button(ui.sub(@src()), ehdl, .from(&msg, defaultTextButton_1));
-}
-fn defaultTextButton_1(msg: *const []const u8, caller_id: StandardCallInfo, evres: ButtonState) StandardChild {
-    const ui = caller_id.ui(@src());
-    const color: Beui.Color = if (evres.active) .fromHexRgb(0x0000FF) else .fromHexRgb(0x000099);
-    return setBackground(ui.sub(@src()), color, .from(msg, defaultTextButton_2));
-}
-fn defaultTextButton_2(msg: *const []const u8, caller_id: StandardCallInfo, _: void) StandardChild {
-    const ui = caller_id.ui(@src());
-    return textOnly(ui.sub(@src()), msg.*, .fromHexRgb(0xFFFF00));
 }
 
 pub const ContextMenuLineEhdl = struct {
@@ -1681,36 +1640,6 @@ pub fn virtualScroller(call_info: StandardCallInfo, context: anytype, comptime I
     );
 
     return .{ .size = .{ ui.constraints.available_size.w.?, ui.constraints.available_size.h.? }, .rdl = rdl };
-}
-
-pub fn scrollDemo(call_info: StandardCallInfo) StandardChild {
-    const ui = call_info.ui(@src());
-
-    const my_list: []const []const []const u8 = &[_][]const []const u8{
-        &[_][]const u8{ "flying", "searing", "lesser", "greater", "weak", "durable", "enchanted", "magic" },
-        &[_][]const u8{ "apple", "banana", "cherry", "durian", "etobicoke", "fig", "grape" },
-        &[_][]const u8{ "goblin", "blaster", "cannon", "cook", "castle" },
-    };
-    var my_list_len: usize = 1;
-    for (my_list) |item| {
-        my_list_len *= item.len;
-    }
-
-    return virtualScroller(ui.sub(@src()), my_list_len, ListIndex, .from(&my_list, scrollDemo_0_3));
-}
-fn scrollDemo_0_3(my_list: *const []const []const []const u8, caller_id: StandardCallInfo, index: ListIndex) StandardChild {
-    const ui = caller_id.ui(@src());
-
-    var res_str: []const u8 = "";
-
-    var i = index.i;
-    for (my_list.*, 0..) |items, j| {
-        const sub_i = i % items.len;
-        res_str = ui.id.b2.fmt("{s}{s}{s}", .{ res_str, if (j == 0) "" else " ", items[sub_i] });
-        i = @divFloor(i, items.len);
-    }
-
-    return defaultTextButton(ui.sub(@src()), res_str, null);
 }
 
 pub const B2Tester = struct {

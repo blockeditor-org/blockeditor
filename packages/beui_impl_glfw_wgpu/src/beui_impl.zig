@@ -37,6 +37,43 @@ const window_title = "zig-gamedev: textured quad (wgpu)";
 
 pub const anywhere_cfg: anywhere.AnywhereCfg = .{
     .tracy = if (build_options.enable_tracy) @import("tracy__impl") else null,
+    .zgui = zgui_impl,
+};
+
+const zgui_impl = struct {
+    frame_msg: std.Io.Writer.Allocating,
+
+    fn init(gpa: std.mem.Allocator) zgui_impl {
+        return .{ .frame_msg = .init(gpa) };
+    }
+    fn deinit(this: *zgui_impl) void {
+        this.frame_msg.deinit();
+    }
+
+    var data_ptr: ?*zgui_impl = null;
+    pub fn begin(title: [:0]const u8, _: struct {}) bool {
+        _ = title;
+        return false; // todo
+    }
+    pub fn end() void {
+        // todo
+    }
+    pub inline fn text(comptime fmt: []const u8, args: anytype) void {
+        _ = fmt;
+        _ = args;
+    }
+    pub inline fn checkbox(label: [:0]const u8, value: struct { v: *bool }) void {
+        _ = label;
+        _ = value;
+    }
+    pub inline fn button(label: [:0]const u8, _: struct {}) bool {
+        _ = label;
+        return false;
+    }
+    pub fn framelog(comptime fmt: []const u8, args: anytype) void {
+        const impl = data_ptr orelse return;
+        impl.frame_msg.writer.print(fmt ++ "\n", args) catch @panic("oom");
+    }
 };
 
 const wgsl_common = (
@@ -497,6 +534,7 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
             // either this or writing a texture every frame has caused after like 10sec on mac the application
             // freezes the entire computer :/ maybe we need to use opengl or something, zig-gamedev wgpu
             // seems to have problems
+            anywhere.zgui.framelog("draw commands: {d}", .{draw_list.commands.items.len});
             for (draw_list.commands.items) |command| {
                 const bind_group_handle = gctx.createBindGroup(demo.bind_group_layout, &.{
                     .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 256 },
@@ -728,6 +766,11 @@ pub fn main() !void {
 
     const gpa = tracy_wrapped.allocator();
 
+    var zgui_impl_data = zgui_impl.init(gpa);
+    defer zgui_impl_data.deinit();
+    zgui_impl.data_ptr = &zgui_impl_data;
+    defer zgui_impl.data_ptr = null;
+
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -857,7 +900,7 @@ pub fn main() !void {
             // this is a pretty bad option. don't want it.
             continue;
         }
-        if (last_frame_was_wait) std.log.info("frame: {d}", .{frame_num});
+        anywhere.zgui.framelog("frame: {d}", .{frame_num});
 
         if (beui.isKeyHeld(.mouse_middle)) {
             beui.frame.scroll_px += beui.frame.mouse_offset;
@@ -900,16 +943,35 @@ pub fn main() !void {
                 window.setCursor(cursors.get(current_cursor));
             }
 
-            const rdl = blk: {
+            const app_rdl = blk: {
                 const b2ft_ = tracy.traceNamed(@src(), "b2 scrollDemo");
                 defer b2ft_.end();
 
                 break :blk app.render(id.sub(@src()));
             };
+            const overlay_rdl = blk: {
+                const b2ft_ = tracy.traceNamed(@src(), "b2 debug overlay");
+                defer b2ft_.end();
+                // debug overlay
+                const dbgoverlay = B2.textLine(.{
+                    .caller_id = id.sub(@src()),
+                    .constraints = .{ .available_size = .{ .w = b2.frame.frame_cfg.size[0], .h = b2.frame.frame_cfg.size[1] } },
+                }, .{
+                    .text = zgui_impl_data.frame_msg.written(),
+                });
+                zgui_impl_data.frame_msg.clearRetainingCapacity();
+                break :blk dbgoverlay.rdl;
+            };
+            const final_rdl = blk: {
+                const final_rdl = b2.draw();
+                final_rdl.place(overlay_rdl, .{});
+                final_rdl.place(app_rdl, .{});
+                break :blk final_rdl;
+            };
             {
                 const b2ft_ = tracy.traceNamed(@src(), "b2 finalize");
                 defer b2ft_.end();
-                b2.endFrame(rdl, &draw_list);
+                b2.endFrame(final_rdl, &draw_list);
             }
         }
 
