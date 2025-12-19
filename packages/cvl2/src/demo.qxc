@@ -1,4 +1,6 @@
-#builtin.main .= () => std.Folder [
+#builtin.main .= () => std.File: "hello"
+
+demo :: std.Folder [
     "a.txt" .= std.File: "hello"
     "a.zig" .= std.zig.compile: () => {}
     "a.js" .= std.js.compile: () => {}
