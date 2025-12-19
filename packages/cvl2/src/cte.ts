@@ -18,7 +18,7 @@ export function getComptime<K extends ComptimeValue["kind"]>(env: Env, k: K | nu
     }
 };
 
-export function comptimeEval(env: Env, block: AnalysisBlock, v: RuntimeValue, pos: TokenPosition): ComptimeValue {
+export function comptimeEval(env: Env, block: AnalysisBlock, result: RuntimeValue, pos: TokenPosition, args: RuntimeValue | null = null): ComptimeValue {
     console.log("comptimeEval" + printers.block.dump(block, 2));
 
     const getas = <K extends ComptimeValue["kind"]>(k: K | null, v: RuntimeValue, pos: TokenPosition): VK<K> => getComptime(env, k, v, pos, rt);
@@ -51,12 +51,17 @@ export function comptimeEval(env: Env, block: AnalysisBlock, v: RuntimeValue, po
             const method = getas("fn", instr.method, instr.pos);
             const arg = getas(null, instr.arg, instr.pos);
             const body = compileFunction(env, method);
-            results[i] = comptimeEval(env, body, arg, instr.pos);
+            results[i] = comptimeEval(env, body.block, body.value, instr.pos, arg);
+        } else if (instr.expr === "args") {
+            if (args == null) throwErr(env, instr.pos, "cannot get args when executing without args", [
+                [pos, "called here"],
+            ], "unreachable");
+            results[i] = getas(null, args, instr.pos);
         } else {
             throwErr(env, instr.pos, "todo: comptime eval expr: "+instr.expr);
         }
     }
-    return getas(null, v, pos);
+    return getas(null, result, pos);
 }
 
 type PrintCfg = {indent: string};

@@ -12,6 +12,12 @@ class PositionedError extends Error {
 function compilerPos(): TokenPosition {
     return {fyl: "compiler", lyn: 0, col: 0, idx: 0};
 }
+function emptyBlock(): AnalysisBlock {
+    return {
+        lines: [],
+        validate: Symbol(),
+    };
+}
 
 function importFile(filename: string, contents: string) {
     const sourceCode = new Source(filename, contents);
@@ -28,10 +34,7 @@ function importFile(filename: string, contents: string) {
         kind: "comptime",
     } satisfies TargetEnv);
     try {
-        const block: AnalysisBlock = {
-            lines: [],
-            validate: Symbol(),
-        };
+        const block: AnalysisBlock = emptyBlock();
         const ns = analyzeNamespace(env, {fyl: filename, lyn: 0, col: 0, idx: 0}, tokenized.result);
         const mainFn = ns.getSymbol(env, rootPos, mainSymbolChildType, mainSymbolSymbol, block);
         if (!mainFn) throwErr(env, rootPos, "expected main fn");
@@ -72,10 +75,7 @@ export type NsFields = {
 };
 
 function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeValueNamespace {
-    const block: AnalysisBlock = {
-        lines: [],
-        validate: Symbol(),
-    };
+    const block: AnalysisBlock = emptyBlock();
     const arrEntry = blockAppend(block, {expr: "comptime:ns_list_init", pos});
     let locked = false;
     analyzeBlock(env, {type: "void", pos: compilerPos()}, pos, src, block, {
@@ -129,7 +129,7 @@ export function getDeclaration(env: Env, slott: ComptimeType, decl: ComptimeValu
     if (decl._tmpValueCache === "inprogress") throwErr(env, decl.ast.pos, "analysis cycle");
     if (decl._tmpValueCache) return decl._tmpValueCache;
     decl._tmpValueCache = "inprogress";
-    const block: AnalysisBlock = {lines: [], validate: Symbol()};
+    const block: AnalysisBlock = emptyBlock();
     const result = analyze(decl.env, slott, decl.ast.pos, decl.ast.ast, block);
     const evald = comptimeEval(decl.env, block, result.value, decl.ast.pos);
     decl._tmpValueCache = {type: result.type, value: evald};
@@ -159,7 +159,7 @@ function analyzeDeclaration(outerEnv: Env, ast: ComptimeValueAst): AnalysisResul
       - we will need to just allow this and dependency loops are just like "stack overflow while analyzing x"
         ```
     * /
-    const block: AnalysisBlock = {lines: []};
+    const block: AnalysisBlock = emptyBlock();
     // set (type, ast) => (resolving)
     // set (type, ast) => (resolved type)
     // set (type, ast) => (resolved value)
@@ -267,6 +267,9 @@ export type AnalysisLine = {
     pos: TokenPosition,
     // target: ...
     value: RuntimeValue,
+} | {
+    expr: "args",
+    pos: TokenPosition,
 };
 export type AnalysisBlock = {
     lines: AnalysisLine[],
@@ -379,6 +382,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
                     body: {kind: "ast", ast: expr.items, pos: expr.pos},
                     cachedBlock: null,
                 },
+                pos: expr.pos,
             },
         };
     }
@@ -418,8 +422,9 @@ type ComptimeValueFn = {
     internal: {
         args: Destructure,
         body: ComptimeValueAst,
-        cachedBlock: AnalysisBlock | null,
+        cachedBlock: {block: AnalysisBlock, value: RuntimeValue} | "inprogress" | null,
     },
+    pos: TokenPosition,
 };
 type ComptimeValueOptional = {
     kind: "optional",
@@ -432,14 +437,26 @@ export type RuntimeValueRuntime = {
     idx: BlockIdx,
     validate: symbol,
 };
-export function compileFunction(env: Env, fn: ComptimeValueFn): AnalysisBlock {
+export function analyzeDestructure(env: Env, destructure: Destructure, value: RuntimeValue, block: AnalysisBlock): Env {
+    if (destructure.extract.kind === "list") {
+        for (let i = 0; i < destructure.extract.items.length; i++) {
+            const item = destructure.extract.items[i]!;
+            throwErr(env, item.pos, `TODO destructure list child ${i}:${printers.destructureExact.dump(item, 3)}`);
+        }
+        return env;
+    } else throwErr(env, destructure.extract.pos, `TODO destructure block ${destructure.extract.kind}:${printers.destructure.dump(destructure, 3)}`)
+}
+export function compileFunction(env: Env, fn: ComptimeValueFn): {block: AnalysisBlock, value: RuntimeValue} {
+    if (fn.internal.cachedBlock === "inprogress") throwErr(env, fn.pos, "Compilation loop");
     if (fn.internal.cachedBlock) return fn.internal.cachedBlock;
-    // need to:
-    // - create an empty block
-    // - analyze the destructure into the block, define variables in the env based on that
-    // - analyze the body into the block
-    // - save and return the block
-    throwErr(env, fn.internal.body.pos, "TODO analyze function");
+    fn.internal.cachedBlock = "inprogress";
+    const block = emptyBlock();
+    const argsValue = blockAppend(block, {expr: "args", pos: fn.internal.args.extract.pos});
+    const subEnv = analyzeDestructure(env, fn.internal.args, argsValue, block);
+    const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
+    const result = analyze(subEnv, unknownSlot, fn.pos, fn.internal.body.ast, block);
+    fn.internal.cachedBlock = {block, value: result.value};
+    return fn.internal.cachedBlock;
 }
 function builtinNamespace(env: Env): ComptimeValueNamespace {
     return {
