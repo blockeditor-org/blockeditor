@@ -334,3 +334,5 @@ pub const DebugWMViewer = ComposedBlock(0x08700cbe_1229_4f0c_b3bc_3a718409d3a7, 
 pub const MinigamerViewer = ComposedBlock(0x726a0c03_6f05_406a_9b5a_c05ae89acf15, ReplaceTextComponent);
 pub const FileTreeViewer = ComposedBlock(0x29719224_f336_4b96_af65_de74a137301a, VoidComponent);
 pub const BouncyBallViewer = ComposedBlock(0x0b50ebd9_9df1_4db7_b802_92a8a8b26bb3, VoidComponent);
+
+// look into https://lite3.io/design_and_limitations.html, interesting if safe
