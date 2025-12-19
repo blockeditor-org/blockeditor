@@ -1,4 +1,4 @@
-import { assert, throwErr, type AnalysisBlock, type ComptimeValueKey, type ComptimeType, type ComptimeValue, type ComptimeValueAst, type Destructure, type DestructureExtract, type Env, type NsFields, type RuntimeValue, createDeclaration } from "./cmpyl";
+import { assert, throwErr, type AnalysisBlock, type ComptimeValueKey, type ComptimeType, type ComptimeValue, type ComptimeValueAst, type Destructure, type DestructureExtract, type Env, type NsFields, type RuntimeValue, createDeclaration, compileFunction } from "./cmpyl";
 import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 type RuntimeData = {block: AnalysisBlock, results: (ComptimeValue | undefined)[]};
@@ -50,7 +50,8 @@ export function comptimeEval(env: Env, block: AnalysisBlock, v: RuntimeValue, po
         } else if (instr.expr === "call") {
             const method = getas("fn", instr.method, instr.pos);
             const arg = getas(null, instr.arg, instr.pos);
-            results[i] = method.call(arg);
+            const body = compileFunction(env, method);
+            results[i] = comptimeEval(env, body, arg, instr.pos);
         } else {
             throwErr(env, instr.pos, "todo: comptime eval expr: "+instr.expr);
         }

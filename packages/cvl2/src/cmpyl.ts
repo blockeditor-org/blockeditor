@@ -374,8 +374,10 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
             type: retTy,
             value: {
                 kind: "fn",
-                call(arg) {
-                    throwErr(env, compilerPos(), "TODO call fn");
+                internal: {
+                    args,
+                    body: {kind: "ast", ast: expr.items, pos: expr.pos},
+                    cachedBlock: null,
                 },
             },
         };
@@ -413,7 +415,11 @@ type ComptimeValueType = {
 };
 type ComptimeValueFn = {
     kind: "fn",
-    call: (arg: ComptimeValue) => ComptimeValue,
+    internal: {
+        args: Destructure,
+        body: ComptimeValueAst,
+        cachedBlock: AnalysisBlock | null,
+    },
 };
 type ComptimeValueOptional = {
     kind: "optional",
@@ -426,6 +432,15 @@ export type RuntimeValueRuntime = {
     idx: BlockIdx,
     validate: symbol,
 };
+export function compileFunction(env: Env, fn: ComptimeValueFn): AnalysisBlock {
+    if (fn.internal.cachedBlock) return fn.internal.cachedBlock;
+    // need to:
+    // - create an empty block
+    // - analyze the destructure into the block, define variables in the env based on that
+    // - analyze the body into the block
+    // - save and return the block
+    throwErr(env, fn.internal.body.pos, "TODO analyze function");
+}
 function builtinNamespace(env: Env): ComptimeValueNamespace {
     return {
         kind: "namespace",
