@@ -1175,11 +1175,7 @@ pub const RepositionableDrawList = struct {
     }
 };
 
-const TextLine = struct {
-    text: []const u8,
-};
-
-pub fn textLine(call_info: StandardCallInfo, line: TextLine) StandardChild {
+pub fn textLine(call_info: StandardCallInfo, line: LayoutCache.LineData) StandardChild {
     const tctx = tracy.trace(@src());
     defer tctx.end();
 
@@ -1187,7 +1183,7 @@ pub fn textLine(call_info: StandardCallInfo, line: TextLine) StandardChild {
     const b2 = ui.id.b2;
     const lc = &b2.persistent.layout_cache;
 
-    const result = lc.renderLine(b2, .{ .text = line.text, .max_width = call_info.constraints.available_size.w });
+    const result = lc.renderLine(b2, .{ .value = line, .max_width = call_info.constraints.available_size.w });
     const resdraw = b2.draw();
     resdraw.addVertices(result.image, result.vertices, result.indices);
 
