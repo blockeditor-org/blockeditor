@@ -366,12 +366,17 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         };
         console.log("in slot", printers.type.dump(slot));
         console.log("result type", printers.type.dump(retTy));
+        /*
+            args,
+            body: {kind: "ast", ast: expr.items, pos: expr.pos},
+        */
         return {
             type: retTy,
             value: {
                 kind: "fn",
-                args,
-                body: {kind: "ast", ast: expr.items, pos: expr.pos},
+                call(arg) {
+                    throwErr(env, compilerPos(), "TODO call fn");
+                },
             },
         };
     }
@@ -408,8 +413,7 @@ type ComptimeValueType = {
 };
 type ComptimeValueFn = {
     kind: "fn",
-    args: Destructure,
-    body: ComptimeValueAst,
+    call: (arg: ComptimeValue) => ComptimeValue,
 };
 type ComptimeValueOptional = {
     kind: "optional",

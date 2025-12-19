@@ -666,7 +666,7 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 
             output += `${lineGutter} ${line}\n`;
 
-            const pointer = ' '.repeat((pos?.col ?? 1) - 1) + '^';
+            const pointer = ' '.repeat(Math.max((pos?.col ?? 1) - 1, 0)) + '^';
             output += `${emptyGutter} ${color}${colors.bold}${pointer}${colors.reset}\n`;
         }
         if (error.trace.length > 0) {

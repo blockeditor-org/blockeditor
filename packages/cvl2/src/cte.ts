@@ -47,6 +47,10 @@ export function comptimeEval(env: Env, block: AnalysisBlock, v: RuntimeValue, po
             fields.registered.set(key.key, {key, decl: createDeclaration(env, ast)});
 
             results[i] = undefined;
+        } else if (instr.expr === "call") {
+            const method = getas("fn", instr.method, instr.pos);
+            const arg = getas(null, instr.arg, instr.pos);
+            results[i] = method.call(arg);
         } else {
             throwErr(env, instr.pos, "todo: comptime eval expr: "+instr.expr);
         }
