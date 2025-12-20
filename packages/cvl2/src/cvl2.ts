@@ -1,4 +1,4 @@
-import { Adisp, printers } from "./cte";
+import { printers } from "./printers";
 
 function unreachable(): never {
     throw new Error("unreachable");

@@ -1,6 +1,7 @@
-import { Adisp, comptimeEval, getComptime, printers } from "./cte";
+import { comptimeEval, getComptime } from "./cte";
 import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenizationErrorStyle, type TokenPosition, type TraceEntry } from "./cvl2";
 import { isAbsolute, relative } from "path";
+import { printers } from "./printers";
 
 class PositionedError extends Error {
     e: TokenizationError;
