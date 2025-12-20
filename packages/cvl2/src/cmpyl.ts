@@ -28,9 +28,12 @@ function importFile(filename: string, contents: string) {
     const env: Env = {
         trace: [],
         errors: [...tokenized.errors],
-        comptime: new Map(),
+        scope: {
+            comptime: new Map(),
+            bindings: new Map(),
+        },
     };
-    env.comptime.set(target_env_symbol, {
+    env.scope.comptime.set(target_env_symbol, {
         kind: "comptime",
     } satisfies TargetEnv);
     try {
@@ -51,10 +54,18 @@ function importFile(filename: string, contents: string) {
     }
 }
 
+export type Binding = {
+    lazy(env: Env): RuntimeValue | null,
+    pos: TokenPosition,
+};
+export type Scope = {
+    comptime: Map<symbol, unknown>
+    bindings: Map<string, Binding>,
+};
 export type Env = {
     trace: TraceEntry[],
     errors: TokenizationError[],
-    comptime: Map<symbol, unknown>,
+    scope: Scope,
 };
 export type TargetEnv = {
     kind: "comptime"
@@ -482,6 +493,13 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         }else {
             throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
         }
+    } else if (ast.kind === "ident" && ast.identTag === "normal") {
+        const value = env.scope.bindings.get(ast.str);
+        if (!value) throwErr(env, ast.pos, "not defined in scope: "+ast.str);
+        if (!value.lazy(env)) throwErr(env, ast.pos, "not defined in scope: "+ast.str, [
+            [value.pos, "removed here"],
+        ]);
+        throwErr(env, ast.pos, "todo access ident: "+ast.str);
     }
     throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
 }
