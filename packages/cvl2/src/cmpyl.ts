@@ -481,8 +481,25 @@ function builtinNamespace(env: Env): ComptimeValueNamespace {
         getString(env, pos, field, block): AnalysisResult {
             if (field === "main") {
                 return {type: mainSymbolType, value: mainSymbolValue};
+            } else if (field === "std") {
+                return {type: {type: "namespace", pos: compilerPos()}, value: stdNamespace(env)};
             } else {
                 throwErr(env, pos, "builtin does not have field: "+field);
+            }
+        },
+        getSymbol(env, pos, field, block): AnalysisResult | undefined {
+            return undefined;
+        },
+    };
+}
+function stdNamespace(env: Env): ComptimeValueNamespace {
+    return {
+        kind: "namespace",
+        getString(env, pos, field, block): AnalysisResult {
+            if (field === "File" || field === "Folder") {
+                return {type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}};
+            } else {
+                throwErr(env, pos, "std does not have field: "+field);
             }
         },
         getSymbol(env, pos, field, block): AnalysisResult | undefined {
