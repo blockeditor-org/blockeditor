@@ -311,6 +311,9 @@ function blockAppend(block: AnalysisBlock, instr: AnalysisLine): RuntimeValueRun
     block.lines.push(instr);
     return {kind: "runtime", idx: (block.lines.length - 1) as unknown as BlockIdx, validate: block.validate};
 }
+function castValue(to: ComptimeType, result: AnalysisResult): AnalysisResult {
+    return {type: to, value: result.value};
+}
 function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: AnalysisResult, getArg: (env: Env, slot: ComptimeType, pos: TokenPosition, block: AnalysisBlock) => AnalysisResult, block: AnalysisBlock): AnalysisResult {
     if (method.type.type === "fn") {
         const arg = getArg(env, method.type.arg, pos, block);
@@ -318,6 +321,10 @@ function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: A
             value: blockAppend(block, {expr: "call", method: method.value, arg: arg.value, pos}),
             type: method.type.ret,
         };
+    } else if (method.type.type === "type") {
+        const slotType = getComptime(env, "type", method.value, pos);
+        const result = getArg(env, slotType.type, pos, block);
+        return castValue(slotType.type, result);
     } else throwErr(env, pos, "not supported call type: " + method.type.type);
 }
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
@@ -527,8 +534,11 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             [value.pos, "removed here"],
         ]);
         return getDeclaration(env, value.decl);
+    } else if (ast.kind === "block" && ast.tag === "string") {
+        throwErr(env, ast.pos, "TODO string in slot: " + printers.type.dump(slot, 3));
+    } else {
+        throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
     }
-    throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
 }
 function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: AnalysisResult, block: AnalysisBlock): AnalysisResult {
     // TODO: this is only for comptime-known accesses but we should support runtime-known accesses
