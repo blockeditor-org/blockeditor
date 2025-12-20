@@ -405,7 +405,9 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
     } else if (expr.kind === "block" && expr.tag === "colon_call") {
         const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
         const lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
-        throwErr(env, expr.pos, "TODO analyzeSuffix colon_call");
+        return analyzeCall(env, slot, expr.pos, lhs, (env, slot, pos, block) => {
+            return analyze(env, slot, pos, expr.items, block);
+        }, block);
     } else if (index === 0) {
         return analyzeBase(env, slot, expr, block);
     } else {
