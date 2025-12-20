@@ -56,7 +56,14 @@ function importFile(filename: string, contents: string) {
 }
 
 export type Binding = {
-    lazy(env: Env): RuntimeValue | null,
+    kind: "valid",
+    lazy(env: Env): AnalysisResult,
+    pos: TokenPosition,
+} | {
+    kind: "error",
+    pos: TokenPosition,
+} | {
+    kind: "removed",
     pos: TokenPosition,
 };
 export type Scope = {
@@ -86,11 +93,10 @@ export type NsFields = {
     registered: Map<string | symbol, {key: ComptimeValueKey, decl: ComptimeValueDeclaration}>,
 };
 
-function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeValueNamespace {
+function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeValueNamespace {
     const block: AnalysisBlock = emptyBlock();
     const arrEntry = blockAppend(block, {expr: "comptime:ns_list_init", pos});
-    let locked = false;
-    analyzeBlock(env, {type: "void", pos: compilerPos()}, pos, src, block, {
+    const env = analyzeBlock(rootEnv, {type: "void", pos: compilerPos()}, pos, src, block, {
         analyzeBind(env, [lhs, op, rhs], block): AnalysisResult {
             const key = analyze(env, {type: "key", pos: compilerPos()}, lhs.pos, lhs.items, block);
             if (key.type.type !== "key") throw new Error("unreachable");
@@ -108,7 +114,7 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
     arrValue.locked = true;
     return {
         kind: "namespace",
-        getString(env, pos, field, block) {
+        getString(accessEnv, pos, field, block) {
             const value = arrValue.registered.get(field);
             if (value) {
                 throwErr(env, pos, "todo get registered field");
@@ -117,7 +123,7 @@ function analyzeNamespace(env: Env, pos: TokenPosition, src: SyntaxNode[]): Comp
                 [pos, "namespace declared here"],
             ]);
         },
-        getSymbol(env, pos, childt, field, outerBlock): AnalysisResult | undefined {
+        getSymbol(accessEnv, pos, childt, field, outerBlock): AnalysisResult | undefined {
             const value = arrValue.registered.get(field);
             if (value) {
                 const result = getDeclaration(env, childt, value.decl);
@@ -178,10 +184,11 @@ function analyzeDeclaration(outerEnv: Env, ast: ComptimeValueAst): AnalysisResul
     analyze(env, childt, value.ast.pos, value.ast.ast, block);
 }
 */
-function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: SyntaxNode[], block: AnalysisBlock, cfg: {
+function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src: SyntaxNode[], block: AnalysisBlock, cfg: {
     analyzeBind(env: Env, b2: Binary2, block: AnalysisBlock): AnalysisResult,
-}): AnalysisResult {
-    const container = readContainer(env, pos, src);
+}): Env {
+    const container = readContainer(rootEnv, pos, src);
+    const env = container.env;
     
     for (const line of container.lines) {
         // execute lines
@@ -195,8 +202,7 @@ function analyzeBlock(env: Env, slot: ComptimeType, pos: TokenPosition, src: Syn
         }
     }
 
-
-    return {type: {type: "void", pos: pos}, value: {kind: "void"}};
+    return env;
 }
 export type ComptimeTypeVoid = {type: "void", pos: TokenPosition};
 export type ComptimeTypeKey = {
@@ -393,6 +399,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
                     args,
                     body: {kind: "ast", ast: expr.items, pos: expr.pos},
                     cachedBlock: null,
+                    env,
                 },
                 pos: expr.pos,
             },
@@ -434,6 +441,7 @@ type ComptimeValueFn = {
         args: Destructure,
         body: ComptimeValueAst,
         cachedBlock: {block: AnalysisBlock, value: RuntimeValue} | "inprogress" | null,
+        env: Env,
     },
     pos: TokenPosition,
 };
@@ -457,7 +465,8 @@ export function analyzeDestructure(env: Env, destructure: Destructure, value: Ru
         return env;
     } else throwErr(env, destructure.extract.pos, `TODO destructure block ${destructure.extract.kind}:${printers.destructure.dump(destructure, 3)}`)
 }
-export function compileFunction(env: Env, fn: ComptimeValueFn): {block: AnalysisBlock, value: RuntimeValue} {
+export function compileFunction(rootEnv: Env, fn: ComptimeValueFn): {block: AnalysisBlock, value: RuntimeValue} {
+    const env = fn.internal.env;
     if (fn.internal.cachedBlock === "inprogress") throwErr(env, fn.pos, "Compilation loop");
     if (fn.internal.cachedBlock) return fn.internal.cachedBlock;
     fn.internal.cachedBlock = "inprogress";
@@ -497,10 +506,13 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
     } else if (ast.kind === "ident" && ast.identTag === "normal") {
         const value = env.scope.bindings.get(ast.str);
         if (!value) throwErr(env, ast.pos, "not defined in scope: "+ast.str);
-        if (!value.lazy(env)) throwErr(env, ast.pos, "not defined in scope: "+ast.str, [
+        if (value.kind === "error") throwErr(env, ast.pos, "not defined in scope: "+ast.str, [
+            [value.pos, "errored here"],
+        ]);
+        if (value.kind === "removed") throwErr(env, ast.pos, "not defined in scope: "+ast.str, [
             [value.pos, "removed here"],
         ]);
-        throwErr(env, ast.pos, "todo access ident: "+ast.str);
+        return value.lazy(env);
     }
     throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
 }
@@ -523,12 +535,8 @@ function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: T
 // we could parse into
 // brackets [ bindings = [key, value][], lines = [] ]
 
-type ReadBinding = {
-    pos: TokenPosition,
-    value: SyntaxNode[],
-};
 type ReadContainer = {
-    bindings: Map<string, ReadBinding>,
+    env: Env,
     lines: {items: SyntaxNode[], pos: TokenPosition}[],
 };
 export type Destructure = {
@@ -597,8 +605,12 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
 }
 function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadContainer {
     const lines = readBinary(env, pos, src, "sep");
+    const subscope: Scope = {
+        ...env.scope,
+        bindings: new Map(env.scope.bindings),
+    }
     const res: ReadContainer = {
-        bindings: new Map(),
+        env: {...env, scope: subscope},
         lines: [],
     };
     for (const line of lines) {
@@ -610,15 +622,18 @@ function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadCon
                 const [lhs, op, rhs] = rb2;
                 const destructure = readDestructure(env, lhs.pos, lhs.items);
                 if (destructure.extract.kind !== "single_item") throwErr(env, destructure.extract.pos, "TODO: support destructure extract kind: " + destructure.extract.kind);
-                const prev = res.bindings.get(destructure.extract.name);
+                const prev = subscope.bindings.get(destructure.extract.name);
                 if (prev) {
                     // ideally we would prevent posting the error if the value is already an error
                     addErr(env, destructure.extract.pos, `Duplicate binding name ${destructure.extract.name}`, [
                         [prev.pos, "Previous definition here"],
                     ]);
-                    res.bindings.set(destructure.extract.name, {pos: prev.pos, value: [{kind: "err", pos: prev.pos}]});
+                    subscope.bindings.set(destructure.extract.name, {pos: prev.pos, kind: "error"});
                 } else {
-                    res.bindings.set(destructure.extract.name, {pos: op.pos, value: rhs!.items});
+                    subscope.bindings.set(destructure.extract.name, {pos: op.pos, kind: "valid", lazy(env) {
+                        throwErr(env, op.pos, "TODO resolve lazy");
+                        // res.bindings.set(destructure.extract.name, {pos: op.pos, value: rhs!.items});
+                    }});
                 }
             } else {
                 // found non-binding
