@@ -385,14 +385,13 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
                 pos: expr.pos,
             },
         };
-    }
-    
-    if (index === 0) {
+    } else if (expr.kind === "block" && expr.tag === "colon_call") {
+        const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
+        const lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
+        throwErr(env, expr.pos, "TODO analyzeSuffix colon_call");
+    } else if (index === 0) {
         return analyzeBase(env, slot, expr, block);
     } else {
-        // const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
-        // const lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
-        // return analyzeSuffix(env, slot, lhs, expr, block);
         throwErr(env, expr.pos, "TODO analyzeSuffix: "+expr.kind+printers.astNode.dumpList([expr], 2));
     }
 }
