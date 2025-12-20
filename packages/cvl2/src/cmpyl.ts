@@ -3,6 +3,10 @@ import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockT
 import { isAbsolute, relative } from "path";
 import { printers } from "./printers";
 
+/*
+todo: we may need to split up 'env' and 'scope'
+*/
+
 class PositionedError extends Error {
     e: TokenizationError;
     constructor(e: TokenizationError) {
@@ -10,6 +14,7 @@ class PositionedError extends Error {
         this.e = e;
     }
 }
+export class ConsumedError extends Error {}
 function compilerPos(): TokenPosition {
     return {fyl: "compiler", lyn: 0, col: 0, idx: 0};
 }
@@ -57,11 +62,12 @@ function importFile(filename: string, contents: string) {
 
 export type Binding = {
     kind: "valid",
-    lazy(env: Env): AnalysisResult,
     pos: TokenPosition,
+    decl: ComptimeValueDeclaration,
 } | {
     kind: "error",
     pos: TokenPosition,
+    consumed: ConsumedErrorToken,
 } | {
     kind: "removed",
     pos: TokenPosition,
@@ -126,7 +132,7 @@ function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): 
         getSymbol(accessEnv, pos, childt, field, outerBlock): AnalysisResult | undefined {
             const value = arrValue.registered.get(field);
             if (value) {
-                const result = getDeclaration(env, childt, value.decl);
+                const result = getDeclaration(env, value.decl);
                 return result;
                 // return {value: {kind: "optional", some: result.value}, type: {type: "optional", some: result.type}};
             }
@@ -136,20 +142,19 @@ function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): 
 }
 type ComptimeValueDeclaration = {
     ast: ComptimeValueAst,
-    env: Env,
-    valueCache: {match: Map<symbol, unknown>, result: ComptimeAnalysisResult}[],
-    _tmpValueCache?: "inprogress" | ComptimeAnalysisResult,
+    valueCache: {match: Map<symbol, unknown>, result: AnalysisResult}[],
+    _tmpValueCache?: "inprogress" | AnalysisResult,
 };
 export function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
-    return {ast, env, valueCache: []};
+    return {ast, valueCache: []};
 }
-export function getDeclaration(env: Env, slott: ComptimeType, decl: ComptimeValueDeclaration): ComptimeAnalysisResult {
+export function getDeclaration(env: Env, decl: ComptimeValueDeclaration): AnalysisResult {
     if (decl._tmpValueCache === "inprogress") throwErr(env, decl.ast.pos, "analysis cycle");
     if (decl._tmpValueCache) return decl._tmpValueCache;
     decl._tmpValueCache = "inprogress";
     const block: AnalysisBlock = emptyBlock();
-    const result = analyze(decl.env, slott, decl.ast.pos, decl.ast.ast, block);
-    const evald = comptimeEval(decl.env, block, result.value, decl.ast.pos);
+    const result = analyze(decl.ast.env, {type: "unknown", pos: compilerPos()}, decl.ast.pos, decl.ast.ast, block);
+    const evald = comptimeEval(decl.ast.env, block, result.value, decl.ast.pos);
     decl._tmpValueCache = {type: result.type, value: evald};
     return decl._tmpValueCache;
 }
@@ -257,6 +262,7 @@ export type ComptimeValueAst = {
     kind: "ast",
     ast: SyntaxNode[],
     pos: TokenPosition,
+    env: Env,
     // TODO: some env stuff in here (ie scope)
 };
 
@@ -300,13 +306,6 @@ export type AnalysisResult = {
     type: ComptimeType,
     value: RuntimeValue,
 };
-export type ComptimeAnalysisResult = {
-    // TODO:
-    // - remove narrow in types
-    // - return the comptime value here if it is known, else the block idx
-    type: ComptimeType,
-    value: ComptimeValue,
-};
 type BlockIdx = number & {__is_block_idx: true};
 function blockAppend(block: AnalysisBlock, instr: AnalysisLine): RuntimeValueRuntime {
     block.lines.push(instr);
@@ -323,7 +322,7 @@ function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: A
 }
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
     if (slot.type === "ast") {
-        const value: ComptimeValueAst = {kind: "ast", ast: ast, pos};
+        const value: ComptimeValueAst = {kind: "ast", ast: ast, env, pos};
         return {type: {
             type: "ast",
             pos: pos,
@@ -397,9 +396,8 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
                 kind: "fn",
                 internal: {
                     args,
-                    body: {kind: "ast", ast: expr.items, pos: expr.pos},
+                    body: {kind: "ast", ast: expr.items, env, pos: expr.pos},
                     cachedBlock: null,
-                    env,
                 },
                 pos: expr.pos,
             },
@@ -441,7 +439,6 @@ type ComptimeValueFn = {
         args: Destructure,
         body: ComptimeValueAst,
         cachedBlock: {block: AnalysisBlock, value: RuntimeValue} | "inprogress" | null,
-        env: Env,
     },
     pos: TokenPosition,
 };
@@ -466,7 +463,7 @@ export function analyzeDestructure(env: Env, destructure: Destructure, value: Ru
     } else throwErr(env, destructure.extract.pos, `TODO destructure block ${destructure.extract.kind}:${printers.destructure.dump(destructure, 3)}`)
 }
 export function compileFunction(rootEnv: Env, fn: ComptimeValueFn): {block: AnalysisBlock, value: RuntimeValue} {
-    const env = fn.internal.env;
+    const env = fn.internal.body.env;
     if (fn.internal.cachedBlock === "inprogress") throwErr(env, fn.pos, "Compilation loop");
     if (fn.internal.cachedBlock) return fn.internal.cachedBlock;
     fn.internal.cachedBlock = "inprogress";
@@ -506,13 +503,11 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
     } else if (ast.kind === "ident" && ast.identTag === "normal") {
         const value = env.scope.bindings.get(ast.str);
         if (!value) throwErr(env, ast.pos, "not defined in scope: "+ast.str);
-        if (value.kind === "error") throwErr(env, ast.pos, "not defined in scope: "+ast.str, [
-            [value.pos, "errored here"],
-        ]);
+        if (value.kind === "error") throwConsumedErr(value.consumed);
         if (value.kind === "removed") throwErr(env, ast.pos, "not defined in scope: "+ast.str, [
             [value.pos, "removed here"],
         ]);
-        return value.lazy(env);
+        return getDeclaration(env, value.decl);
     }
     throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
 }
@@ -625,15 +620,18 @@ function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadCon
                 const prev = subscope.bindings.get(destructure.extract.name);
                 if (prev) {
                     // ideally we would prevent posting the error if the value is already an error
-                    addErr(env, destructure.extract.pos, `Duplicate binding name ${destructure.extract.name}`, [
+                    const tok = addErr(env, destructure.extract.pos, `Duplicate binding name ${destructure.extract.name}`, [
                         [prev.pos, "Previous definition here"],
                     ]);
-                    subscope.bindings.set(destructure.extract.name, {pos: prev.pos, kind: "error"});
+                    subscope.bindings.set(destructure.extract.name, {pos: prev.pos, kind: "error", consumed: tok});
                 } else {
-                    subscope.bindings.set(destructure.extract.name, {pos: op.pos, kind: "valid", lazy(env) {
-                        throwErr(env, op.pos, "TODO resolve lazy");
-                        // res.bindings.set(destructure.extract.name, {pos: op.pos, value: rhs!.items});
-                    }});
+                    
+                    subscope.bindings.set(destructure.extract.name, {pos: op.pos, kind: "valid", decl: createDeclaration(env, {
+                        kind: "ast",
+                        ast: rhs!.items,
+                        pos: rhs!.pos,
+                        env,
+                    })});
                 }
             } else {
                 // found non-binding
@@ -673,11 +671,17 @@ function readBinary(env: Env, pos: TokenPosition, src: SyntaxNode[], kw: OpTag):
     });
 }
 type Notes = [pos: TokenPosition | undefined, msg: string][];
+export type ConsumedErrorToken = {__is_consumed_error: true};
+export function throwConsumedErr(consumed: ConsumedErrorToken): never {
+    // indicates the error has already been thrown and there is no purpose to throw it again
+    throw new ConsumedError();
+}
 export function throwErr(env: Env | undefined, pos: TokenPosition | undefined, msg: string, notes?: Notes, style?: TokenizationErrorStyle): never {
     throw new PositionedError(getErr(env, pos, msg, notes, style))
 }
-export function addErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: Notes): void {
-    env.errors.push(getErr(env, pos, msg, notes))
+export function addErr(env: Env, pos: TokenPosition | undefined, msg: string, notes?: Notes): ConsumedErrorToken {
+    env.errors.push(getErr(env, pos, msg, notes));
+    return {__is_consumed_error: true};
 }
 export function getErr(env: Env | undefined, pos: TokenPosition | undefined, msg: string, notes?: Notes, style: TokenizationErrorStyle = "error"): TokenizationError {
     const constructionLocation = parseErrorStack(new Error()).filter(line => line.text !== "getErr" && line.text !== "throwErr");
