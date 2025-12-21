@@ -169,6 +169,7 @@ export interface OperatorToken {
     kind: "op";
     pos: TokenPosition;
     op: string;
+    opTag: OpTag;
 }
 
 export interface OperatorSegmentToken {
@@ -501,6 +502,7 @@ export function tokenize(source: Source): TokenizationResult {
                 kind: "op",
                 pos: start,
                 op: currentToken,
+                opTag: targetCommaBlock.tag as OpTag,
             }, {
                 kind: "opSeg",
                 pos: start,
@@ -542,8 +544,9 @@ interface RenderConfigAdisp {
 
 
 interface RenderConfig {
-    indent: string;
+    indent: string,
     reveal: boolean,
+    highlight: boolean,
 }
 function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], indent: number, depth: number, isTopLevel: boolean): string {
     let result = "";
@@ -582,25 +585,31 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], in
     if (config.reveal) result += revealColor + ">" + colors.reset;
     return result;
 }
+function hl(config: RenderConfig, str: string, hl: string) {
+    return config.highlight && str.trim() ? `${hl}${str}${colors.reset}` : str;
+}
 function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: number, depth: number, isTopLevel: boolean): string {
     if (entity.kind === "block") {
-        return entity.start + renderEntityPrettyList(config, entity.items, indent, depth, false) + entity.end.replaceAll("<in_string>", "");
+        return hl(config, entity.start, bracketHighlights[entity.tag] ?? highlights.todo) +
+            renderEntityPrettyList(config, entity.items, indent, depth, false) +
+            hl(config, entity.end.replaceAll("<in_string>", ""), bracketHighlights[entity.tag] ?? highlights.todo);
     } else if (entity.kind === "binary") {
         return renderEntityPrettyList(config, entity.items, indent, depth, isTopLevel);
     } else if (entity.kind === "ws") {
         if(entity.nl) return "";
         return " ";
     } else if (entity.kind === "ident") {
-        return entity.identTagRaw + entity.str;
+        return hl(config, entity.identTagRaw, identPrefixHighlights[entity.identTag] ?? highlights.todo)
+            + hl(config, entity.str, identValueHighlights[entity.identTag] ?? highlights.todo);
     } else if (entity.kind === "op") {
         if(entity.op === "\n") return "";
-        return entity.op;
+        return hl(config, entity.op, opHighlights[entity.opTag] ?? highlights.todo);
     }else if (entity.kind === "opSeg") {
         throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
     }else if (entity.kind === "strSeg") {
-        return entity.str;
+        return hl(config, entity.str, highlights.string);
     }else if (entity.kind === "raw") {
-        return entity.raw;
+        return hl(config, entity.raw, rawHighlights[entity.tag] ?? highlights.todo);
     } else {
         return `%TODO<${(entity as {kind: string}).kind}>%`;
     }
@@ -635,8 +644,41 @@ export const colors = {
     hidden: "\x1b[8m",
     strikethrough: "\x1b[9m",
 };
-const styles = {
+const highlights = {
     string: colors.green,
+    keyword: colors.blue,
+    brackets: colors.black,
+    todo: colors.red,
+    builtin: colors.cyan,
+    ident: "",
+};
+const rawHighlights: Partial<Record<RawTag, string>> = {
+    return: highlights.keyword,
+    discard: highlights.brackets,
+};
+const opHighlights: Partial<Record<OpTag, string>> = {
+    def: highlights.keyword,
+    pub: highlights.keyword,
+    assign: highlights.keyword,
+    sep: highlights.brackets,
+    var: highlights.keyword,
+};
+const bracketHighlights: Partial<Record<BracketTag, string>> = {
+    string: highlights.brackets,
+    colon_call: highlights.brackets,
+    map: highlights.brackets,
+    list: highlights.brackets,
+    code: highlights.brackets,
+    arrow_fn: highlights.keyword,
+};
+const identPrefixHighlights: Partial<Record<IdentifierTag, string>> = {
+    access: highlights.brackets,
+    builtin: highlights.builtin,
+};
+const identValueHighlights: Partial<Record<IdentifierTag, string>> = {
+    normal: highlights.ident,
+    access: highlights.ident,
+    builtin: highlights.builtin,
 };
 const rainbow = [colors.red, colors.yellow, colors.green, colors.cyan, colors.blue, colors.magenta];
 
@@ -680,8 +722,8 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 }
 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
-    const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false }, tokenizationResult.result, 0, 0, true);
-    const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true }, tokenizationResult.result, 0, 0, true);
+    const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false, highlight: true }, tokenizationResult.result, 0, 0, true);
+    const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true, highlight: false }, tokenizationResult.result, 0, 0, true);
     const adisp = printers.astNode.dumpList(tokenizationResult.result);
     const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
     
