@@ -1,4 +1,4 @@
-import { type AnalysisBlock, type ComptimeType, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
+import { ComptimeValueFolderOrFile, type AnalysisBlock, type ComptimeType, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
 import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 type PrintCfg = {indent: string};
@@ -33,6 +33,13 @@ export class Adisp {
         if (color) this.res.push(color);
         this.res.push(msg);
         if (color) this.res.push(colors.reset);
+    }
+    putWithNl(msg: string, color?: string): void {
+        let i = 0;
+        for(const seg of msg.split("\n")) {
+            if (i++) this.putNewline();
+            this.put(seg, color);
+        }
     }
     putNewline(): void {
         this.put("\n");
@@ -255,6 +262,27 @@ export const printers = {
         } else {
             adisp.put(` %%TODO%%`);
             adisp.putSrc(entity.pos);
+        }
+    }),
+    folderOrFile: new SinglePrinter<ComptimeValueFolderOrFile>((adisp, entity) => {
+        if (entity.value instanceof Uint8Array) {
+            adisp.put("file", colors.blue);
+            using _ = adisp.indent();
+            adisp.putNewline();
+            adisp.putWithNl(new TextDecoder().decode(entity.value), colors.green);
+        } else {
+            adisp.put("folder", colors.blue);
+            using _ = adisp.indent();
+            for (const [key, value] of Object.entries(entity.value)) {
+                adisp.putNewline();
+                adisp.put(JSON.stringify(key), colors.green);
+                adisp.put(" = ");
+                adisp.putInline(printers.folderOrFile, value);
+            }
+            if (Object.entries(entity.value).length === 0) {
+                adisp.putNewline();
+                adisp.put("*empty folder*", colors.black);
+            }
         }
     }),
 };

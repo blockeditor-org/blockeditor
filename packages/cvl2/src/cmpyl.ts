@@ -48,8 +48,8 @@ function importFile(filename: string, contents: string) {
         const mainFn = ns.getSymbol(env, rootPos, mainSymbolChildType, mainSymbolSymbol, block);
         if (!mainFn) throwErr(env, rootPos, "expected main fn");
         const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, (env, slot, pos, block) => ({value: {kind: "void"}, type: {type: "void", pos: compilerPos()}}), block);
-        const result = getComptime(env, "void", comptimeEval(env, block, callResult.value, rootPos), rootPos);
-        throwErr(env, rootPos, "todo handle result");
+        const result = getComptime(env, "folder_or_file", comptimeEval(env, block, callResult.value, rootPos), rootPos);
+        console.log("got result" + printers.folderOrFile.dump(result));
     }catch(err) {
         handleErr(env, err);
     }
@@ -225,6 +225,9 @@ export type ComptimeTypeType = {
 export type ComptimeTypeNamespace = {
     type: "namespace", pos: TokenPosition,
 };
+export type ComptimeTypeUint8Array = {
+    type: "uint8array", pos: TokenPosition,
+};
 export type ComptimeTypeFn = {
     type: "fn",
     pos: TokenPosition,
@@ -245,7 +248,7 @@ export type ComptimeTypeOptional = {
     pos: TokenPosition,
     some: ComptimeType,
 };
-export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple | ComptimeTypeOptional;
+export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple | ComptimeTypeOptional;
 
 export type ComptimeValueKey = {
     kind: "key",
@@ -294,6 +297,10 @@ export type AnalysisLine = {
 } | {
     expr: "args",
     pos: TokenPosition,
+} | {
+    expr: "comptime:file_create",
+    pos: TokenPosition,
+    value: RuntimeValue,
 };
 export type AnalysisBlock = {
     lines: AnalysisLine[],
@@ -308,6 +315,7 @@ export type AnalysisResult = {
 };
 type BlockIdx = number & {__is_block_idx: true};
 function blockAppend(block: AnalysisBlock, instr: AnalysisLine): RuntimeValueRuntime {
+    // TODO: if the instr has all comptime args, we may choose to evaluate at comptime instead
     block.lines.push(instr);
     return {kind: "runtime", idx: (block.lines.length - 1) as unknown as BlockIdx, validate: block.validate};
 }
@@ -455,7 +463,15 @@ type ComptimeValueOptional = {
     kind: "optional",
     some?: ComptimeValue,
 };
-export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional;
+export type ComptimeValueFolderOrFile = {
+    kind: "folder_or_file",
+    value: Uint8Array | Record<string, ComptimeValueFolderOrFile>,
+};
+export type ComptimeValueUint8Array = {
+    kind: "uint8array",
+    value: Uint8Array,
+};
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueFolderOrFile | ComptimeValueUint8Array;
 export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
 export type RuntimeValueRuntime = {
     kind: "runtime",
@@ -535,11 +551,25 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         ]);
         return getDeclaration(env, value.decl);
     } else if (ast.kind === "block" && ast.tag === "string") {
-        throwErr(env, ast.pos, "TODO string in slot: " + printers.type.dump(slot, 3));
+        if (slot.type === "folder_or_file") {
+            const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
+            const addedValue = blockAppend(block, {expr: "comptime:file_create", pos: ast.pos, value: str.value});
+            return {type: {type: "folder_or_file", pos: compilerPos()}, value: addedValue};
+        } else if (slot.type === "uint8array") {
+            if (ast.items.length !== 1) throwErr(env, ast.pos, "TODO str items len != 1 todo" + printers.astNode.dumpList(ast.items, 3), [], "todo");
+            const it0 = ast.items[0]!;
+            if (it0.kind !== "strSeg") throwErr(env, ast.pos, "TODO str item 0 ! strSeg" + printers.astNode.dump(it0, 3));
+            // if it has aggrandizements it might need runtime construction unless they're all comptime
+            // although if it's a uint8array you can't runtime construct the aggrandizements so maybe it should just error
+            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(it0.str)}};
+        } else {
+            throwErr(env, ast.pos, "TODO string in slot: " + printers.type.dump(slot, 3));
+        }
     } else {
         throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
     }
 }
+const enc = new TextEncoder();
 function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: AnalysisResult, block: AnalysisBlock): AnalysisResult {
     // TODO: this is only for comptime-known accesses but we should support runtime-known accesses
     if (obj.type.type === "namespace") {
