@@ -1,4 +1,6 @@
-#builtin.main .= () => std.File: "hello"
+#builtin.main .= () => std.c.compile: [
+    .main .= std.c.fn: (argc: std.c.ptr(std.c.ptr(std.c.char)), argv: std.c.int) => std.c.int: 25
+]
 
 demo :: std.Folder [
     "a.txt" .= std.File: "hello"

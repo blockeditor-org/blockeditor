@@ -500,45 +500,60 @@ export function compileFunction(rootEnv: Env, fn: ComptimeValueFn): {block: Anal
     fn.internal.cachedBlock = {block, value: result.value};
     return fn.internal.cachedBlock;
 }
-function builtinNamespace(env: Env): ComptimeValueNamespace {
+
+type NsdFn = (env: Env, pos: TokenPosition, block: AnalysisBlock) => AnalysisResult;
+type NsDescriptor = {[key: string]: NsDescriptor | NsdFn};
+const builtinNamespaceDescriptor: NsDescriptor = {
+    main(env, pos, block): AnalysisResult {
+        return {type: mainSymbolType, value: mainSymbolValue};
+    },
+    std: {
+        File(env, pos, block): AnalysisResult {
+            return {type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}};
+        },
+        Folder(env, pos, block): AnalysisResult {
+            return {type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}};
+        },
+        c: {
+            compile(env, pos, block): AnalysisResult {
+                throwErr(env, pos, "TODO c.compile");
+            },
+        },
+    },
+};
+
+function constructNamespace(descriptor: NsDescriptor, route: string): ComptimeValueNamespace {
+    const entries = new Map<string, NsdFn | ComptimeValueNamespace>();
+    for (const [k, v] of Object.entries(descriptor)) {
+        if (typeof v === "function") {
+            entries.set(k, v);
+        } else {
+            entries.set(k, constructNamespace(v, `${route}.${k}`));
+        }
+    }
+
     return {
         kind: "namespace",
         getString(env, pos, field, block): AnalysisResult {
-            if (field === "main") {
-                return {type: mainSymbolType, value: mainSymbolValue};
-            } else if (field === "std") {
-                return {type: {type: "namespace", pos: compilerPos()}, value: stdNamespace(env)};
-            } else {
-                throwErr(env, pos, "builtin does not have field: "+field);
-            }
+            const val = entries.get(field);
+            if (!val) throwErr(env, pos, `namespace ${route} does not have field: ${field}`);
+            if (typeof val === "function") return val(env, pos, block);
+            return {type: {type: "namespace", pos: compilerPos()}, value: val};
         },
         getSymbol(env, pos, field, block): AnalysisResult | undefined {
             return undefined;
         },
     };
 }
-function stdNamespace(env: Env): ComptimeValueNamespace {
-    return {
-        kind: "namespace",
-        getString(env, pos, field, block): AnalysisResult {
-            if (field === "File" || field === "Folder") {
-                return {type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}};
-            } else {
-                throwErr(env, pos, "std does not have field: "+field);
-            }
-        },
-        getSymbol(env, pos, field, block): AnalysisResult | undefined {
-            return undefined;
-        },
-    };
-}
+
+const builtinNamespace = constructNamespace(builtinNamespaceDescriptor, "#bulitin");
 function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: AnalysisBlock): AnalysisResult {
     if (ast.kind === "ident" && ast.identTag === "builtin") {
         if (ast.str === "builtin") {
             return {type: {
                 type: "namespace",
                 pos: compilerPos(),
-            }, value: builtinNamespace(env)};
+            }, value: builtinNamespace};
         }else {
             throwErr(env, ast.pos, "unexpected builtin: #"+ast.str);
         }
