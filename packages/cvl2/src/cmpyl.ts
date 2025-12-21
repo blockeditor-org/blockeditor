@@ -577,6 +577,10 @@ const builtinNamespaceDescriptor = d.ns({
         Folder: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}}),
         c: d.ns({
             compile: d.ns({}, {call(env, slot, pos, arg, block) {
+                // now what we need to do is update the scope to set the compile target to c,
+                // then readContainer the arg,
+                //   - arguably shouldn't be readContainer, instead we should analyze it as a type 'c:exports'
+                // then analyze all the entries and emit???
                 throwErr(env, pos, "TODO call #builtin.std.c.compile");
             }}),
         }),
