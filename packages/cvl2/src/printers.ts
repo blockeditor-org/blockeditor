@@ -1,4 +1,4 @@
-import { ComptimeValueFolderOrFile, type AnalysisBlock, type ComptimeType, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
+import { type ComptimeValueFolderOrFile, type AnalysisBlock, type ComptimeType, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
 import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 type PrintCfg = {indent: string};
