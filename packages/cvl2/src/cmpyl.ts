@@ -47,7 +47,7 @@ function importFile(filename: string, contents: string) {
         const ns = analyzeNamespace(env, {fyl: filename, lyn: 0, col: 0, idx: 0}, tokenized.result);
         const mainFn = ns.getSymbol(env, rootPos, mainSymbolChildType, mainSymbolSymbol, block);
         if (!mainFn) throwErr(env, rootPos, "expected main fn");
-        const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, (env, slot, pos, block) => ({value: {kind: "void"}, type: {type: "void", pos: compilerPos()}}), block);
+        const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, {pos: compilerPos(), ast: [{kind: "raw", pos: compilerPos(), raw: "", tag: "void"}]}, block);
         const result = getComptime(env, "folder_or_file", comptimeEval(env, block, callResult.value, rootPos), rootPos);
         console.log("got result" + printers.folderOrFile.dump(result));
     }catch(err) {
@@ -91,6 +91,8 @@ type ComptimeValueNamespace = {
     kind: "namespace",
     getString(env: Env, pos: TokenPosition, field: string, block: AnalysisBlock): AnalysisResult,
     getSymbol(env: Env, pos: TokenPosition, keychild: ComptimeType, field: symbol, block: AnalysisBlock): AnalysisResult | undefined,
+    call?: BuiltinFn,
+    pos: TokenPosition,
 };
 
 export type NsFields = {
@@ -138,6 +140,7 @@ function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): 
             }
             return undefined;
         },
+        pos,
     };
 }
 type ComptimeValueDeclaration = {
@@ -322,17 +325,24 @@ function blockAppend(block: AnalysisBlock, instr: AnalysisLine): RuntimeValueRun
 function castValue(to: ComptimeType, result: AnalysisResult): AnalysisResult {
     return {type: to, value: result.value};
 }
-function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: AnalysisResult, getArg: (env: Env, slot: ComptimeType, pos: TokenPosition, block: AnalysisBlock) => AnalysisResult, block: AnalysisBlock): AnalysisResult {
+function analyzeCall(env: Env, slot: ComptimeType, pos: TokenPosition, method: AnalysisResult, argIn: {pos: TokenPosition, ast: SyntaxNode[]}, block: AnalysisBlock): AnalysisResult {
+    // alternatively: access property [call_symbol] on type
     if (method.type.type === "fn") {
-        const arg = getArg(env, method.type.arg, pos, block);
+        const arg = analyze(env, method.type.arg, argIn.pos, argIn.ast, block);
         return {
             value: blockAppend(block, {expr: "call", method: method.value, arg: arg.value, pos}),
             type: method.type.ret,
         };
     } else if (method.type.type === "type") {
         const slotType = getComptime(env, "type", method.value, pos);
-        const result = getArg(env, slotType.type, pos, block);
+        const result = analyze(env, slotType.type, argIn.pos, argIn.ast, block);
         return castValue(slotType.type, result);
+    } else if (method.type.type === "namespace") {
+        const val = getComptime(env, "namespace", method.value, pos);
+        if (val.call == null) throwErr(env, pos, "this namespace does not support call", [
+            [val.pos, "defined here"],
+        ]);
+        return val.call(env, slot, pos, argIn, block);
     } else throwErr(env, pos, "not supported call type: " + method.type.type);
 }
 function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNode[], block: AnalysisBlock): AnalysisResult {
@@ -420,9 +430,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
     } else if (expr.kind === "block" && expr.tag === "colon_call") {
         const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
         const lhs = analyzeSub(env, unknownSlot, rootSlot, ast, index - 1, block);
-        return analyzeCall(env, slot, expr.pos, lhs, (env, slot, pos, block) => {
-            return analyze(env, slot, pos, expr.items, block);
-        }, block);
+        return analyzeCall(env, slot, expr.pos, lhs, {pos: expr.pos, ast: expr.items}, block);
     } else if (index === 0) {
         return analyzeBase(env, slot, expr, block);
     } else {
@@ -459,6 +467,7 @@ type ComptimeValueFn = {
     },
     pos: TokenPosition,
 };
+type BuiltinFn = (env: Env, slot: ComptimeType, pos: TokenPosition, arg: {pos: TokenPosition, ast: SyntaxNode[]}, block: AnalysisBlock) => AnalysisResult;
 type ComptimeValueOptional = {
     kind: "optional",
     some?: ComptimeValue,
@@ -509,8 +518,16 @@ abstract class Descriptor {
         return this._cache ??= this.constructImpl(env, route);
     }
 }
+type NsDescOpts = {
+    call?: BuiltinFn,
+};
 class NamespaceDescriptor extends Descriptor {
-    constructor(public entries: Map<string, Descriptor | NsAccessorFn>) {super()}
+    pos: TokenPosition;
+    constructor(public entries: Map<string, Descriptor | NsAccessorFn>, public opts: NsDescOpts) {
+        super();
+        const defloc = parseErrorStack(new Error()).filter(line => line.text !== "new NamespaceDescriptor" && line.text !== "ns" && line.text !== "throwErr");
+        this.pos = defloc[0]?.pos ?? compilerPos();
+    }
     constructImpl(env: Env, route: string): AnalysisResult {
         const results: Map<string, AnalysisResult> = new Map();
         for (const [key, value] of this.entries) {
@@ -529,6 +546,8 @@ class NamespaceDescriptor extends Descriptor {
             getSymbol(env, pos, field, block): AnalysisResult | undefined {
                 return undefined;
             },
+            call: this.opts.call,
+            pos: this.pos,
         }};
     }
 }
@@ -546,8 +565,8 @@ const d = {
     raw(cb: NsdFn | AnalysisResult): CustomDescriptor {
         return new CustomDescriptor(cb);
     },
-    ns(fields: Record<string, Descriptor | NsAccessorFn>): NamespaceDescriptor {
-        return new NamespaceDescriptor(new Map(Object.entries(fields)));
+    ns(fields: Record<string, Descriptor | NsAccessorFn>, opts: NsDescOpts = {}): NamespaceDescriptor {
+        return new NamespaceDescriptor(new Map(Object.entries(fields)), opts);
     },
 };
 
@@ -557,9 +576,9 @@ const builtinNamespaceDescriptor = d.ns({
         File: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}}),
         Folder: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}}),
         c: d.ns({
-            compile: (env, pos, block) => {
-                throwErr(env, pos, "TODO c.compile");
-            },
+            compile: d.ns({}, {call(env, slot, pos, arg, block) {
+                throwErr(env, pos, "TODO call #builtin.std.c.compile");
+            }}),
         }),
     }),
 });
@@ -594,6 +613,8 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         } else {
             throwErr(env, ast.pos, "TODO string in slot: " + printers.type.dump(slot, 3));
         }
+    } else if (ast.kind === "raw" && ast.tag === "void") {
+        return {type: {type: "void", pos: compilerPos()}, value: {kind: "void"}};
     } else {
         throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
     }

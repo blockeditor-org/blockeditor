@@ -18,7 +18,7 @@ type Config = {
 
 export type OpTag = "sep" | "def" | "pub" | "var" | "assign" | "";
 export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "";
-export type RawTag = "return" | "discard";
+export type RawTag = "return" | "discard" | "void";
 export type IdentifierTag = "normal" | "access" | "builtin";
 
 const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>> = {
