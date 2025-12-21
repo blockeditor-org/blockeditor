@@ -1,5 +1,5 @@
-#builtin.main .= () => std.c.compile: [
-    .main .= std.c.fn: (argc: std.c.ptr(std.c.ptr(std.c.char)), argv: std.c.int) => std.c.int: 25
+#builtin.main .= () => c.compile: [
+    .main .= c.fn: (argc: c.ptr(c.ptr(c.char)), argv: c.int) => c.int: 25
 ]
 
 demo :: std.Folder [
@@ -12,5 +12,6 @@ demo :: std.Folder [
     }
 ]
 std :: #builtin.std
+c :: std.c
 
 other :: void, other2::void;other3::void

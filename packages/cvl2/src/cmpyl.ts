@@ -672,16 +672,17 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
     }
     throwErr(env, ident.pos, `Unsupported kind for destructuring: ${ident.kind}`);
 }
-function readContainer(env: Env, pos: TokenPosition, src: SyntaxNode[]): ReadContainer {
-    const lines = readBinary(env, pos, src, "sep");
+function readContainer(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): ReadContainer {
+    const lines = readBinary(rootEnv, pos, src, "sep");
     const subscope: Scope = {
-        ...env.scope,
-        bindings: new Map(env.scope.bindings),
+        ...rootEnv.scope,
+        bindings: new Map(rootEnv.scope.bindings),
     }
     const res: ReadContainer = {
-        env: {...env, scope: subscope},
+        env: {...rootEnv, scope: subscope},
         lines: [],
     };
+    const env = res.env;
     for (const line of lines) {
         try {
             if (line.items.length === 0) continue;
