@@ -651,7 +651,8 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             if (it0.kind !== "strSeg") throwErr(env, ast.pos, "TODO str item 0 ! strSeg" + printers.astNode.dump(it0, 3));
             // if it has aggrandizements it might need runtime construction unless they're all comptime
             // although if it's a uint8array you can't runtime construct the aggrandizements so maybe it should just error
-            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(it0.str)}};
+            assert(!it0.unescapedString.includes("\\"), env, ast.pos, "TODO string escaping");
+            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(it0.unescapedString)}};
         } else {
             throwErr(env, ast.pos, "TODO string in slot: " + printers.type.dump(slot, 3));
         }

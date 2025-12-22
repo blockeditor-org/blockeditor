@@ -11,7 +11,6 @@ type Config = {
     precStr: string,
     close?: string,
     autoOpen?: boolean,
-    setMode?: TokenizerMode,
     opTag?: OpTag,
     bracketTag?: BracketTag,
 };
@@ -29,6 +28,7 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
         ")": {style: "close", bracketTag: "list"},
         "}": {style: "close", bracketTag: "code"},
         "]": {style: "close", bracketTag: "map"},
+        "\\(": {style: "open", close: ")", bracketTag: "list"},
     },
     sep: {
         ",": {style: "join", opTag: "sep"},
@@ -50,12 +50,15 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
         "=": {style: "join", opTag: "assign"},
     },
     string: {
-        "\"": {style: "open", close: "<in_string>\"", setMode: "in_string", bracketTag: "string"},
-        "<in_string>\"": {style: "close", setMode: "regular", bracketTag: "string"},
+        "\"": {style: "open", close: "<in_string>\"", bracketTag: "string"},
+        "<in_string>\"": {style: "close", bracketTag: "string"},
     },
 
     // TODO: "=>"
     // TODO: "\()" as style open prec 0 autoclose display{open: "(", close: ")"}
+};
+const setModes: Partial<Record<BracketTag, TokenizerMode>> = {
+    string: "in_string",
 };
 const rawconfig: Record<string, RawTag> = {
     "->": "return",
@@ -198,7 +201,7 @@ export interface BinaryExpressionToken {
 export interface StrSegToken {
     kind: "strSeg";
     pos: TokenPosition;
-    str: string;
+    unescapedString: string;
 }
 
 export interface RawToken {
@@ -253,16 +256,16 @@ export function tokenize(source: Source): TokenizationResult {
     let currentSyntaxNodes: SyntaxNode[] = [];
     const errors: TokenizationError[] = [];
     const parseStack: TokenizerStackItem[] = [];
-    let mode: TokenizerMode = "regular";
 
     parseStack.push({ pos: source.getPosition(), char: "", indent: -1, val: currentSyntaxNodes, prec: 0 });
 
     while (source.peek()) {
         const start = source.getPosition();
-        const firstChar = source.take();
         
         let currentToken: string;
+        const mode: TokenizerMode = setModes[(parseStack[parseStack.length - 1]?.tag ?? "") as BracketTag] ?? "regular";
         if(mode === "regular") {
+            const firstChar = source.take();
             if (firstChar.match(identifierRegex)) {
                 while (source.peek().match(identifierRegex)) {
                     source.take();
@@ -317,27 +320,46 @@ export function tokenize(source: Source): TokenizationResult {
                 currentToken = firstChar;
             }
         }else if(mode === "in_string") {
-            if ((!"\"\\".includes(firstChar))) {
-                while (!"\"\\".includes(source.peek())) {
+            let request: TokenPosition | null = null;
+            while (true) {
+                const peek = source.peek();
+                if (peek === "\\") {
+                    const revert = source.getPosition();
+                    source.take();
+                    const escFirst = source.peek();
+                    if (escFirst === "\"" || escFirst === "\\") {
+                        source.take();
+                    } else if (escFirst === "(") {
+                        source.take();
+                        request = source.getPosition();
+                        currentToken = "\\(";
+                        source.revert(revert);
+                        break;
+                    }
+                } else if (peek === "\"") {
+                    const revert = source.getPosition();
+                    source.take();
+                    request = source.getPosition();
+                    currentToken = "<in_string>\"";
+                    source.revert(revert);
+                    break;
+                } else {
                     source.take();
                 }
-                currentSyntaxNodes.push({
-                    kind: "strSeg",
-                    pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
-                    str: source.text.substring(start.idx, source.currentIndex),
-                });
+            }
+            currentSyntaxNodes.push({
+                kind: "strSeg",
+                pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                unescapedString: source.text.substring(start.idx, source.currentIndex),
+            });
+            if (request) {
+                source.revert(request);
+            } else {
                 continue;
             }
-
-            if(firstChar === "\"") {
-                currentToken = "<in_string>\"";
-            }else if(firstChar === "\\") {
-                throw new Error("TODO impl in_string '\\' char");
-            }else currentToken = firstChar;
         }else throw new Error("TODO mode: "+mode);
 
         const cfg = config[currentToken];
-        if(cfg?.setMode) mode = cfg.setMode;
         if (cfg?.style === "open") {
             const newBlockItems: SyntaxNode[] = [];
             currentSyntaxNodes.push({
@@ -355,6 +377,7 @@ export function tokenize(source: Source): TokenizationResult {
                 val: newBlockItems,
                 prec: cfg.prec,
                 autoClose: cfg.close == null,
+                tag: cfg.bracketTag,
             });
             currentSyntaxNodes = newBlockItems;
         } else if (cfg?.style === "close") {
@@ -607,7 +630,7 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: nu
     }else if (entity.kind === "opSeg") {
         throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
     }else if (entity.kind === "strSeg") {
-        return hl(config, entity.str, highlights.string);
+        return hl(config, entity.unescapedString, highlights.string);
     }else if (entity.kind === "raw") {
         return hl(config, entity.raw, rawHighlights[entity.tag] ?? highlights.todo);
     } else {

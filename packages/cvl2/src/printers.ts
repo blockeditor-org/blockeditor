@@ -254,7 +254,7 @@ export const printers = {
             adisp.put(` ${(jstr.match(/^"[a-zA-Z_][a-zA-Z0-9_]*"$/) ?  jstr.slice(1, -1) : "#" + jstr)}`, colors.blue);
             adisp.putSrc(entity.pos);
         } else if(entity.kind === "strSeg") {
-            adisp.put(` ${JSON.stringify(entity.str)}`, colors.green);
+            adisp.put(` ${JSON.stringify(entity.unescapedString)}`, colors.green);
             adisp.putSrc(entity.pos);
         } else if(entity.kind === "raw") {
             adisp.put(` ${entity.tag}`);

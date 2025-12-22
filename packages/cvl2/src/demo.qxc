@@ -15,3 +15,9 @@ std :: #builtin.std
 c :: std.c
 
 other :: void, other2::void;other3::void
+
+syntax :: [
+    "str\(demo)\(demo2)\(demo3)ng\"abc\n\x00."
+    "\(demo4)"
+    ""
+]
