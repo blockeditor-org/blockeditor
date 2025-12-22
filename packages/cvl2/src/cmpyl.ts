@@ -7,23 +7,49 @@ import { printers } from "./printers";
 todo: we may need to split up 'env' and 'scope'
 */
 
+type ComptimeEnvSets = [symbol, unknown][];
+function allMatch(sets: ComptimeEnvSets, actual: Map<symbol, unknown>): boolean {
+    for (const [key, value] of sets) {
+        if (actual.get(key) !== value) {
+            return false;
+        }
+    }
+    return true;
+}
 class PerComptimeScopeCache<T> {
-    entries: {sets: [symbol, unknown][], value: T}[] = [];
-    progress: [symbol, unknown][] | null = null;
-
-    _wip: {some: T} | null = null;
+    entries: {sets: ComptimeEnvSets, value: T}[] = [];
+    progress: ComptimeEnvSets[] = [];
     constructor() {}
     get(env: Env, cb: (env: Env) => T) {
-        if (this._wip) return this._wip.some;
-        this._wip = {some: cb(env)};
-        return this._wip.some;
-
         // 1. check if the comptime env matches any of the cache entries
-        // -> does ? return
+        for (const entry of this.entries) {
+            // -> does ? return
+            if (allMatch(entry.sets, env.scope.comptime)) return entry.value;
+        }
+
+        // check progress
+        if (this.progress.some(p => allMatch(p, env.scope.comptime))) {
+            throwErr(env, compilerPos(), "cyclic");
+        }
+
         // 2. mark progress = [...Object.entries(env)]
+        const progressAppend: ComptimeEnvSets = [...env.scope.comptime.entries()];
+        this.progress.push(progressAppend);
+
         // 3. update env so it will tell us about any comptime fields which are accessed
-        // 3. call cb
-        // 4. update env so accessing any comptime envs past this call are an errro
+        // (todo)
+
+        // 4. call cb
+        const result = cb(env);
+
+        // 5. update env so accessing any comptime envs past this call are an errro
+        // (todo)
+
+        // 6. remove the progress, save the result
+        this.progress.splice(this.progress.indexOf(progressAppend), 1);
+        // (todo: the used sets)
+        this.entries.push({sets: [], value: result});
+        return result;
     }
 }
 
