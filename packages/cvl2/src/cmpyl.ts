@@ -648,11 +648,11 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         } else if (slot.type === "uint8array") {
             if (ast.items.length !== 1) throwErr(env, ast.pos, "TODO str items len != 1 todo" + printers.astNode.dumpList(ast.items, 3), [], "todo");
             const it0 = ast.items[0]!;
-            if (it0.kind !== "strSeg") throwErr(env, ast.pos, "TODO str item 0 ! strSeg" + printers.astNode.dump(it0, 3));
+            if (it0.kind !== "raw" || it0.tag !== "string") throwErr(env, ast.pos, "TODO str item 0 ! raw string" + printers.astNode.dump(it0, 3));
             // if it has aggrandizements it might need runtime construction unless they're all comptime
             // although if it's a uint8array you can't runtime construct the aggrandizements so maybe it should just error
-            assert(!it0.unescapedString.includes("\\"), env, ast.pos, "TODO string escaping");
-            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(it0.unescapedString)}};
+            assert(!it0.raw.includes("\\"), env, ast.pos, "TODO string escaping");
+            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(it0.raw)}};
         } else {
             throwErr(env, ast.pos, "TODO string in slot: " + printers.type.dump(slot, 3));
         }
@@ -771,10 +771,11 @@ function readContainer(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): Rea
         lines: [],
     };
     const env = res.env;
-    for (const line of lines) {
+    for (const lineRaw of lines) {
         try {
-            if (line.items.length === 0) continue;
-            const rb2 = readBinary2(env, line.pos, line.items, "def");
+            const lineItems = trimWs(lineRaw.items);
+            if (lineItems.length === 0) continue;
+            const rb2 = readBinary2(env, lineRaw.pos, lineItems, "def");
             if (rb2) {
                 // found binding
                 const [lhs, op, rhs] = rb2;
@@ -798,7 +799,7 @@ function readContainer(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): Rea
                 }
             } else {
                 // found non-binding
-                res.lines.push(line);
+                res.lines.push(lineRaw);
             }
         } catch (err) {
             handleErr(env, err);
@@ -807,7 +808,7 @@ function readContainer(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): Rea
     return res;
 }
 function trimWs(src: SyntaxNode[]): SyntaxNode[] {
-    return src.filter(itm => itm.kind !== "ws");
+    return src.filter(itm => !((itm.kind === "ws") || (itm.kind === "block" && itm.tag === "inline_comment")));
 }
 type Binary2 = [OperatorSegmentToken, OperatorToken, OperatorSegmentToken];
 function readBinary2(env: Env, pos: TokenPosition, rootSrc: SyntaxNode[], kw: OpTag): Binary2 | undefined {

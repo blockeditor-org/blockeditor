@@ -4,7 +4,7 @@ function unreachable(): never {
     throw new Error("unreachable");
 }
 
-type TokenizerMode = "regular" | "in_string";
+type TokenizerMode = "regular" | "in_string" | "inline_comment";
 type Config = {
     style: "open" | "close" | "join",
     prec: number,
@@ -16,8 +16,8 @@ type Config = {
 };
 
 export type OpTag = "sep" | "def" | "pub" | "var" | "assign" | "";
-export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "";
-export type RawTag = "return" | "discard" | "void";
+export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "inline_comment" | "";
+export type RawTag = "return" | "discard" | "void" | "string" | "comment";
 export type IdentifierTag = "normal" | "access" | "builtin";
 
 const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>> = {
@@ -52,6 +52,7 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
     string: {
         "\"": {style: "open", close: "<in_string>\"", bracketTag: "string"},
         "<in_string>\"": {style: "close", bracketTag: "string"},
+        "//": {style: "open", bracketTag: "inline_comment"},
     },
 
     // TODO: "=>"
@@ -59,6 +60,7 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
 };
 const setModes: Partial<Record<BracketTag, TokenizerMode>> = {
     string: "in_string",
+    inline_comment: "inline_comment",
 };
 const rawconfig: Record<string, RawTag> = {
     "->": "return",
@@ -198,12 +200,6 @@ export interface BinaryExpressionToken {
     items: SyntaxNode[];
 }
 
-export interface StrSegToken {
-    kind: "strSeg";
-    pos: TokenPosition;
-    unescapedString: string;
-}
-
 export interface RawToken {
     kind: "raw";
     pos: TokenPosition;
@@ -216,7 +212,7 @@ export interface ErrToken {
     pos: TokenPosition;
 }
 
-export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | RawToken | ErrToken;
+export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | RawToken | ErrToken;
 
 interface TokenizerStackItem {
     pos: TokenPosition,
@@ -348,9 +344,36 @@ export function tokenize(source: Source): TokenizationResult {
                 }
             }
             currentSyntaxNodes.push({
-                kind: "strSeg",
+                kind: "raw",
                 pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
-                unescapedString: source.text.substring(start.idx, source.currentIndex),
+                raw: source.text.substring(start.idx, source.currentIndex),
+                tag: "string",
+            });
+            if (request) {
+                source.revert(request);
+            } else {
+                continue;
+            }
+        } else if (mode === "inline_comment") {
+            let request: TokenPosition | null = null;
+            while (true) {
+                const peek = source.peek();
+                if (peek === "\n") {
+                    const revert = source.getPosition();
+                    source.take();
+                    request = source.getPosition();
+                    currentToken = "\n";
+                    source.revert(revert);
+                    break;
+                } else {
+                    source.take();
+                }
+            }
+            currentSyntaxNodes.push({
+                kind: "raw",
+                pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                raw: source.text.substring(start.idx, source.currentIndex),
+                tag: "comment",
             });
             if (request) {
                 source.revert(request);
@@ -629,8 +652,6 @@ function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: nu
         return hl(config, entity.op, opHighlights[entity.opTag] ?? highlights.todo);
     }else if (entity.kind === "opSeg") {
         throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
-    }else if (entity.kind === "strSeg") {
-        return hl(config, entity.unescapedString, highlights.string);
     }else if (entity.kind === "raw") {
         return hl(config, entity.raw, rawHighlights[entity.tag] ?? highlights.todo);
     } else {
@@ -673,11 +694,14 @@ const highlights = {
     brackets: colors.black,
     todo: colors.red,
     builtin: colors.cyan,
+    comment: colors.yellow,
     ident: "",
 };
 const rawHighlights: Partial<Record<RawTag, string>> = {
     return: highlights.keyword,
     discard: highlights.brackets,
+    string: highlights.string,
+    comment: highlights.comment,
 };
 const opHighlights: Partial<Record<OpTag, string>> = {
     def: highlights.keyword,
@@ -693,6 +717,7 @@ const bracketHighlights: Partial<Record<BracketTag, string>> = {
     list: highlights.brackets,
     code: highlights.brackets,
     arrow_fn: highlights.keyword,
+    inline_comment: highlights.brackets,
 };
 const identPrefixHighlights: Partial<Record<IdentifierTag, string>> = {
     access: highlights.brackets,

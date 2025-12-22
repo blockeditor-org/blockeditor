@@ -1,4 +1,5 @@
 #builtin.main .= () => c.compile: [
+    // sample comment
     .main .= c.fn: (argc: c.ptr(c.ptr(c.char)), argv: c.int) => c.int: 25
 ]
 
@@ -20,4 +21,5 @@ syntax :: [
     "str\(demo)\(demo2)\(demo3)ng\"abc\n\x00."
     "\(demo4)"
     ""
+    // comment
 ]
