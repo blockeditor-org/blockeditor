@@ -21,6 +21,9 @@ class PerComptimeScopeCache<T> {
         // 1. check if the comptime env matches any of the cache entries
         // -> does ? return
         // 2. mark progress = [...Object.entries(env)]
+        // 3. update env so it will tell us about any comptime fields which are accessed
+        // 3. call cb
+        // 4. update env so accessing any comptime envs past this call are an errro
     }
 }
 
@@ -164,21 +167,18 @@ function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): 
 }
 type ComptimeValueDeclaration = {
     ast: ComptimeValueAst,
-    valueCache: {match: Map<symbol, unknown>, result: AnalysisResult}[],
-    _tmpValueCache?: "inprogress" | AnalysisResult,
+    cache: PerComptimeScopeCache<AnalysisResult>,
 };
 export function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
-    return {ast, valueCache: []};
+    return {ast, cache: new PerComptimeScopeCache()};
 }
 export function getDeclaration(env: Env, decl: ComptimeValueDeclaration): AnalysisResult {
-    if (decl._tmpValueCache === "inprogress") throwErr(env, decl.ast.pos, "analysis cycle");
-    if (decl._tmpValueCache) return decl._tmpValueCache;
-    decl._tmpValueCache = "inprogress";
-    const block: AnalysisBlock = emptyBlock();
-    const result = analyze(decl.ast.env, {type: "unknown", pos: compilerPos()}, decl.ast.pos, decl.ast.ast, block);
-    const evald = comptimeEval(decl.ast.env, block, result.value, decl.ast.pos);
-    decl._tmpValueCache = {type: result.type, value: evald};
-    return decl._tmpValueCache;
+    return decl.cache.get(env, (env: Env): AnalysisResult => {
+        const block: AnalysisBlock = emptyBlock();
+        const result = analyze(decl.ast.env, {type: "unknown", pos: compilerPos()}, decl.ast.pos, decl.ast.ast, block);
+        const evald = comptimeEval(decl.ast.env, block, result.value, decl.ast.pos);
+        return {type: result.type, value: evald};
+    });
 }
 type AnalyzedBlock = {env: Env, result: AnalysisResult};
 function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src: SyntaxNode[], block: AnalysisBlock, cfg: {
