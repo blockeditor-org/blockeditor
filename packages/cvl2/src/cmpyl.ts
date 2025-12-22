@@ -7,6 +7,23 @@ import { printers } from "./printers";
 todo: we may need to split up 'env' and 'scope'
 */
 
+class PerComptimeScopeCache<T> {
+    entries: {sets: [symbol, unknown][], value: T}[] = [];
+    progress: [symbol, unknown][] | null = null;
+
+    _wip: {some: T} | null = null;
+    constructor() {}
+    get(env: Env, cb: (env: Env) => T) {
+        if (this._wip) return this._wip.some;
+        this._wip = {some: cb(env)};
+        return this._wip.some;
+
+        // 1. check if the comptime env matches any of the cache entries
+        // -> does ? return
+        // 2. mark progress = [...Object.entries(env)]
+    }
+}
+
 class PositionedError extends Error {
     e: TokenizationError;
     constructor(e: TokenizationError) {
@@ -84,6 +101,8 @@ export type Env = {
 export type TargetEnv = {
     kind: "comptime"
 } | {
+    kind: "c"
+} | {
     kind: "todo",
 };
 const target_env_symbol = Symbol("target_env");
@@ -104,7 +123,7 @@ export type NsFields = {
 function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeValueNamespace {
     const block: AnalysisBlock = emptyBlock();
     const arrEntry = blockAppend(block, {expr: "comptime:ns_list_init", pos});
-    const env = analyzeBlock(rootEnv, {type: "void", pos: compilerPos()}, pos, src, block, {
+    const {env} = analyzeBlock(rootEnv, {type: "void", pos: compilerPos()}, pos, src, block, {
         analyzeBind(env, [lhs, op, rhs], block): AnalysisResult {
             const key = analyze(env, {type: "key", pos: compilerPos()}, lhs.pos, lhs.items, block);
             if (key.type.type !== "key") throw new Error("unreachable");
@@ -161,40 +180,10 @@ export function getDeclaration(env: Env, decl: ComptimeValueDeclaration): Analys
     decl._tmpValueCache = {type: result.type, value: evald};
     return decl._tmpValueCache;
 }
-/*
-function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
-
-}
-function analyzeDeclaration(outerEnv: Env, ast: ComptimeValueAst): AnalysisResult {
-    / *
-    - first we check the cache to see if we have already analyzed the declaraion for our set of env values
-    - no? analyze:
-      - set analyzing=true
-      - while analyzing, track which env values are used
-      - when complete, store the mapping of (only referenced env values) -> (resolved)
-      - we can also enable postType.
-    - issues:
-      - consider:
-        ```
-        a :: env(1) b
-        b :: env == 1 ? env(0) b : 0
-
-        analyze a (env=1)
-        - analyze b (env=1)
-          - analyze b (env=0) <- we're already analyzing!
-      - we will need to just allow this and dependency loops are just like "stack overflow while analyzing x"
-        ```
-    * /
-    const block: AnalysisBlock = emptyBlock();
-    // set (type, ast) => (resolving)
-    // set (type, ast) => (resolved type)
-    // set (type, ast) => (resolved value)
-    analyze(env, childt, value.ast.pos, value.ast.ast, block);
-}
-*/
+type AnalyzedBlock = {env: Env, result: AnalysisResult};
 function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src: SyntaxNode[], block: AnalysisBlock, cfg: {
     analyzeBind(env: Env, b2: Binary2, block: AnalysisBlock): AnalysisResult,
-}): Env {
+}): AnalyzedBlock {
     const container = readContainer(rootEnv, pos, src);
     const env = container.env;
     
@@ -206,11 +195,13 @@ function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src:
             cfg.analyzeBind(env, rb2, block);
         } else {
             // analyze the line
+            // TODO: if '->', use the specified slot. else, use void.
+            () => slot;
             analyze(env, {type: "void", pos: line.pos}, line.pos, line.items, block);
         }
     }
 
-    return env;
+    return {env, result: {type: {type: "void", pos: pos}, value: {kind: "void"}}};
 }
 export type ComptimeTypeVoid = {type: "void", pos: TokenPosition};
 export type ComptimeTypeKey = {
@@ -251,7 +242,11 @@ export type ComptimeTypeOptional = {
     pos: TokenPosition,
     some: ComptimeType,
 };
-export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple | ComptimeTypeOptional;
+export type ComptimeTypeCExports = {
+    type: "c:exports",
+    pos: TokenPosition,
+};
+export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple | ComptimeTypeOptional | ComptimeTypeCExports;
 
 export type ComptimeValueKey = {
     kind: "key",
@@ -480,7 +475,11 @@ export type ComptimeValueUint8Array = {
     kind: "uint8array",
     value: Uint8Array,
 };
-export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueFolderOrFile | ComptimeValueUint8Array;
+export type ComptimeValueCExports = {
+    kind: "c:exports",
+    value: Map<string, ComptimeValue>,
+};
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueFolderOrFile | ComptimeValueUint8Array | ComptimeValueCExports;
 export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
 export type RuntimeValueRuntime = {
     kind: "runtime",
@@ -511,6 +510,7 @@ export function compileFunction(rootEnv: Env, fn: ComptimeValueFn): {block: Anal
 }
 
 abstract class Descriptor {
+    cache = new PerComptimeScopeCache<AnalysisResult>();
     _cache: AnalysisResult | null = null;
     abstract constructImpl(env: Env, route: string): AnalysisResult;
     construct(env: Env, route: string): AnalysisResult {
@@ -576,8 +576,20 @@ const builtinNamespaceDescriptor = d.ns({
         File: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}}),
         Folder: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}}),
         c: d.ns({
-            compile: d.ns({}, {call(env, slot, pos, arg, block) {
+            compile: d.ns({}, {call(envIn, slot, pos, argAst, block) {
                 // now what we need to do is update the scope to set the compile target to c,
+                const env = {
+                    ...envIn,
+                    scope: {
+                        ...envIn.scope,
+                        comptime: new Map(envIn.scope.comptime),
+                    },
+                };
+                env.scope.comptime.set(target_env_symbol, {
+                    kind: "c",
+                } satisfies TargetEnv);
+                const argRes = analyze(env, {type: "c:exports", pos}, argAst.pos, argAst.ast, block);
+                const argCt = getComptime(env, "c:exports", argRes.value, pos);
                 // then readContainer the arg,
                 //   - arguably shouldn't be readContainer, instead we should analyze it as a type 'c:exports'
                 // then analyze all the entries and emit???
@@ -619,6 +631,16 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         }
     } else if (ast.kind === "raw" && ast.tag === "void") {
         return {type: {type: "void", pos: compilerPos()}, value: {kind: "void"}};
+    } else if (ast.kind === "block" && ast.tag === "map") {
+        if (slot.type === "c:exports") {
+            const {env: envInner} = analyzeBlock(env, slot, ast.pos, ast.items, block, {analyzeBind(env: Env, b2: Binary2, block: AnalysisBlock): AnalysisResult {
+                throwErr(env, b2[1].pos, "TODO handle individual export");
+            }});
+            throwErr(envInner, ast.pos, "TODO return out exports");
+
+        } else {
+            throwErr(env, ast.pos, "TODO map in slot: "+printers.type.dump(slot, 3));
+        }
     } else {
         throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
     }
