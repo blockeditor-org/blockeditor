@@ -1,5 +1,5 @@
 import { type ComptimeValueFolderOrFile, type AnalysisBlock, type ComptimeType, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
-import { colors, type SyntaxNode, type TokenPosition } from "./cvl2";
+import { colors, highlights, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 type PrintCfg = {indent: string};
 export class Adisp {
@@ -137,9 +137,9 @@ export const printers = {
                 adisp.putNewline();
                 adisp.put("arg: ");
                 adisp.putInline(printers.runtimeValue, expr.arg);
-            }else if(expr.expr === "comptime:ns_list_init") {
+            }else if(expr.expr === "comptime:kv_list_init") {
                 adisp.putSrc(expr.pos);
-            }else if(expr.expr === "comptime:ns_list_append") {
+            }else if(expr.expr === "comptime:kv_list_append") {
                 adisp.putSrc(expr.pos);
                 using _ = adisp.indent();
                 adisp.putNewline();
@@ -255,6 +255,7 @@ export const printers = {
             adisp.putSrc(entity.pos);
         } else if(entity.kind === "raw") {
             adisp.put(` ${entity.tag}`);
+            adisp.put(` ${JSON.stringify(entity.raw)}`, highlights.string);
             adisp.putSrc(entity.pos);
         } else {
             adisp.put(` %%TODO%%`);

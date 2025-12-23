@@ -688,7 +688,7 @@ export const colors = {
     hidden: "\x1b[8m",
     strikethrough: "\x1b[9m",
 };
-const highlights = {
+export const highlights = {
     string: colors.green,
     keyword: colors.blue,
     brackets: colors.black,
