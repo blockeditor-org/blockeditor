@@ -1,6 +1,6 @@
 #builtin.main .= () => c.compile: [
     // sample comment
-    .main .= c.fn: (argc: c.ptr(c.ptr(c.char)), argv: c.int) => c.int: 25
+    "main" .= c.fn: (argc: c.ptr(c.ptr(c.char)), argv: c.int) => c.int: 25
 ]
 
 demo :: std.Folder [

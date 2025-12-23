@@ -2,6 +2,7 @@ import { comptimeEval, getComptime } from "./cte";
 import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenizationErrorStyle, type TokenPosition, type TraceEntry } from "./cvl2";
 import { isAbsolute, relative } from "path";
 import { printers } from "./printers";
+import { validateCName } from "./backend/c";
 
 /*
 todo: we may need to split up 'env' and 'scope'
@@ -144,14 +145,14 @@ type ComptimeValueNamespace = {
 };
 
 export type NsFields = {
-    kind: "ns_fields",
+    kind: "comptime:kv_fields",
     locked: boolean,
-    registered: Map<string | symbol, {key: ComptimeValueKey, decl: ComptimeValueDeclaration}>,
+    entries: {pos: TokenPosition, key: ComptimeValue, value: ComptimeValue}[],
 };
 
 function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): ComptimeValueNamespace {
     const block: AnalysisBlock = emptyBlock();
-    const arrEntry = blockAppend(block, {expr: "comptime:ns_list_init", pos});
+    const arrEntry = blockAppend(block, {expr: "comptime:kv_list_init", pos});
     const {env} = analyzeBlock(rootEnv, {type: "void", pos: compilerPos()}, pos, src, block, {
         analyzeBind(env, [lhs, op, rhs], block): AnalysisResult {
             const key = analyze(env, {type: "key", pos: compilerPos()}, lhs.pos, lhs.items, block);
@@ -162,16 +163,32 @@ function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): 
             const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
             // insert an instruction to append the value to the children list
             // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
-            const ret = blockAppend(block, {expr: "comptime:ns_list_append", pos: op.pos, list: arrEntry, key: key.value, value: value.value});
+            const ret = blockAppend(block, {expr: "comptime:kv_list_append", pos: op.pos, list: arrEntry, key: key.value, value: value.value});
             return {type: {type: "void", pos: compilerPos()}, value: ret};
         },
     });
-    const arrValue = getComptime(env, "ns_fields", comptimeEval(env, block, arrEntry, pos), pos);
+    const arrValue = getComptime(env, "comptime:kv_fields", comptimeEval(env, block, arrEntry, pos), pos);
     arrValue.locked = true;
+
+    const registered = new Map<string | symbol, {kind: "ok", decl: ComptimeValueDeclaration, pos: TokenPosition} | {kind: "error", etok: ConsumedErrorToken, pos: TokenPosition}>();
+    for (const entry of arrValue.entries) {
+        const key = getComptime(env, "key", entry.key, entry.pos);
+        const value = getComptime(env, "ast", entry.value, entry.pos);
+        if (registered.has(key.key)) {
+            const prevdef = registered.get(key.key)!;
+            const etok = addErr(env, entry.pos, "duplicate definition", [
+                [prevdef.pos, "previous definition here"],
+            ]);
+            registered.set(key.key, {kind: "error", etok, pos: prevdef.pos});
+            continue;
+        }
+        registered.set(key.key, {kind: "ok", decl: createDeclaration(env, value), pos: entry.pos});
+    }
+
     return {
         kind: "namespace",
         getString(accessEnv, pos, field, block) {
-            const value = arrValue.registered.get(field);
+            const value = registered.get(field);
             if (value) {
                 throwErr(env, pos, "todo get registered field");
             }
@@ -180,8 +197,9 @@ function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): 
             ]);
         },
         getSymbol(accessEnv, pos, childt, field, outerBlock): AnalysisResult | undefined {
-            const value = arrValue.registered.get(field);
+            const value = registered.get(field);
             if (value) {
+                if (value.kind === "error") throwConsumedErr(value.etok);
                 const result = getDeclaration(env, value.decl);
                 return result;
                 // return {value: {kind: "optional", some: result.value}, type: {type: "optional", some: result.type}};
@@ -193,13 +211,13 @@ function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): 
 }
 type ComptimeValueDeclaration = {
     ast: ComptimeValueAst,
-    cache: PerComptimeScopeCache<AnalysisResult>,
+    cache: PerComptimeScopeCache<ComptimeAnalysisResult>,
 };
 export function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
     return {ast, cache: new PerComptimeScopeCache()};
 }
-export function getDeclaration(env: Env, decl: ComptimeValueDeclaration): AnalysisResult {
-    return decl.cache.get(env, (env: Env): AnalysisResult => {
+export function getDeclaration(env: Env, decl: ComptimeValueDeclaration): ComptimeAnalysisResult {
+    return decl.cache.get(env, (env: Env): ComptimeAnalysisResult => {
         const block: AnalysisBlock = emptyBlock();
         const result = analyze(decl.ast.env, {type: "unknown", pos: compilerPos()}, decl.ast.pos, decl.ast.ast, block);
         const evald = comptimeEval(decl.ast.env, block, result.value, decl.ast.pos);
@@ -300,10 +318,10 @@ export type ComptimeValueAst = {
 // (it will assemble a plan for each unsupported instruction that uses the lowest cost list of
 //  transforms to convert to a supported instruction)
 export type AnalysisLine = {
-    expr: "comptime:ns_list_init",
+    expr: "comptime:kv_list_init",
     pos: TokenPosition,
 } | {
-    expr: "comptime:ns_list_append",
+    expr: "comptime:kv_list_append",
     pos: TokenPosition,
     key: RuntimeValue,
     list: RuntimeValue,
@@ -336,6 +354,10 @@ export type AnalysisResult = {
     // - return the comptime value here if it is known, else the block idx
     type: ComptimeType,
     value: RuntimeValue,
+};
+export type ComptimeAnalysisResult = {
+    type: ComptimeType,
+    value: ComptimeValue,
 };
 type BlockIdx = number & {__is_block_idx: true};
 function blockAppend(block: AnalysisBlock, instr: AnalysisLine): RuntimeValueRuntime {
@@ -505,7 +527,11 @@ export type ComptimeValueCExports = {
     kind: "c:exports",
     value: Map<string, ComptimeValue>,
 };
-export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueFolderOrFile | ComptimeValueUint8Array | ComptimeValueCExports;
+export type ComptimeValueError = {
+    kind: "error",
+    etok: ConsumedErrorToken,
+};
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueFolderOrFile | ComptimeValueUint8Array | ComptimeValueCExports | ComptimeValueError;
 export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
 export type RuntimeValueRuntime = {
     kind: "runtime",
@@ -660,10 +686,57 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         return {type: {type: "void", pos: compilerPos()}, value: {kind: "void"}};
     } else if (ast.kind === "block" && ast.tag === "map") {
         if (slot.type === "c:exports") {
-            const {env: envInner} = analyzeBlock(env, slot, ast.pos, ast.items, block, {analyzeBind(env: Env, b2: Binary2, block: AnalysisBlock): AnalysisResult {
-                throwErr(env, b2[1].pos, "TODO handle individual export");
-            }});
-            throwErr(envInner, ast.pos, "TODO return out exports");
+            const exportsBlock: AnalysisBlock = emptyBlock();
+            const arrEntry = blockAppend(exportsBlock, {expr: "comptime:kv_list_init", pos: ast.pos});
+            const {env: envInner} = analyzeBlock(env, slot, ast.pos, ast.items, exportsBlock, {
+                analyzeBind(env: Env, [lhs, op, rhs]: Binary2, block: AnalysisBlock): AnalysisResult {
+                    const key = analyze(env, {type: "uint8array", pos: compilerPos()}, lhs.pos, lhs.items, block);
+                    const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
+                    // insert an instruction to append the value to the children list
+                    // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
+                    const ret = blockAppend(block, {expr: "comptime:kv_list_append", pos: op.pos, list: arrEntry, key: key.value, value: value.value});
+                    return {type: {type: "void", pos: compilerPos()}, value: ret};
+                    // 
+                }
+            });
+            const arrValue = getComptime(env, "comptime:kv_fields", comptimeEval(env, exportsBlock, arrEntry, ast.pos), ast.pos);
+            arrValue.locked = true;
+
+            const registered = new Map<string, {kind: "ok", decl: ComptimeValueDeclaration, pos: TokenPosition} | {kind: "error", etok: ConsumedErrorToken, pos: TokenPosition}>();
+            for (const entry of arrValue.entries) {
+                const rawKey = getComptime(env, "uint8array", entry.key, entry.pos);
+                const value = getComptime(env, "ast", entry.value, entry.pos);
+                const key = dec.decode(rawKey.value);
+                if (!validateCName(key)) {
+                    const etok = addErr(env, entry.pos, "invalid c identifier name");
+                    // registered.set(key, {kind: "error", etok, pos: entry.pos}); // skip this, we can't emit it
+                    continue;
+                }
+                if (registered.has(key)) {
+                    const prevdef = registered.get(key)!;
+                    const etok = addErr(env, entry.pos, "duplicate definition", [
+                        [prevdef.pos, "previous definition here"],
+                    ]);
+                    registered.set(key, {kind: "error", etok, pos: prevdef.pos});
+                    continue;
+                }
+                registered.set(key, {kind: "ok", decl: createDeclaration(env, value), pos: entry.pos});
+            }
+
+            // now convert to a Map<string, comptimevalue>? maybe?
+
+            const result: ComptimeValueCExports = {
+                kind: "c:exports",
+                value: new Map<string, ComptimeValue>(),
+            };
+            for (const [key, value] of registered) {
+                if (value.kind === "ok") {
+                    result.value.set(key, getDeclaration(env, value.decl).value);
+                } else {
+                    result.value.set(key, {kind: "error", etok: value.etok});
+                }
+            }
+            return {type: {type: "c:exports", pos: ast.pos}, value: result};
 
         } else {
             throwErr(env, ast.pos, "TODO map in slot: "+printers.type.dump(slot, 3));
@@ -673,6 +746,7 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
     }
 }
 const enc = new TextEncoder();
+const dec = new TextDecoder();
 function analyzeAccess(env: Env, slot: ComptimeType, obj: AnalysisResult, pos: TokenPosition, prop: AnalysisResult, block: AnalysisBlock): AnalysisResult {
     // TODO: this is only for comptime-known accesses but we should support runtime-known accesses
     if (obj.type.type === "namespace") {

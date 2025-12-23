@@ -741,7 +741,7 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 
         for (const entry of error.entries) {
             const { pos, style, message } = entry;
-            const color = style === 'error' ? colors.red : style === "note" ? colors.cyan : style === "todo" ? colors.blue : style === "warning" ? colors.yellow : colors.green;
+            const color = style === 'error' ? colors.red : style === "note" ? colors.cyan : style === "todo" ? colors.blue : style === "warning" ? colors.yellow : colors.brblack;
             const bold = style !== 'note' ? colors.bold : "";
 
             output += `${pos?.fyl ?? "??"}:${pos?.lyn ?? "??"}:${pos?.col ?? "??"}: ${color}${bold}${style}${colors.reset}: ${message}${colors.reset}\n`;

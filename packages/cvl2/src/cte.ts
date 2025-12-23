@@ -1,4 +1,4 @@
-import { assert, compileFunction, createDeclaration, throwErr, type AnalysisBlock, type ComptimeValue, type ComptimeValueFolderOrFile, type ComptimeValueUint8Array, type Env, type NsFields, type RuntimeValue } from "./cmpyl";
+import { assert, compileFunction, createDeclaration, throwConsumedErr, throwErr, type AnalysisBlock, type ComptimeValue, type ComptimeValueFolderOrFile, type ComptimeValueUint8Array, type Env, type NsFields, type RuntimeValue } from "./cmpyl";
 import { type TokenPosition } from "./cvl2";
 import { printers } from "./printers";
 
@@ -12,6 +12,8 @@ export function getComptime<K extends ComptimeValue["kind"]>(env: Env, k: K | nu
         }
         const q = runtime.results[v.idx]!;
         return getComptime<K>(env, k, q, pos);
+    } else if (k !== null && k !== "error" && v.kind === "error") {
+        throwConsumedErr(v.etok);
     } else if (k == null || v.kind === k) {
         return v as unknown as Extract<ComptimeValue, {kind: NoInfer<K>}>;
     } else {
@@ -28,24 +30,18 @@ export function comptimeEval(env: Env, block: AnalysisBlock, result: RuntimeValu
     const rt: RuntimeData = {block, results};
     for (let i = 0; i < block.lines.length; i += 1) {
         const instr = block.lines[i]!;
-        if (instr.expr === "comptime:ns_list_init") {
+        if (instr.expr === "comptime:kv_list_init") {
             results[i] = {
-                kind: "ns_fields",
+                kind: "comptime:kv_fields",
                 locked: false,
-                registered: new Map(),
+                entries: [],
             } satisfies NsFields;
-        } else if (instr.expr === "comptime:ns_list_append") {
-            const fields = getas("ns_fields", instr.list, instr.pos);
+        } else if (instr.expr === "comptime:kv_list_append") {
+            const fields = getas("comptime:kv_fields", instr.list, instr.pos);
             assert(!fields.locked, env, instr.pos);
-            const key = getas("key", instr.key, instr.pos);
-            const prevdef = fields.registered.get(key.key);
-            const ast = getas("ast", instr.value, instr.pos);
-            if (prevdef) {
-                throwErr(env, ast.pos, "already declared", [
-                    [prevdef.decl.ast.pos, "previous definition here"],
-                ]);
-            }
-            fields.registered.set(key.key, {key, decl: createDeclaration(env, ast)});
+            const key = getas(null, instr.key, instr.pos);
+            const value = getas(null, instr.value, instr.pos);
+            fields.entries.push({pos: instr.pos, key, value});
 
             results[i] = undefined;
         } else if (instr.expr === "call") {
