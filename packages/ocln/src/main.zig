@@ -198,7 +198,7 @@ test Map {
         var buffer: [64]u8 = undefined;
         const stderr = std.debug.lockStderrWriter(&buffer);
         defer std.debug.unlockStderrWriter();
-        @import("print.zig").print(stderr, path, &.{ .cfg = .detect(std.fs.File.stderr()) }) catch {};
+        @import("print.zig").print(stderr, path, &.{ .tty = .detect(std.fs.File.stderr()) }) catch {};
         stderr.writeByte('\n') catch {};
     }
 }
