@@ -43,17 +43,17 @@ export class Adisp {
     }
     putNewline(): void {
         this.put("\n");
-        this.put(this.cfg.indent.repeat(this.indentCount), colors.black);
+        this.put(this.cfg.indent.repeat(this.indentCount), colors.brblack);
     }
     putSrc(pos: TokenPosition) {
-        this.put(` · ${pos.fyl}:${pos.lyn}:${pos.col}`, colors.black);
+        this.put(` · ${pos.fyl}:${pos.lyn}:${pos.col}`, colors.brblack);
     }
 
     putCheckDepth(n?: number) {
         if (this.indentCount > this.depth) {
             this.putNewline();
-            this.put("...", colors.black);
-            if (n != null && n > 0) this.put(` ${n} item${n === 1 ? "" : "s"}`, colors.black);
+            this.put("...", colors.brblack);
+            if (n != null && n > 0) this.put(` ${n} item${n === 1 ? "" : "s"}`, colors.brblack);
             return true;
         }
         return false;
@@ -81,7 +81,7 @@ export class Adisp {
         using _ = this.indent();
         if (children.length === 0) {
             this.putNewline();
-            this.put("*no children*", colors.black);
+            this.put("*no children*", colors.brblack);
             return;
         }
         if (this.putCheckDepth(children.length)) return;
@@ -279,7 +279,7 @@ export const printers = {
             }
             if (Object.entries(entity.value).length === 0) {
                 adisp.putNewline();
-                adisp.put("*empty folder*", colors.black);
+                adisp.put("*empty folder*", colors.brblack);
             }
         }
     }),

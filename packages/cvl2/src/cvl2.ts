@@ -19,7 +19,7 @@ type Config = {
 export type OpTag = "sep" | "def" | "pub" | "var" | "assign" | "";
 export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "inline_comment" | "";
 export type RawTag = "return" | "discard" | "void" | "string" | "comment";
-export type IdentifierTag = "normal" | "access" | "builtin";
+export type IdentifierTag = "normal" | "access" | "builtin" | "number";
 
 const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>> = {
     paren: {
@@ -271,7 +271,7 @@ export function tokenize(source: Source): TokenizationResult {
                     kind: "ident",
                     pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                     str: source.text.substring(start.idx, source.currentIndex),
-                    identTag: "normal",
+                    identTag: firstChar.match(/^\d/) ? "number" : "normal",
                     identTagRaw: "",
                 });
                 continue;
@@ -639,6 +639,41 @@ export function unescapeString(env: Env, segment: string, segmentPos: TokenPosit
     }
     return result;
 }
+export function highlightString(config: RenderConfig, segment: string): string {
+    if (!segment.includes("\\")) return hl(config, segment, highlights.string);
+    let result = "";
+    let idx = 0;
+    while (true) {
+        let nextEscape = segment.indexOf("\\", idx);
+        if (nextEscape === -1) nextEscape = segment.length;
+        result += hl(config, segment.slice(idx, nextEscape), highlights.string);
+        idx = nextEscape;
+        if (segment[idx] !== "\\") break;
+        result += hl(config, segment[idx] ?? "", highlights.brackets);
+        idx += 1;
+        const def = unescapeDefs.get(segment[idx] ?? "");
+        if (def) {
+            result += hl(config, segment[idx] ?? "", def === segment[idx] ? highlights.string : highlights.number);
+            idx += 1;
+        } else if (segment[idx] === "x") {
+            result += hl(config, segment[idx] ?? "", highlights.keyword);
+            idx += 1;
+            result += hl(config, segment[idx] ?? "", highlights.number);
+            idx += 1;
+            result += hl(config, segment[idx] ?? "", highlights.number);
+        } else if (segment[idx] === "u") {
+            result += hl(config, segment[idx] ?? "", highlights.keyword);
+            idx += 1;
+            // TODO: highlight <brackets>\<keyword>u<brackets>{<number>0000<brackets>}<string>
+            // or <brackets>\<error>{ab!<reset>cdef
+            // - find the first char which is not A-Fa-f0-9 and mark error up to there unless it's close bracket
+        } else {
+            result += hl(config, segment[idx] ?? "", highlights.error);
+            idx += 1;
+        }
+    }
+    return result;
+}
 // TODO: impl highlightString()
 const unescapeDefs = new Map<string, string>(Object.entries({
     "n": "\n",
@@ -699,24 +734,25 @@ function hl(config: RenderConfig, str: string, hl: string) {
 }
 function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: number, depth: number, isTopLevel: boolean): string {
     if (entity.kind === "block") {
-        return hl(config, entity.start, bracketHighlights[entity.tag] ?? highlights.todo) +
+        return hl(config, entity.start, bracketHighlights[entity.tag] ?? highlights.error) +
             renderEntityPrettyList(config, entity.items, indent, depth, false) +
-            hl(config, entity.end.replaceAll("<in_string>", ""), bracketHighlights[entity.tag] ?? highlights.todo);
+            hl(config, entity.end.replaceAll("<in_string>", ""), bracketHighlights[entity.tag] ?? highlights.error);
     } else if (entity.kind === "binary") {
         return renderEntityPrettyList(config, entity.items, indent, depth, isTopLevel);
     } else if (entity.kind === "ws") {
         if(entity.nl) return "";
         return " ";
     } else if (entity.kind === "ident") {
-        return hl(config, entity.identTagRaw, identPrefixHighlights[entity.identTag] ?? highlights.todo)
-            + hl(config, entity.str, identValueHighlights[entity.identTag] ?? highlights.todo);
+        return hl(config, entity.identTagRaw, identPrefixHighlights[entity.identTag] ?? highlights.error)
+            + hl(config, entity.str, identValueHighlights[entity.identTag] ?? highlights.error);
     } else if (entity.kind === "op") {
         if(entity.op === "\n") return "";
-        return hl(config, entity.op, opHighlights[entity.opTag] ?? highlights.todo);
+        return hl(config, entity.op, opHighlights[entity.opTag] ?? highlights.error);
     }else if (entity.kind === "opSeg") {
         throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
     }else if (entity.kind === "raw") {
-        return hl(config, entity.raw, rawHighlights[entity.tag] ?? highlights.todo);
+        if (entity.tag === "string" && config.highlight) return highlightString(config, entity.raw);
+        return hl(config, entity.raw, rawHighlights[entity.tag] ?? highlights.error);
     } else {
         return `%TODO<${(entity as {kind: string}).kind}>%`;
     }
@@ -754,10 +790,11 @@ export const colors = {
 export const highlights = {
     string: colors.green,
     keyword: colors.blue,
-    brackets: colors.black,
-    todo: colors.red,
+    brackets: colors.brblack,
     builtin: colors.cyan,
     comment: colors.yellow,
+    number: colors.magenta,
+    error: colors.inverse + colors.red,
     ident: "",
 };
 const rawHighlights: Partial<Record<RawTag, string>> = {
@@ -790,6 +827,7 @@ const identValueHighlights: Partial<Record<IdentifierTag, string>> = {
     normal: highlights.ident,
     access: highlights.ident,
     builtin: highlights.builtin,
+    number: highlights.number,
 };
 const rainbow = [colors.red, colors.yellow, colors.green, colors.cyan, colors.blue, colors.magenta];
 
