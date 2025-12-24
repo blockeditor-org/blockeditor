@@ -10,6 +10,7 @@ const TileMaterial = enum {
     unobtanium,
     dirt,
     stone,
+    shelf,
 
     fn canStandOn(mat: TileMaterial) bool {
         return switch (mat) {
@@ -17,14 +18,16 @@ const TileMaterial = enum {
             .unobtanium => true,
             .dirt => true,
             .stone => true,
+            .shelf => true,
         };
     }
     fn canStandIn(mat: TileMaterial) bool {
         return switch (mat) {
-            .none => false,
-            .unobtanium => true,
-            .dirt => true,
-            .stone => true,
+            .none => true,
+            .unobtanium => false,
+            .dirt => false,
+            .stone => false,
+            .shelf => true,
         };
     }
 };
@@ -62,12 +65,10 @@ pub const Tile = struct {
     }
 };
 const PathTarget = packed struct(u32) {
-    const X_INT = std.math.IntFittingRange(0, MAP_SIZE[0] - 1);
-    const Y_INT = std.math.IntFittingRange(0, MAP_SIZE[1] - 1);
-    x: X_INT,
-    y: Y_INT,
+    x: u11,
+    y: u11,
     cost_msec: u10,
-    pub const none: PathTarget = .{ .x = std.math.maxInt(X_INT), .y = std.math.maxInt(Y_INT), .cost_msec = std.math.maxInt(u10) };
+    pub const none: PathTarget = .{ .x = std.math.maxInt(u11), .y = std.math.maxInt(u11), .cost_msec = std.math.maxInt(u10) };
     pub fn from(pos: vec2i32, msec: u10) PathTarget {
         const min: vec2i32 = .{ 0, 0 };
         const max: vec2i32 = @intCast(MAP_SIZE);
@@ -77,37 +78,68 @@ const PathTarget = packed struct(u32) {
 };
 const Path = struct {
     // up,left,down,right,
-    to: [4]PathTarget,
+    bidi: [4]PathTarget,
 };
 
-fn checkStand(map: *Map, pos: vec2i32) bool {
-    // check at feet
-    // check above feet
-    // check ground
+fn checkFit(map: *Map, pos: vec2i32) bool {
     return true and
         map.get(pos + vec2i32{ 0, 1 }).material.canStandIn() and
         map.get(pos).material.canStandIn() and
-        map.get(pos + vec2i32{ 0, -1 }).material.canStandOn() and
         true;
 }
-fn calcluatePath(map: *Map, pos: vec2i32) Path {
+fn checkStand(map: *Map, pos: vec2i32) bool {
+    return map.get(pos + vec2i32{ 0, -1 }).material.canStandOn();
+}
+fn checkStandAndFit(map: *Map, pos: vec2i32) bool {
+    return checkStand(map, pos) and checkFit(map, pos);
+}
+const LeftRight = enum {
+    left,
+    right,
+    fn get(self: @This()) i32 {
+        return switch (self) {
+            .left => -1,
+            .right => 1,
+        };
+    }
+};
+const PathCfg = struct {
+    walk_ms: u10 = 100,
+    jump_ms: u10 = 300,
+    climb_ms: u10 = 200,
+    vault_ms: u10 = 700,
+};
+fn calculatePathLR(map: *Map, pos: vec2i32, lr: LeftRight, path_cfg: *const PathCfg) PathTarget {
+    // todo: should try for stairs down/up? uses path_cfg.vault_ms
+    const pos_one = pos + vec2i32{ lr.get(), 0 };
+    if (!checkFit(map, pos_one)) return .none;
+    if (checkStand(map, pos_one)) return .from(pos_one, path_cfg.walk_ms);
+    const pos_two = pos + vec2i32{ lr.get() * 2, 0 };
+    if (checkStandAndFit(map, pos_two)) return .from(pos_two, path_cfg.jump_ms);
+    return .none;
+}
+fn calculatePath(map: *Map, pos: vec2i32, path_cfg: *const PathCfg) Path {
     var result: Path = .{
-        .to = @splat(.none),
+        .bidi = @splat(.none),
     };
-    if (!checkStand(map, pos)) {
+    if (!checkStandAndFit(map, pos)) {
         // can't be here
         return result;
     }
-    if (checkStand(map, pos - vec2i32{ 0, -1 })) {
-        // left
-        result.to[1] = pos - vec2i32{ 0, -1 };
-    } else if (checkStand(map, pos - vec2i32{ 0, -1 })) {
-        // jump left
+    const pos_up = pos + vec2i32{ 0, 1 };
+    if (checkStandAndFit(map, pos_up)) {
+        // down
+        result.bidi[0] = .from(pos_up, path_cfg.climb_ms);
     }
-    // right?
-    if (checkStand(map, pos - vec2i32{ 0, 1 })) {
-        result.to[3] = pos - vec2i32{ 0, -1 };
+    result.bidi[1] = calculatePathLR(map, pos, .left, path_cfg);
+    const pos_down = pos + vec2i32{ 0, -1 };
+    if (checkStandAndFit(map, pos_down)) {
+        // down
+        result.bidi[2] = .from(pos_down, path_cfg.climb_ms);
     }
+    result.bidi[3] = calculatePathLR(map, pos, .right, path_cfg);
+
+    return result;
 }
 
 const Map = struct {
@@ -140,7 +172,7 @@ const Map = struct {
         this.tiles[cast[1] * MAP_SIZE[0] + cast[0]] = value;
     }
     pub fn generate(this: *Map) void {
-        // fill walls
+        // fill floor and ceiling
         for (0..MAP_SIZE[0]) |x| {
             this.set(.{ @intCast(x), 0 }, .unobtanium);
             this.set(.{ @intCast(x), @intCast(MAP_SIZE[1] - 1) }, .unobtanium);
@@ -154,8 +186,12 @@ const Map = struct {
 };
 
 test Map {
-    var map: Map = undefined;
-    try map.init(std.testing.allocator);
-    defer map.deinit();
+    var map_raw: Map = undefined;
+    try map_raw.init(std.testing.allocator);
+    defer map_raw.deinit();
+    const map = &map_raw;
     map.generate();
+
+    const path = calculatePath(map, .{ MAP_SIZE[0] / 2, 1 }, &.{});
+    std.log.err("got path: {any}", .{path});
 }
