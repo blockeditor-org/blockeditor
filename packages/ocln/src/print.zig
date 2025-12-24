@@ -47,6 +47,17 @@ fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: *cons
     };
     return &PackedStructPrinter.doPrint;
 }
+fn printInt(comptime Ty: type) *const fn (printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void {
+    const IntPrinter = struct {
+        fn doPrint(printer: *Printer, arg: *const anyopaque, _: Indent) Error!void {
+            const cast: *const Ty = @alignCast(@ptrCast(arg));
+            try printer.setColor(.magenta);
+            try printer.print("{d}", .{cast.*});
+            try printer.setColor(.reset);
+        }
+    };
+    return &IntPrinter.doPrint;
+}
 fn typeDetails(comptime Ty: type) *const TypeDetails {
     return &comptime .{
         .name = @typeName(Ty),
@@ -68,6 +79,10 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                     }
                     const fields_copy = fields;
                     break :blk .{ .struc = .{ .fields = &fields_copy } };
+                },
+                .int => {
+                    // power of two ints don't need this
+                    break :blk .{ .custom = .{ .cb = printInt(Ty) } };
                 },
                 .array => |arr| {
                     break :blk .{ .array = .{
