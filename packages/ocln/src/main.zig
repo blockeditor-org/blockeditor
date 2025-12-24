@@ -193,5 +193,12 @@ test Map {
     map.generate();
 
     const path = calculatePath(map, .{ MAP_SIZE[0] / 2, 1 }, &.{});
-    std.log.err("got path: {any}", .{path});
+    std.log.err("got path:", .{});
+    {
+        var buffer: [64]u8 = undefined;
+        const stderr = std.debug.lockStderrWriter(&buffer);
+        defer std.debug.unlockStderrWriter();
+        @import("print.zig").print(stderr, path, &.{ .cfg = .detect(std.fs.File.stderr()) }) catch {};
+        stderr.writeByte('\n') catch {};
+    }
 }
