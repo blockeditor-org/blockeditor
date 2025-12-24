@@ -1,5 +1,5 @@
 import { comptimeEval, getComptime } from "./cte";
-import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenizationErrorStyle, type TokenPosition, type TraceEntry } from "./cvl2";
+import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, unescapeString, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenizationErrorStyle, type TokenPosition, type TraceEntry } from "./cvl2";
 import { isAbsolute, relative } from "path";
 import { printers } from "./printers";
 import { validateCName } from "./backend/c";
@@ -54,7 +54,7 @@ class PerComptimeScopeCache<T> {
     }
 }
 
-class PositionedError extends Error {
+export class PositionedError extends Error {
     e: TokenizationError;
     constructor(e: TokenizationError) {
         super([...e.entries.map(nt => `${nt.pos?.fyl ?? "???"}:${nt.pos?.lyn ?? "???"}:${nt.pos?.col ?? "???"}: ${nt.style}: ${nt.message}`), ...e.trace.map(t => ` at ${t.pos.fyl}:${t.pos.lyn}:${t.pos.col} (${t.text})`)].join("\n"));
@@ -677,8 +677,8 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             if (it0.kind !== "raw" || it0.tag !== "string") throwErr(env, ast.pos, "TODO str item 0 ! raw string" + printers.astNode.dump(it0, 3));
             // if it has aggrandizements it might need runtime construction unless they're all comptime
             // although if it's a uint8array you can't runtime construct the aggrandizements so maybe it should just error
-            assert(!it0.raw.includes("\\"), env, ast.pos, "TODO string escaping");
-            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(it0.raw)}};
+            const unescaped = unescapeString(env, it0.raw, it0.pos);
+            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(unescaped)}};
         } else {
             throwErr(env, ast.pos, "TODO string in slot: " + printers.type.dump(slot, 3));
         }

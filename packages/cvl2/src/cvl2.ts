@@ -1,3 +1,4 @@
+import { assert, throwErr, type Env } from "./cmpyl";
 import { printers } from "./printers";
 
 function unreachable(): never {
@@ -583,6 +584,68 @@ export function tokenize(source: Source): TokenizationResult {
 
     return { result: parseStack[0]!.val, errors };
 }
+function posAddCol(pos: TokenPosition, col: number): TokenPosition {
+    return {fyl: pos.fyl, lyn: pos.lyn, col: pos.col + col, idx: pos.col + col};
+}
+function parseHexCodepoint(env: Env, inner: string, segmentPos: TokenPosition): string {
+    const bad = inner.search(/[^A-Fa-f0-9]/);
+    if (bad !== -1) throwErr(env, posAddCol(segmentPos, bad), "bad character in curly");
+    const parsed = parseInt(inner, 16); // maybe ok after validating. otherwise it will ignore things
+    if (parsed > 0x10FFFF) throwErr(env, segmentPos, "number out of range");
+    return String.fromCodePoint(parsed);
+}
+export function unescapeString(env: Env, segment: string, segmentPos: TokenPosition): string {
+    if (!segment.includes("\\")) return segment;
+    // this could be updated to use appendErr rather than throwErr, and return an ErrorToken|string
+    {
+        const newlineIndex = segment.indexOf("\n");
+        if (newlineIndex !== -1) {
+            throwErr(env, posAddCol(segmentPos, newlineIndex), "newline is not allowed in escaped string", [], "unreachable");
+        }
+    }
+    let result = "";
+    let idx = 0;
+    while (true) {
+        let nextEscape = segment.indexOf("\\", idx);
+        if (nextEscape === -1) nextEscape = segment.length;
+        result += segment.slice(idx, nextEscape);
+        idx = nextEscape;
+        if (segment[idx] !== "\\") break;
+        idx += 1;
+        const def = unescapeDefs.get(segment[idx] ?? "");
+        if (def) {
+            result += def;
+        } else if (segment[idx] === "x") {
+            idx += 1;
+            const inner = segment.slice(idx, idx + 2);
+            result += parseHexCodepoint(env, inner, posAddCol(segmentPos, idx));
+            idx += 2;
+        } else if (segment[idx] === "u") {
+            idx += 1;
+            const ustart = idx;
+            if (segment[idx] !== "{") throwErr(env, posAddCol(segmentPos, idx), `expected \\u{ABCD}`);
+            idx += 1;
+            const istart = idx;
+            let iend = segment.indexOf("}", istart);
+            if (iend === -1) throwErr(env, posAddCol(segmentPos, ustart), `missing close curly`, [
+                [posAddCol(segmentPos, segment.length), "string ended here"],
+            ]);
+            idx += 1;
+            const inner = segment.slice(istart, iend);
+            result += parseHexCodepoint(env, inner, posAddCol(segmentPos, istart));
+        } else {
+            throwErr(env, posAddCol(segmentPos, idx), `unexpected escape in string: ${JSON.stringify(segment[idx] ?? "<eof>")}`);
+        }
+    }
+    return result;
+}
+// TODO: impl highlightString()
+const unescapeDefs = new Map<string, string>(Object.entries({
+    "n": "\n",
+    "r": "\r",
+    "\"": "\"",
+    "'": "'",
+}));
 
 interface RenderConfigAdisp {
     indent: string;
