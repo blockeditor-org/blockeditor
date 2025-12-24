@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const Error = std.Io.Writer.Error || error{Unexpected};
 const StructField = struct {
     name: []const u8,
     offset: usize,
@@ -8,6 +9,9 @@ const StructField = struct {
 const TypeDetails = struct {
     name: []const u8,
     value: union(enum) {
+        custom: struct {
+            cb: *const fn (arg: *const anyopaque, writer: *std.Io.Writer, state: *PrintState, cfg: *const PrintCfg, indent: Indent) Error!void,
+        },
         struc: struct {
             fields: []const StructField,
         },
@@ -22,6 +26,27 @@ const TypeDetails = struct {
         },
     },
 };
+fn printPackedStruct(comptime Ty: type) *const fn (arg: *const anyopaque, writer: *std.Io.Writer, state: *PrintState, cfg: *const PrintCfg, indent: Indent) Error!void {
+    const PackedStructPrinter = struct {
+        fn doPrint(arg: *const anyopaque, out: *std.Io.Writer, state: *PrintState, cfg: *const PrintCfg, indent: Indent) Error!void {
+            const cast: *const Ty = @alignCast(@ptrCast(arg));
+            try cfg.cfg.setColor(out, .bright_black);
+            try out.print("{s}:", .{@typeName(Ty)});
+            try cfg.cfg.setColor(out, .reset);
+            inline for (@typeInfo(Ty).@"struct".fields) |field| {
+                try out.print("\n{f}{f}", .{ indent.incr(), std.zig.fmtId(field.name) });
+                try cfg.cfg.setColor(out, .bright_black);
+                try out.print(": ", .{});
+                try cfg.cfg.setColor(out, .reset);
+                try printDetails(out, state, @ptrCast(&@field(cast, field.name)), typeDetails(field.type), cfg, indent.incr());
+            }
+            if (@typeInfo(Ty).@"struct".fields.len == 0) {
+                try out.print("\nno fields", .{});
+            }
+        }
+    };
+    return &PackedStructPrinter.doPrint;
+}
 fn typeDetails(comptime Ty: type) *const TypeDetails {
     return &comptime .{
         .name = @typeName(Ty),
@@ -32,7 +57,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                     // if hasDecl custom print : custom print
                     // if is arraylist : custom print
                     // ... etc
-                    if (s.backing_integer != null) break :blk .{ .todo = .{ .msg = "packed struct" } };
+                    if (s.backing_integer != null) break :blk .{ .custom = .{ .cb = printPackedStruct(Ty) } };
                     var fields: [s.fields.len]StructField = @splat(undefined);
                     for (s.fields, &fields) |field, *out_field| {
                         out_field.* = .{
@@ -64,15 +89,18 @@ const PrintState = struct {
     // for cyclic
     // cache: std.AutoArrayHashMap(struct{ ptr: [*]const u8, details: *const TypeDetails }, usize),
 };
-pub fn print(out: *std.Io.Writer, object: anytype, cfg: *const PrintCfg) !void {
+pub fn print(out: *std.Io.Writer, object: anytype, cfg: *const PrintCfg) Error!void {
     const details = typeDetails(@TypeOf(object));
     var state: PrintState = .{};
     try printDetails(out, &state, @ptrCast(&object), details, cfg, .{ .value = 0 });
 }
-pub fn printDetails(out: *std.Io.Writer, state: *PrintState, obj: [*]const u8, details: *const TypeDetails, cfg: *const PrintCfg, indent: Indent) !void {
+pub fn printDetails(out: *std.Io.Writer, state: *PrintState, obj: [*]const u8, details: *const TypeDetails, cfg: *const PrintCfg, indent: Indent) Error!void {
     switch (details.value) {
+        .custom => |*custom| {
+            try custom.*.cb(obj, out, state, cfg, indent);
+        },
         .array => |*array| {
-            try cfg.cfg.setColor(out, .bright_black);
+            cfg.cfg.setColor(out, .bright_black) catch return error.WriteFailed;
             try out.print("{s}:", .{details.name});
             try cfg.cfg.setColor(out, .reset);
             for (0..array.len) |idx| {
@@ -118,4 +146,13 @@ const Indent = struct {
     pub fn format(self: Indent, w: *std.Io.Writer) !void {
         try w.splatByteAll(' ', self.value);
     }
+};
+
+const DetailedAny = struct {
+    obj: [*]const u8,
+    details: *const TypeDetails,
+};
+const Printer = struct {
+    cfg: *const PrintCfg,
+    state: *PrintState,
 };
