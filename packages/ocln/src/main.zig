@@ -10,6 +10,23 @@ const TileMaterial = enum {
     unobtanium,
     dirt,
     stone,
+
+    fn canStandOn(mat: TileMaterial) bool {
+        return switch (mat) {
+            .none => false,
+            .unobtanium => true,
+            .dirt => true,
+            .stone => true,
+        };
+    }
+    fn canStandIn(mat: TileMaterial) bool {
+        return switch (mat) {
+            .none => false,
+            .unobtanium => true,
+            .dirt => true,
+            .stone => true,
+        };
+    }
 };
 pub const milli_per_one = 1000000;
 pub const milli_per_kilo = 1000000000;
@@ -44,6 +61,55 @@ pub const Tile = struct {
         return 0;
     }
 };
+const PathTarget = packed struct(u32) {
+    const X_INT = std.math.IntFittingRange(0, MAP_SIZE[0] - 1);
+    const Y_INT = std.math.IntFittingRange(0, MAP_SIZE[1] - 1);
+    x: X_INT,
+    y: Y_INT,
+    cost_msec: u10,
+    pub const none: PathTarget = .{ .x = std.math.maxInt(X_INT), .y = std.math.maxInt(Y_INT), .cost_msec = std.math.maxInt(u10) };
+    pub fn from(pos: vec2i32, msec: u10) PathTarget {
+        const min: vec2i32 = .{ 0, 0 };
+        const max: vec2i32 = @intCast(MAP_SIZE);
+        if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= max)) return .none;
+        return .{ .x = @intCast(pos[0]), .y = @intCast(pos[1]), .cost_msec = msec };
+    }
+};
+const Path = struct {
+    // up,left,down,right,
+    to: [4]PathTarget,
+};
+
+fn checkStand(map: *Map, pos: vec2i32) bool {
+    // check at feet
+    // check above feet
+    // check ground
+    return true and
+        map.get(pos + vec2i32{ 0, 1 }).material.canStandIn() and
+        map.get(pos).material.canStandIn() and
+        map.get(pos + vec2i32{ 0, -1 }).material.canStandOn() and
+        true;
+}
+fn calcluatePath(map: *Map, pos: vec2i32) Path {
+    var result: Path = .{
+        .to = @splat(.none),
+    };
+    if (!checkStand(map, pos)) {
+        // can't be here
+        return result;
+    }
+    if (checkStand(map, pos - vec2i32{ 0, -1 })) {
+        // left
+        result.to[1] = pos - vec2i32{ 0, -1 };
+    } else if (checkStand(map, pos - vec2i32{ 0, -1 })) {
+        // jump left
+    }
+    // right?
+    if (checkStand(map, pos - vec2i32{ 0, 1 })) {
+        result.to[3] = pos - vec2i32{ 0, -1 };
+    }
+}
+
 const Map = struct {
     gpa: std.mem.Allocator,
     tiles: []Tile,
