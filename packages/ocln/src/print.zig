@@ -10,7 +10,7 @@ const TypeDetails = struct {
     name: []const u8,
     value: union(enum) {
         custom: struct {
-            cb: *const fn (printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void,
+            dump: *const fn (printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void,
         },
         struc: struct {
             fields: []const StructField,
@@ -68,7 +68,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                     // if hasDecl custom print : custom print
                     // if is arraylist : custom print
                     // ... etc
-                    if (s.backing_integer != null) break :blk .{ .custom = .{ .cb = printPackedStruct(Ty) } };
+                    if (s.backing_integer != null) break :blk .{ .custom = .{ .dump = printPackedStruct(Ty) } };
                     var fields: [s.fields.len]StructField = @splat(undefined);
                     for (s.fields, &fields) |field, *out_field| {
                         out_field.* = .{
@@ -82,7 +82,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                 },
                 .int => {
                     // power of two ints don't need this
-                    break :blk .{ .custom = .{ .cb = printInt(Ty) } };
+                    break :blk .{ .custom = .{ .dump = printInt(Ty) } };
                 },
                 .array => |arr| {
                     break :blk .{ .array = .{
@@ -146,7 +146,7 @@ const Printer = struct {
     pub fn dump(printer: *Printer, any: DetailedAny, indent: Indent) Error!void {
         switch (any.details.value) {
             .custom => |*custom| {
-                try custom.*.cb(printer, any.obj, indent);
+                try custom.*.dump(printer, any.obj, indent);
             },
             .array => |*array| {
                 try printer.setColor(.bright_black);
