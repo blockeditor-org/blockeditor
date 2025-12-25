@@ -10,7 +10,11 @@ const TypeDetails = struct {
     name: []const u8,
     value: union(enum) {
         custom: struct {
-            dump: *const fn (printer: *Printer, arg: *const anyopaque) Error!void,
+            dump: *const fn (printer: *Printer, arg: DetailedAny) Error!void,
+        },
+        allocator,
+        one_pointer: struct {
+            child: *const TypeDetails,
         },
         struc: struct {
             fields: []const StructField,
@@ -28,12 +32,13 @@ const TypeDetails = struct {
         todo: struct {
             msg: []const u8,
         },
+        unprintable,
     },
 };
-fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: *const anyopaque) Error!void {
+fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
     const PackedStructPrinter = struct {
-        fn doPrint(printer: *Printer, arg: *const anyopaque) Error!void {
-            const cast: *align(1) const Ty = @ptrCast(arg);
+        fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
+            const cast = arg.cast(Ty);
             try printer.setColor(.bright_black);
             try printer.print("{s}:", .{@typeName(Ty)});
             try printer.setColor(.reset);
@@ -43,7 +48,7 @@ fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: *cons
                 try printer.setColor(.bright_black);
                 try printer.print(": ", .{});
                 try printer.setColor(.reset);
-                try printer.dump(.from(&@field(cast, field.name), typeDetails(field.type)));
+                try printer.dump(.fromAuto(&@field(cast, field.name)));
             }
             if (@typeInfo(Ty).@"struct".fields.len == 0) {
                 try printer.newline();
@@ -53,10 +58,10 @@ fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: *cons
     };
     return &PackedStructPrinter.doPrint;
 }
-fn printInt(comptime Ty: type) *const fn (printer: *Printer, arg: *const anyopaque) Error!void {
+fn printInt(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
     const IntPrinter = struct {
-        fn doPrint(printer: *Printer, arg: *const anyopaque) Error!void {
-            const cast: *const Ty = @alignCast(@ptrCast(arg));
+        fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
+            const cast = arg.cast(Ty);
             try printer.setColor(.magenta);
             try printer.print("{d}", .{cast.*});
             try printer.setColor(.reset);
@@ -68,8 +73,31 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
     return &comptime .{
         .name = @typeName(Ty),
         .value = blk: {
+            // special handling
+            switch (Ty) {
+                std.mem.Allocator => {
+                    break :blk .allocator;
+                },
+                else => {},
+            }
+
+            // default handling
             const ti = @typeInfo(Ty);
             switch (ti) {
+                .@"opaque", .@"fn" => break :blk .unprintable,
+                .pointer => |p| {
+                    switch (p.size) {
+                        .one => {
+                            break :blk .{ .one_pointer = .{
+                                .child = typeDetails(p.child),
+                            } };
+                        },
+                        .many => break :blk .{ .one_pointer = .{ .child = &.{ .name = @typeName(Ty), .value = .unprintable } } },
+                        .slice, .c => {
+                            break :blk .{ .todo = .{ .msg = @tagName(p.size) } };
+                        },
+                    }
+                },
                 .vector => |v| {
                     var offsets: [v.len]usize = @splat(undefined);
                     var offsetof: @Vector(v.len, v.child) = undefined;
@@ -116,23 +144,29 @@ const PrintCfg = struct {
     tty: std.Io.tty.Config,
 };
 pub fn print(out: *std.Io.Writer, object: anytype, cfg: *const PrintCfg) Error!void {
-    const details = typeDetails(@TypeOf(object));
     var printer: Printer = .{
         .cfg = cfg,
         .out = out,
         .indent_count = 0,
     };
-    try printer.dump(.from(&object, details));
+    try printer.dump(.fromAuto(&object));
 }
 
 const DetailedAny = struct {
     obj: [*]const u8,
     details: *const TypeDetails,
-    fn from(obj: *const anyopaque, details: *const TypeDetails) DetailedAny {
-        return .{ .obj = @ptrCast(obj), .details = details };
+    fn from(obj: [*]const u8, details: *const TypeDetails) DetailedAny {
+        return .{ .obj = obj, .details = details };
+    }
+    fn fromAuto(obj: anytype) DetailedAny {
+        const details = typeDetails(@typeInfo(@TypeOf(obj)).pointer.child);
+        return .from(@ptrCast(obj), details);
     }
     fn offset(any: DetailedAny, n: usize, details: *const TypeDetails) DetailedAny {
         return .{ .obj = any.obj[n..], .details = details };
+    }
+    fn cast(any: DetailedAny, comptime T: type) *align(1) const T {
+        return @ptrCast(any.obj);
     }
 };
 const Printer = struct {
@@ -164,7 +198,84 @@ const Printer = struct {
     pub fn dump(printer: *Printer, any: DetailedAny) Error!void {
         switch (any.details.value) {
             .custom => |*custom| {
-                try custom.*.dump(printer, any.obj);
+                try custom.*.dump(printer, any);
+            },
+            .allocator => {
+                const value = any.cast(std.mem.Allocator);
+
+                const arena_vtable = comptime blk: {
+                    var arena_vtable_container = std.heap.ArenaAllocator.init(undefined);
+                    break :blk arena_vtable_container.allocator().vtable;
+                };
+
+                if (value.vtable == std.heap.smp_allocator.vtable) {
+                    try printer.print("std", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("heap", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("smp_allocator", .{});
+                } else if (@import("builtin").link_libc and value.vtable == std.heap.c_allocator.vtable) {
+                    try printer.print("std", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("heap", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("c_allocator", .{});
+                } else if (@import("builtin").is_test and value.vtable == std.testing.allocator.vtable) {
+                    try printer.print("std", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("testing", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("allocator", .{});
+                } else if (value.vtable == arena_vtable) {
+                    const arena: *const std.heap.ArenaAllocator = @alignCast(@ptrCast(value.ptr));
+                    try printer.print("std", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("heap", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("ArenaAllocator", .{});
+                    try printer.setColor(.bright_black);
+                    try printer.print(": ", .{});
+                    try printer.setColor(.reset);
+                    try printer.dump(.fromAuto(&arena.child_allocator));
+                } else {
+                    try printer.print("unknown allocator", .{});
+                    // we could print it using the default printer for std.mem.Allocator if we want
+                    // that way we get
+                    // ptr: 0x16D35A4F0: TODO: anyopaque
+                    // vtable: 0x16D35A4F8: mem.Allocator.VTable:
+                    //     alloc: 0x102BD82A8: TODO: fn (*anyopaque, usize, mem.Alignment, usize) ?[*]u8
+                    //     resize: 0x102BD82B0: TODO: fn (*anyopaque, []u8, mem.Alignment, usize, usize) bool
+                    //     remap: 0x102BD82B8: TODO: fn (*anyopaque, []u8, mem.Alignment, usize, usize) ?[*]u8
+                    //     free: 0x102BD82C0: TODO: fn (*anyopaque, []u8, mem.Alignment, usize) void
+                    // just call dump again but for the type details, pass one generated with special handling disabled
+                }
+            },
+            .one_pointer => |*pointer| {
+                try printer.setColor(.blue);
+                try printer.print("0x", .{});
+                try printer.setColor(.magenta);
+                try printer.print("{X}", .{@intFromPtr(any.obj)});
+                try printer.setColor(.bright_black);
+                try printer.print(": ", .{});
+                try printer.setColor(.reset);
+                const value = any.cast([*]const u8);
+                try printer.dump(.from(value.*, pointer.child));
             },
             .array => |*array| {
                 try printer.setColor(.bright_black);
@@ -232,6 +343,9 @@ const Printer = struct {
                 try printer.print(": ", .{});
                 try printer.setColor(.reset);
                 try printer.print("{s}", .{t.msg});
+            },
+            .unprintable => {
+                try printer.print("{s}", .{any.details.name});
             },
         }
     }

@@ -238,6 +238,15 @@ fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg)
     var steps: usize = 0;
     while (!try pathfind.step()) : (steps += 1) {}
     std.log.err("{d} steps; cost_ms: {?d}", .{ steps, pathfind.cost_so_far.get(dst) });
+
+    {
+        var buffer: [64]u8 = undefined;
+        const stderr = std.debug.lockStderrWriter(&buffer);
+        defer std.debug.unlockStderrWriter();
+        try stderr.writeAll("pathfind: ");
+        @import("print.zig").print(stderr, &pathfind, &.{ .tty = .detect(std.fs.File.stderr()) }) catch {};
+        stderr.writeByte('\n') catch {};
+    }
 }
 
 const Map = struct {
@@ -296,6 +305,7 @@ test Map {
         var buffer: [64]u8 = undefined;
         const stderr = std.debug.lockStderrWriter(&buffer);
         defer std.debug.unlockStderrWriter();
+        try stderr.writeAll("object: ");
         @import("print.zig").print(stderr, path, &.{ .tty = .detect(std.fs.File.stderr()) }) catch {};
         stderr.writeByte('\n') catch {};
     }
