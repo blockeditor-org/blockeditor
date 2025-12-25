@@ -202,22 +202,22 @@ const Pathfind = struct {
     }
 
     fn step(this: *Pathfind) !bool {
-        while (this.queue.removeOrNull()) |current| {
-            this.steps += 1;
-            if (@reduce(.And, current.pos == this.dst)) return false;
+        const current = this.queue.removeOrNull() orelse return false;
+        this.steps += 1;
+        if (@reduce(.And, current.pos == this.dst)) return false;
 
-            for (calculatePathfindEdges(this.map, current.pos, this.cfg).bidi) |next| {
-                if (!next.valid()) continue;
-                const new_cost = this.cost_so_far.get(current.pos).? + next.cost_msec;
-                const next_cost = this.cost_so_far.get(next.pos);
-                if (next_cost == null or new_cost < next_cost.?) {
-                    try this.cost_so_far.put(next.pos, new_cost);
-                    try this.queue.add(.{ .pos = next.pos, .heuristic_ms = new_cost + this.heuristicMs(next.pos) });
-                    try this.came_from.put(next.pos, current.pos);
-                }
+        for (calculatePathfindEdges(this.map, current.pos, this.cfg).bidi) |next| {
+            if (!next.valid()) continue;
+            const new_cost = this.cost_so_far.get(current.pos).? + next.cost_msec;
+            const next_cost = this.cost_so_far.get(next.pos);
+            if (next_cost == null or new_cost < next_cost.?) {
+                try this.cost_so_far.put(next.pos, new_cost);
+                try this.queue.add(.{ .pos = next.pos, .heuristic_ms = new_cost + this.heuristicMs(next.pos) });
+                try this.came_from.put(next.pos, current.pos);
             }
         }
-        return false;
+
+        return true;
     }
 };
 fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !void {
