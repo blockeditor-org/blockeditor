@@ -159,8 +159,8 @@ const Pathfind = struct {
     came_from: std.AutoArrayHashMap(vec2i32, vec2i32),
     cost_so_far: std.AutoArrayHashMap(vec2i32, u64),
     dst: vec2i32,
-    // wonder if this could support pathfinding to the nearest item of N by having the heuristic select the nearest one
-    // rather than having to re-pathfind N times
+    // if we need to then we can remove dst and just prioritize the lowest cost item next
+    // we probably want to do that given that there will often be multiple targets to pathfind to and we want to find the shortest
 
     fn init(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !Pathfind {
         var pathfind: Pathfind = .{
