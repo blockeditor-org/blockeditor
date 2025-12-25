@@ -18,6 +18,7 @@
         .loadimage_wasm = .{ .path = "packages/loadimage_wasm" },
         .logicgame = .{ .path = "packages/logicgame" },
         .minigamer_3ds = .{ .path = "packages/minigamer/3ds" },
+        .ocln = .{ .path = "packages/ocln" },
         .sheen_bidi = .{ .path = "packages/sheen_bidi" },
         .texteditor = .{ .path = "packages/texteditor" },
         .tracy = .{ .path = "packages/tracy" },

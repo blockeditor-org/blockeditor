@@ -221,7 +221,7 @@ fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg)
     defer pathfind.deinit();
     var steps: usize = 0;
     while (!try pathfind.step()) : (steps += 1) {}
-    std.log.err("{d} steps; cost_ms: {?d}", .{ steps, pathfind.cost_so_far.get(dst) });
+    std.log.info("{d} steps; cost_ms: {?d}", .{ steps, pathfind.cost_so_far.get(dst) });
 }
 
 const Map = struct {
@@ -255,6 +255,7 @@ const Map = struct {
 };
 
 test Map {
+    std.testing.log_level = .info;
     var map_raw: Map = undefined;
     try map_raw.init(std.testing.allocator);
     defer map_raw.deinit();
@@ -262,7 +263,7 @@ test Map {
     map.generate();
 
     const path = calculatePathfindEdges(map, .{ MAP_SIZE[0] / 2, 1 }, &.{});
-    std.log.err("got path:", .{});
+    std.log.info("got path:", .{});
     {
         var buffer: [64]u8 = undefined;
         const stderr = std.debug.lockStderrWriter(&buffer);
