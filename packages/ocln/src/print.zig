@@ -15,6 +15,10 @@ const TypeDetails = struct {
         struc: struct {
             fields: []const StructField,
         },
+        vector: struct {
+            child: *const TypeDetails,
+            offsets: []const usize,
+        },
         array: struct {
             len: usize,
             stride: usize,
@@ -29,7 +33,7 @@ const TypeDetails = struct {
 fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void {
     const PackedStructPrinter = struct {
         fn doPrint(printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void {
-            const cast: *const Ty = @alignCast(@ptrCast(arg));
+            const cast: *align(1) const Ty = @ptrCast(arg);
             try printer.setColor(.bright_black);
             try printer.print("{s}:", .{@typeName(Ty)});
             try printer.setColor(.reset);
@@ -41,7 +45,7 @@ fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: *cons
                 try printer.dump(.from(&@field(cast, field.name), typeDetails(field.type)), indent.incr());
             }
             if (@typeInfo(Ty).@"struct".fields.len == 0) {
-                try printer.print("\nno fields", .{});
+                try printer.print("\n{f}no fields", .{indent.incr()});
             }
         }
     };
@@ -64,6 +68,15 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
         .value = blk: {
             const ti = @typeInfo(Ty);
             switch (ti) {
+                .vector => |v| {
+                    var offsets: [v.len]usize = @splat(undefined);
+                    var offsetof: @Vector(v.len, v.child) = undefined;
+                    for (0.., &offsets) |i, *out_offset| {
+                        out_offset.* = @as(*const u8, @ptrCast(&offsetof[i])) - @as(*const u8, @ptrCast(&offsetof));
+                    }
+                    const offsets_copy = offsets;
+                    break :blk .{ .vector = .{ .child = typeDetails(v.child), .offsets = &offsets_copy } };
+                },
                 .@"struct" => |s| {
                     // if hasDecl custom print : custom print
                     // if is arraylist : custom print
@@ -161,6 +174,26 @@ const Printer = struct {
                     try printer.setColor(.reset);
                     try printer.dump(any.offset(idx * array.stride, array.child), indent.incr());
                 }
+                if (array.len == 0) {
+                    try printer.print("\n{f}no children", .{indent.incr()});
+                }
+            },
+            .vector => |*vector| {
+                try printer.setColor(.bright_black);
+                try printer.print("{s}:", .{any.details.name});
+                try printer.setColor(.reset);
+                for (0.., vector.offsets) |idx, offset| {
+                    try printer.print("\n{f}", .{indent.incr()});
+                    try printer.setColor(.magenta);
+                    try printer.print("{d}", .{idx});
+                    try printer.setColor(.bright_black);
+                    try printer.print(": ", .{});
+                    try printer.setColor(.reset);
+                    try printer.dump(any.offset(offset, vector.child), indent.incr());
+                }
+                if (vector.offsets.len == 0) {
+                    try printer.print("\n{f}no children", .{indent.incr()});
+                }
             },
             .struc => |*struc| {
                 try printer.setColor(.bright_black);
@@ -174,7 +207,7 @@ const Printer = struct {
                     try printer.dump(any.offset(field.offset, field.details), indent.incr());
                 }
                 if (struc.fields.len == 0) {
-                    try printer.print("\nno fields", .{});
+                    try printer.print("\n{f}no fields", .{indent.incr()});
                 }
             },
             .todo => |t| {
