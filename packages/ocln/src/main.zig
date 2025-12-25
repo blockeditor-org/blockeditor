@@ -216,7 +216,7 @@ const Pathfind = struct {
 
         for (calculatePathfindEdges(this.map, current.pos, this.cfg).bidi) |next| {
             if (!next.valid()) continue;
-            const new_cost = this.cost_so_far.get(current.pos).? + next.cost_msec;
+            const new_cost = current.source_ms + next.cost_msec;
             const existing_cost = this.cost_so_far.get(next.pos);
             if (existing_cost == null or new_cost < existing_cost.?) {
                 try this.cost_so_far.put(next.pos, new_cost);
