@@ -7,10 +7,14 @@ pub fn build(b: *std.Build) !void {
     const fmt_step = b.addFmt(.{ .paths = &.{ "src", "build.zig" } });
     b.getInstallStep().dependOn(&fmt_step.step);
 
+    const zpool = b.dependency("zpool", .{ .target = target, .optimize = optimize });
     const mod = b.addModule("anywhere", .{
         .root_source_file = b.path("build.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zpool", .module = zpool.module("root") },
+        },
     });
 
     const block_test = b.addTest(.{ .root_module = mod });

@@ -1,5 +1,8 @@
 const std = @import("std");
 
+pub const zpool = @import("zpool");
+pub const grid = @import("util/grid.zig");
+
 pub const AnyPtr = struct {
     id: [*]const u8,
     val: *anyopaque,

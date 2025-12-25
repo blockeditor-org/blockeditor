@@ -1,4 +1,8 @@
 const std = @import("std");
+const anywhere = @import("anywhere");
+const util = anywhere.util;
+const Grid = anywhere.util.grid.Grid;
+const zpool = anywhere.util.zpool;
 
 // https://en.wikipedia.org/wiki/Connected-component_labeling
 
@@ -87,12 +91,12 @@ const Path = struct {
 
 fn checkFit(map: *Map, pos: vec2i32) bool {
     return true and
-        map.get(pos + vec2i32{ 0, 1 }).material.canStandIn() and
-        map.get(pos).material.canStandIn() and
+        map.tiles.get(pos + vec2i32{ 0, 1 }).material.canStandIn() and
+        map.tiles.get(pos).material.canStandIn() and
         true;
 }
 fn checkStand(map: *Map, pos: vec2i32) bool {
-    return map.get(pos + vec2i32{ 0, -1 }).material.canStandOn();
+    return map.tiles.get(pos + vec2i32{ 0, -1 }).material.canStandOn();
 }
 fn checkStandAndFit(map: *Map, pos: vec2i32) bool {
     return checkStand(map, pos) and checkFit(map, pos);
@@ -222,38 +226,25 @@ fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg)
 
 const Map = struct {
     gpa: std.mem.Allocator,
-    tiles: []Tile,
+    tiles: Grid(Tile),
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) !void {
-        const tiles = try gpa.alloc(Tile, MAP_SIZE[0] * MAP_SIZE[1]);
-        @memset(tiles, .empty);
+        const tiles: Grid(Tile) = try .init(gpa, MAP_SIZE);
+        errdefer tiles.deinit(gpa);
+        @memset(tiles.items, .empty);
         this.* = .{
             .gpa = gpa,
             .tiles = tiles,
         };
     }
     pub fn deinit(this: *Map) void {
-        this.gpa.free(this.tiles);
-    }
-    pub fn get(this: *Map, pos: vec2i32) Tile {
-        const min: vec2i32 = .{ 0, 0 };
-        const max: vec2i32 = @intCast(MAP_SIZE);
-        if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= max)) return .empty;
-        const cast: vec2usize = @intCast(pos);
-        return this.tiles[cast[1] * MAP_SIZE[0] + cast[0]];
-    }
-    pub fn set(this: *Map, pos: vec2i32, value: Tile) void {
-        const min: vec2i32 = .{ 0, 0 };
-        const max: vec2i32 = @intCast(MAP_SIZE);
-        if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= max)) return;
-        const cast: vec2usize = @intCast(pos);
-        this.tiles[cast[1] * MAP_SIZE[0] + cast[0]] = value;
+        this.tiles.deinit(this.gpa);
     }
     pub fn generate(this: *Map) void {
         // fill floor and ceiling
         for (0..MAP_SIZE[0]) |x| {
-            this.set(.{ @intCast(x), 0 }, .unobtanium);
-            this.set(.{ @intCast(x), @intCast(MAP_SIZE[1] - 1) }, .unobtanium);
+            this.tiles.set(.{ @intCast(x), 0 }, .unobtanium);
+            this.tiles.set(.{ @intCast(x), @intCast(MAP_SIZE[1] - 1) }, .unobtanium);
         }
     }
     pub fn measureEnergy(this: *Map) u128 {

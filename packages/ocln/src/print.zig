@@ -349,7 +349,7 @@ const Printer = struct {
                     try printer.setColor(.reset);
                     try printer.print("allocator", .{});
                 } else if (value.vtable == arena_vtable) {
-                    const arena: *const std.heap.ArenaAllocator = @alignCast(@ptrCast(value.ptr));
+                    const arena: *const std.heap.ArenaAllocator = @ptrCast(@alignCast(value.ptr));
                     try printer.print("std", .{});
                     try printer.setColor(.bright_black);
                     try printer.print(".", .{});
