@@ -106,12 +106,18 @@ const LeftRight = enum {
     }
 };
 const PathCfg = struct {
+    // note: fast-travel methods may end up getting skipped if these values are set too high. should be rare though.
+    // for perfect pathfinding, these values must always be the fastest possible speed the entity can travel at, including
+    // using a fast-travel method
+    min_horiz_ms: u10 = 100,
+    min_vert_ms: u10 = 200,
+
     walk_ms: u10 = 100,
-    jump_ms: u10 = 300,
+    jump_ms: u10 = 400,
     climb_ms: u10 = 200,
     vault_ms: u10 = 700,
 };
-fn calculatePathLR(map: *Map, pos: vec2i32, lr: LeftRight, path_cfg: *const PathCfg) PathTarget {
+fn calculatePathfindEdgeLR(map: *Map, pos: vec2i32, lr: LeftRight, path_cfg: *const PathCfg) PathTarget {
     // todo: should try for stairs down/up? uses path_cfg.vault_ms
     const pos_one = pos + vec2i32{ lr.get(), 0 };
     if (!checkFit(map, pos_one)) return .none;
@@ -120,7 +126,7 @@ fn calculatePathLR(map: *Map, pos: vec2i32, lr: LeftRight, path_cfg: *const Path
     if (checkStandAndFit(map, pos_two)) return .from(pos_two, path_cfg.jump_ms);
     return .none;
 }
-fn calculatePath(map: *Map, pos: vec2i32, path_cfg: *const PathCfg) Path {
+fn calculatePathfindEdges(map: *Map, pos: vec2i32, path_cfg: *const PathCfg) Path {
     var result: Path = .{
         .bidi = @splat(.none),
     };
@@ -133,13 +139,13 @@ fn calculatePath(map: *Map, pos: vec2i32, path_cfg: *const PathCfg) Path {
         // down
         result.bidi[0] = .from(pos_up, path_cfg.climb_ms);
     }
-    result.bidi[1] = calculatePathLR(map, pos, .left, path_cfg);
+    result.bidi[1] = calculatePathfindEdgeLR(map, pos, .left, path_cfg);
     const pos_down = pos + vec2i32{ 0, -1 };
     if (checkStandAndFit(map, pos_down)) {
         // down
         result.bidi[2] = .from(pos_down, path_cfg.climb_ms);
     }
-    result.bidi[3] = calculatePathLR(map, pos, .right, path_cfg);
+    result.bidi[3] = calculatePathfindEdgeLR(map, pos, .right, path_cfg);
 
     return result;
 }
@@ -147,22 +153,24 @@ const Pathfind = struct {
     map: *Map,
     cfg: *const PathCfg,
     queue: Queue,
-    // these should probably be [MAP_SIZE[0] * MAP_SIZE[1]]T instead of AutoArrayHashMap
+    // TODO: measure, determine if these should be [MAP_SIZE[0] * MAP_SIZE[1]]T instead of AutoArrayHashMap
     came_from: std.AutoArrayHashMap(vec2i32, vec2i32),
     cost_so_far: std.AutoArrayHashMap(vec2i32, u64),
+    dst: vec2i32,
     steps: usize,
 
     fn init(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !Pathfind {
         var pathfind: Pathfind = .{
             .cfg = path_cfg,
             .map = map,
-            .queue = .init(map.gpa, .{ .dst = dst }),
+            .queue = .init(map.gpa, .{}),
             .came_from = .init(map.gpa),
             .cost_so_far = .init(map.gpa),
+            .dst = dst,
             .steps = 0,
         };
         errdefer pathfind.deinit();
-        try pathfind.queue.add(src);
+        try pathfind.queue.add(.{ .pos = src, .heuristic_ms = 0 });
         try pathfind.came_from.putNoClobber(src, @splat(std.math.minInt(i32)));
         try pathfind.cost_so_far.putNoClobber(src, 0);
 
@@ -175,31 +183,35 @@ const Pathfind = struct {
     }
 
     const Context = struct {
-        // TODO: this is wrong. child needs to be struct {pos: vec2i32, heuristic: usize}
-        const Child = vec2i32;
-        dst: vec2i32,
-        fn heuristic(ctx: Context, a: Child) i32 {
-            return @reduce(.Add, @as(vec2i32, @intCast(@abs(ctx.dst - a))));
-        }
-        fn compare(ctx: Context, a: Child, b: Child) std.math.Order {
-            return std.math.order(ctx.heuristic(a), ctx.heuristic(b));
+        const Child = struct {
+            pos: vec2i32,
+            heuristic_ms: u64,
+        };
+        fn compare(_: Context, a: Child, b: Child) std.math.Order {
+            return std.math.order(a.heuristic_ms, b.heuristic_ms);
         }
     };
     const Queue = std.PriorityQueue(Context.Child, Context, Context.compare);
 
+    fn heuristicMs(this: *Pathfind, a: vec2i32) u64 {
+        const x_diff: u64 = @abs(a[0] - this.dst[0]);
+        const y_diff: u64 = @abs(a[1] - this.dst[1]);
+        return x_diff * this.cfg.min_horiz_ms + y_diff * this.cfg.min_vert_ms;
+    }
+
     fn step(this: *Pathfind) !bool {
         while (this.queue.removeOrNull()) |current| {
             this.steps += 1;
-            if (@reduce(.And, current == this.queue.context.dst)) return false;
+            if (@reduce(.And, current.pos == this.dst)) return false;
 
-            for (calculatePath(this.map, current, this.cfg).bidi) |next| {
+            for (calculatePathfindEdges(this.map, current.pos, this.cfg).bidi) |next| {
                 if (!next.valid()) continue;
-                const new_cost = this.cost_so_far.get(current).? + next.cost_msec;
+                const new_cost = this.cost_so_far.get(current.pos).? + next.cost_msec;
                 const next_cost = this.cost_so_far.get(next.pos);
                 if (next_cost == null or new_cost < next_cost.?) {
                     try this.cost_so_far.put(next.pos, new_cost);
-                    try this.queue.add(next.pos); // TODO: this is wrong, priority should be new_cost + heuristicMs(next, goal)
-                    try this.came_from.put(next.pos, current);
+                    try this.queue.add(.{ .pos = next.pos, .heuristic_ms = new_cost + this.heuristicMs(next.pos) });
+                    try this.came_from.put(next.pos, current.pos);
                 }
             }
         }
@@ -213,7 +225,7 @@ fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg)
     var pathfind: Pathfind = try .init(map, src, dst, path_cfg);
     defer pathfind.deinit();
     while (try pathfind.step()) {}
-    std.log.err("found path in {d} steps", .{pathfind.steps});
+    std.log.err("maybe found path in {d} steps. cost_ms: {?d}", .{ pathfind.steps, pathfind.cost_so_far.get(dst) });
 }
 
 const Map = struct {
@@ -266,7 +278,7 @@ test Map {
     const map = &map_raw;
     map.generate();
 
-    const path = calculatePath(map, .{ MAP_SIZE[0] / 2, 1 }, &.{});
+    const path = calculatePathfindEdges(map, .{ MAP_SIZE[0] / 2, 1 }, &.{});
     std.log.err("got path:", .{});
     {
         var buffer: [64]u8 = undefined;
@@ -276,5 +288,6 @@ test Map {
         stderr.writeByte('\n') catch {};
     }
 
+    try pathfindPath(map, .{ 50, 1 }, .{ 25, 1 }, &.{});
     try pathfindPath(map, .{ 50, 1 }, .{ 25, 2 }, &.{});
 }
