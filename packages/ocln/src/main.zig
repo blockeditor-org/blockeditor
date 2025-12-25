@@ -207,11 +207,11 @@ const Pathfind = struct {
     }
 
     fn step(this: *Pathfind) !bool {
-        const current = this.queue.removeOrNull() orelse return false;
-        if (@reduce(.And, current.pos == this.dst)) return false;
+        const current = this.queue.removeOrNull() orelse return true;
+        if (@reduce(.And, current.pos == this.dst)) return true;
 
         if (this.cost_so_far.get(current.pos)) |best_ms| {
-            if (current.source_ms > best_ms) return true;
+            if (current.source_ms > best_ms) return false;
         }
 
         for (calculatePathfindEdges(this.map, current.pos, this.cfg).bidi) |next| {
@@ -229,14 +229,14 @@ const Pathfind = struct {
             }
         }
 
-        return true;
+        return false;
     }
 };
 fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !void {
     var pathfind: Pathfind = try .init(map, src, dst, path_cfg);
     defer pathfind.deinit();
     var steps: usize = 0;
-    while (try pathfind.step()) : (steps += 1) {}
+    while (!try pathfind.step()) : (steps += 1) {}
     std.log.err("{d} steps; cost_ms: {?d}", .{ steps, pathfind.cost_so_far.get(dst) });
 }
 
