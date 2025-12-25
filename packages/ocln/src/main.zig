@@ -108,12 +108,6 @@ const LeftRight = enum {
     }
 };
 const PathCfg = struct {
-    // note: fast-travel methods may end up getting skipped if these values are set too high. should be rare though.
-    // for perfect pathfinding, these values must always be the fastest possible speed the entity can travel at, including
-    // using a fast-travel method
-    min_horiz_ms: u10 = 100,
-    min_vert_ms: u10 = 200,
-
     walk_ms: u10 = 100,
     jump_ms: u10 = 400,
     climb_ms: u10 = 200,
@@ -158,23 +152,18 @@ const Pathfind = struct {
     // TODO: measure, determine if these should be [MAP_SIZE[0] * MAP_SIZE[1]]T instead of AutoArrayHashMap
     came_from: std.AutoArrayHashMap(vec2i32, vec2i32),
     cost_so_far: std.AutoArrayHashMap(vec2i32, u64),
-    dst: vec2i32,
-    // if we need to then we can remove dst and just prioritize the lowest cost item next
-    // we probably want to do that given that there will often be multiple targets to pathfind to and we want to find the shortest
 
-    fn init(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !Pathfind {
+    fn init(map: *Map, src: vec2i32, path_cfg: *const PathCfg) !Pathfind {
         var pathfind: Pathfind = .{
             .cfg = path_cfg,
             .map = map,
             .queue = .init(map.gpa, .{}),
             .came_from = .init(map.gpa),
             .cost_so_far = .init(map.gpa),
-            .dst = dst,
         };
         errdefer pathfind.deinit();
         try pathfind.queue.add(.{
             .pos = src,
-            .source_plus_heuristic_ms = pathfind.heuristicMs(src),
             .source_ms = 0,
         });
         try pathfind.came_from.putNoClobber(src, @splat(std.math.minInt(i32)));
@@ -191,24 +180,16 @@ const Pathfind = struct {
     const Context = struct {
         const Child = struct {
             pos: vec2i32,
-            source_plus_heuristic_ms: u64,
             source_ms: u64,
         };
         fn compare(_: Context, a: Child, b: Child) std.math.Order {
-            return std.math.order(a.source_plus_heuristic_ms, b.source_plus_heuristic_ms);
+            return std.math.order(a.source_ms, b.source_ms);
         }
     };
     const Queue = std.PriorityQueue(Context.Child, Context, Context.compare);
 
-    fn heuristicMs(this: *Pathfind, a: vec2i32) u64 {
-        const x_diff: u64 = @abs(a[0] - this.dst[0]);
-        const y_diff: u64 = @abs(a[1] - this.dst[1]);
-        return x_diff * this.cfg.min_horiz_ms + y_diff * this.cfg.min_vert_ms;
-    }
-
     fn step(this: *Pathfind) !bool {
         const current = this.queue.removeOrNull() orelse return true;
-        if (@reduce(.And, current.pos == this.dst)) return true;
 
         if (this.cost_so_far.get(current.pos)) |best_ms| {
             if (current.source_ms > best_ms) return false;
@@ -222,7 +203,6 @@ const Pathfind = struct {
                 try this.cost_so_far.put(next.pos, new_cost);
                 try this.queue.add(.{
                     .pos = next.pos,
-                    .source_plus_heuristic_ms = new_cost + this.heuristicMs(next.pos),
                     .source_ms = new_cost,
                 });
                 try this.came_from.put(next.pos, current.pos);
@@ -233,20 +213,11 @@ const Pathfind = struct {
     }
 };
 fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !void {
-    var pathfind: Pathfind = try .init(map, src, dst, path_cfg);
+    var pathfind: Pathfind = try .init(map, src, path_cfg);
     defer pathfind.deinit();
     var steps: usize = 0;
     while (!try pathfind.step()) : (steps += 1) {}
     std.log.err("{d} steps; cost_ms: {?d}", .{ steps, pathfind.cost_so_far.get(dst) });
-
-    {
-        var buffer: [64]u8 = undefined;
-        const stderr = std.debug.lockStderrWriter(&buffer);
-        defer std.debug.unlockStderrWriter();
-        try stderr.writeAll("pathfind: ");
-        @import("print.zig").print(stderr, &pathfind, &.{ .tty = .detect(std.fs.File.stderr()) }) catch {};
-        stderr.writeByte('\n') catch {};
-    }
 }
 
 const Map = struct {
