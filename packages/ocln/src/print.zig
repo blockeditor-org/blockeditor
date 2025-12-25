@@ -5,6 +5,7 @@ const StructField = struct {
     name: []const u8,
     offset: usize,
     details: *const TypeDetails,
+    default: ?*const anyopaque,
 };
 const TypeDetails = struct {
     name: []const u8,
@@ -177,6 +178,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                             .name = field.name,
                             .offset = @offsetOf(Ty, field.name),
                             .details = typeDetails(field.type),
+                            .default = field.default_value_ptr,
                         };
                     }
                     const fields_copy = fields;
@@ -248,6 +250,9 @@ const Printer = struct {
 
     pub fn print(printer: *Printer, comptime fmt: []const u8, args: anytype) Error!void {
         try printer.out.print(fmt, args);
+    }
+    pub fn writeAll(printer: *Printer, msg: []const u8) Error!void {
+        try printer.out.writeAll(msg);
     }
     pub fn newline(printer: *Printer) Error!void {
         try printer.out.writeByte('\n');
@@ -391,19 +396,24 @@ const Printer = struct {
                 }
             },
             .vector => |*vector| {
-                try printer.setColor(.bright_black);
-                try printer.print("{s}:", .{any.details.name});
-                try printer.setColor(.reset);
-                printer.indent();
-                defer printer.dedent();
-                for (0.., vector.offsets) |idx, offset| {
-                    try printer.newline();
-                    try printer.setColor(.magenta);
-                    try printer.print("{d}", .{idx});
+                if (vector.offsets.len > 0) {
                     try printer.setColor(.bright_black);
-                    try printer.print(": ", .{});
+                    try printer.writeAll(".{ ");
+                    for (0.., vector.offsets) |idx, offset| {
+                        if (idx != 0) {
+                            try printer.setColor(.bright_black);
+                            try printer.writeAll(", ");
+                        }
+                        try printer.setColor(.reset);
+                        try printer.dump(any.offset(offset, vector.child));
+                    }
+                    try printer.setColor(.bright_black);
+                    try printer.writeAll(" }");
                     try printer.setColor(.reset);
-                    try printer.dump(any.offset(offset, vector.child));
+                } else {
+                    try printer.setColor(.bright_black);
+                    try printer.writeAll(".{}");
+                    try printer.setColor(.reset);
                 }
                 if (vector.offsets.len == 0) {
                     try printer.newline();
