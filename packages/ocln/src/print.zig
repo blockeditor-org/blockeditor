@@ -1,5 +1,10 @@
 const std = @import("std");
 
+// this works as a printer
+// but ideally it is a viewer
+// ie we dump all the type info and value info to file:///tmp/output1.html and you can explore the data
+// even better if we could let you click on the type to see where it is defined in source code
+
 const Error = std.Io.Writer.Error;
 const StructField = struct {
     name: []const u8,
@@ -59,6 +64,32 @@ fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: Detai
             if (@typeInfo(Ty).@"struct".fields.len == 0) {
                 try printer.newline();
                 try printer.print("no fields", .{});
+            }
+        }
+    }.doPrint;
+}
+fn printEnum(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
+    return &struct {
+        fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
+            const cast = arg.cast(Ty).*;
+            if (@typeInfo(Ty).@"enum".is_exhaustive) {
+                try printer.setColor(.bright_black);
+                try printer.print(".", .{});
+                try printer.setColor(.reset);
+                try printer.print("{s}", .{@tagName(cast)});
+                return;
+            }
+            const int = @intFromEnum(cast);
+            inline for (@typeInfo(Ty).@"enum".fields) |field| {
+                if (field.value == int) {
+                    try printer.setColor(.bright_black);
+                    try printer.print(".", .{});
+                    try printer.setColor(.reset);
+                    try printer.print("{s}", .{field.name});
+                    break;
+                }
+            } else {
+                try printer.print("{d}({s})", .{ int, @typeName(Ty) });
             }
         }
     }.doPrint;
@@ -137,7 +168,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                                 .child = typeDetails(p.child),
                             } };
                         },
-                        .many => break :blk .{ .one_pointer = .{ .child = &.{ .name = @typeName(Ty), .value = .unprintable } } },
+                        .many, .c => break :blk .{ .one_pointer = .{ .child = &.{ .name = @typeName(Ty), .value = .unprintable } } },
                         .slice => {
                             // var offsetof: Ty = undefined;
                             // const optr: *const u8 = @as(*const u8, @ptrCast(&offsetof.ptr));
@@ -152,9 +183,6 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                                 .ptr_offset = 0,
                                 .len_offset = @sizeOf(usize),
                             } };
-                        },
-                        .c => {
-                            break :blk .{ .todo = .{ .msg = @tagName(p.size) } };
                         },
                     }
                 },
@@ -184,6 +212,11 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                     const fields_copy = fields;
                     break :blk .{ .struc = .{ .fields = &fields_copy } };
                 },
+                .@"enum" => {
+                    // if the tag type is divisible by 8 we don't need the fn ptr and can do it at runtime
+                    // ideally the fields should be contiguous too. otherwise we could need a StaticMap(u64, []const u8) for the keys
+                    break :blk .{ .custom = .{ .dump = printEnum(Ty) } };
+                },
                 .int => |int_data| {
                     if (std.math.divExact(u16, int_data.bits, 8)) |_| {
                         // TODO: don't need the fn ptr for this one
@@ -198,6 +231,13 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                         .stride = @sizeOf(arr.child),
                         .child = typeDetails(arr.child),
                     } };
+                },
+                .optional => |opt| {
+                    // this one is problematic unfortunately
+                    const chTi = @typeInfo(opt.child);
+                    if (chTi == .pointer) return typeDetails(opt.child);
+                    // else we have to use .custom probably
+                    break :blk .{ .todo = .{ .msg = @typeName(Ty) } };
                 },
                 else => break :blk .{ .todo = .{ .msg = @typeName(Ty) } },
             }
@@ -337,6 +377,13 @@ const Printer = struct {
                 }
             },
             .one_pointer => |*pointer| {
+                const value = any.cast(?[*]const u8);
+                if (value.* == null) {
+                    try printer.setColor(.magenta);
+                    try printer.writeAll("null");
+                    try printer.setColor(.reset);
+                    return;
+                }
                 try printer.setColor(.blue);
                 try printer.print("0x", .{});
                 try printer.setColor(.magenta);
@@ -344,8 +391,7 @@ const Printer = struct {
                 try printer.setColor(.bright_black);
                 try printer.print(": ", .{});
                 try printer.setColor(.reset);
-                const value = any.cast([*]const u8);
-                try printer.dump(.from(value.*, pointer.child));
+                try printer.dump(.from(value.*.?, pointer.child));
             },
             .array => |*array| {
                 try printer.setColor(.bright_black);
@@ -368,14 +414,20 @@ const Printer = struct {
                 }
             },
             .slice => |*slice| {
+                const ptr = any.castOffset(?[*]const u8, slice.ptr_offset).*;
+                if (ptr == null) {
+                    try printer.setColor(.magenta);
+                    try printer.writeAll("null");
+                    try printer.setColor(.reset);
+                    return;
+                }
+                const len = any.castOffset(usize, slice.len_offset).*;
                 try printer.setColor(.bright_black);
                 try printer.print("{s}:", .{any.details.name});
                 try printer.setColor(.reset);
                 printer.indent();
                 defer printer.dedent();
-                const ptr = any.castOffset([*]const u8, slice.ptr_offset).*;
-                const len = any.castOffset(usize, slice.len_offset).*;
-                const sub: DetailedAny = .from(ptr, slice.child);
+                const sub: DetailedAny = .from(ptr.?, slice.child);
                 if (len > 50) {
                     try printer.newline();
                     try printer.print("...{d} children", .{len});
