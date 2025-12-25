@@ -172,7 +172,11 @@ const Pathfind = struct {
             .steps = 0,
         };
         errdefer pathfind.deinit();
-        try pathfind.queue.add(.{ .pos = src, .heuristic_ms = 0 });
+        try pathfind.queue.add(.{
+            .pos = src,
+            .heuristic_ms = pathfind.heuristicMs(src),
+            .source_ms = 0,
+        });
         try pathfind.came_from.putNoClobber(src, @splat(std.math.minInt(i32)));
         try pathfind.cost_so_far.putNoClobber(src, 0);
 
@@ -188,6 +192,7 @@ const Pathfind = struct {
         const Child = struct {
             pos: vec2i32,
             heuristic_ms: u64,
+            source_ms: u64,
         };
         fn compare(_: Context, a: Child, b: Child) std.math.Order {
             return std.math.order(a.heuristic_ms, b.heuristic_ms);
@@ -206,13 +211,21 @@ const Pathfind = struct {
         this.steps += 1;
         if (@reduce(.And, current.pos == this.dst)) return false;
 
+        if (this.cost_so_far.get(current.pos)) |best_ms| {
+            if (current.source_ms > best_ms) return true;
+        }
+
         for (calculatePathfindEdges(this.map, current.pos, this.cfg).bidi) |next| {
             if (!next.valid()) continue;
             const new_cost = this.cost_so_far.get(current.pos).? + next.cost_msec;
-            const next_cost = this.cost_so_far.get(next.pos);
-            if (next_cost == null or new_cost < next_cost.?) {
+            const existing_cost = this.cost_so_far.get(next.pos);
+            if (existing_cost == null or new_cost < existing_cost.?) {
                 try this.cost_so_far.put(next.pos, new_cost);
-                try this.queue.add(.{ .pos = next.pos, .heuristic_ms = new_cost + this.heuristicMs(next.pos) });
+                try this.queue.add(.{
+                    .pos = next.pos,
+                    .heuristic_ms = new_cost + this.heuristicMs(next.pos),
+                    .source_ms = new_cost,
+                });
                 try this.came_from.put(next.pos, current.pos);
             }
         }
