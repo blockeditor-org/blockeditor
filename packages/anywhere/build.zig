@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) !void {
     const fmt_step = b.addFmt(.{ .paths = &.{ "src", "build.zig" } });
     b.getInstallStep().dependOn(&fmt_step.step);
 
-    const zpool = b.dependency("zpool", .{ .target = target, .optimize = optimize });
+    const zpool = b.dependency("zpool", .{});
     const mod = b.addModule("anywhere", .{
         .root_source_file = b.path("build.zig"),
         .target = target,
@@ -47,5 +47,5 @@ pub const util = lib.util;
 pub const AnywhereCfg = lib.AnywhereCfg;
 
 test "refAllDecls" {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDeclsRecursive(lib);
 }
