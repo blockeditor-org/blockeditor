@@ -216,12 +216,12 @@ const Pathfind = struct {
         return false;
     }
 };
-fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !void {
+fn pathfindPath(map: *Map, src: vec2i32, path_cfg: *const PathCfg) !void {
     var pathfind: Pathfind = try .init(map, src, path_cfg);
     defer pathfind.deinit();
     var steps: usize = 0;
     while (!try pathfind.step()) : (steps += 1) {}
-    std.log.info("{d} steps; cost_ms: {?d}", .{ steps, pathfind.cost_so_far.get(dst) });
+    std.log.info("{d} steps", .{steps});
 }
 
 const Map = struct {
@@ -273,6 +273,5 @@ test Map {
         stderr.writeByte('\n') catch {};
     }
 
-    try pathfindPath(map, .{ 50, 1 }, .{ 25, 1 }, &.{});
-    try pathfindPath(map, .{ 50, 1 }, .{ 25, 2 }, &.{});
+    try pathfindPath(map, .{ 50, 1 }, &.{});
 }
