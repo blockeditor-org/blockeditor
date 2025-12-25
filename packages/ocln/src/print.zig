@@ -10,7 +10,7 @@ const TypeDetails = struct {
     name: []const u8,
     value: union(enum) {
         custom: struct {
-            dump: *const fn (printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void,
+            dump: *const fn (printer: *Printer, arg: *const anyopaque) Error!void,
         },
         struc: struct {
             fields: []const StructField,
@@ -30,30 +30,32 @@ const TypeDetails = struct {
         },
     },
 };
-fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void {
+fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: *const anyopaque) Error!void {
     const PackedStructPrinter = struct {
-        fn doPrint(printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void {
+        fn doPrint(printer: *Printer, arg: *const anyopaque) Error!void {
             const cast: *align(1) const Ty = @ptrCast(arg);
             try printer.setColor(.bright_black);
             try printer.print("{s}:", .{@typeName(Ty)});
             try printer.setColor(.reset);
             inline for (@typeInfo(Ty).@"struct".fields) |field| {
-                try printer.print("\n{f}{f}", .{ indent.incr(), std.zig.fmtId(field.name) });
+                try printer.newline();
+                try printer.print("{f}", .{std.zig.fmtId(field.name)});
                 try printer.setColor(.bright_black);
                 try printer.print(": ", .{});
                 try printer.setColor(.reset);
-                try printer.dump(.from(&@field(cast, field.name), typeDetails(field.type)), indent.incr());
+                try printer.dump(.from(&@field(cast, field.name), typeDetails(field.type)));
             }
             if (@typeInfo(Ty).@"struct".fields.len == 0) {
-                try printer.print("\n{f}no fields", .{indent.incr()});
+                try printer.newline();
+                try printer.print("no fields", .{});
             }
         }
     };
     return &PackedStructPrinter.doPrint;
 }
-fn printInt(comptime Ty: type) *const fn (printer: *Printer, arg: *const anyopaque, indent: Indent) Error!void {
+fn printInt(comptime Ty: type) *const fn (printer: *Printer, arg: *const anyopaque) Error!void {
     const IntPrinter = struct {
-        fn doPrint(printer: *Printer, arg: *const anyopaque, _: Indent) Error!void {
+        fn doPrint(printer: *Printer, arg: *const anyopaque) Error!void {
             const cast: *const Ty = @alignCast(@ptrCast(arg));
             try printer.setColor(.magenta);
             try printer.print("{d}", .{cast.*});
@@ -118,18 +120,10 @@ pub fn print(out: *std.Io.Writer, object: anytype, cfg: *const PrintCfg) Error!v
     var printer: Printer = .{
         .cfg = cfg,
         .out = out,
+        .indent_count = 0,
     };
-    try printer.dump(.from(&object, details), .{ .value = 0 });
+    try printer.dump(.from(&object, details));
 }
-const Indent = struct {
-    value: usize,
-    pub fn incr(self: Indent) Indent {
-        return .{ .value = self.value + 1 };
-    }
-    pub fn format(self: Indent, w: *std.Io.Writer) !void {
-        try w.splatByteAll(' ', self.value);
-    }
-};
 
 const DetailedAny = struct {
     obj: [*]const u8,
@@ -144,6 +138,7 @@ const DetailedAny = struct {
 const Printer = struct {
     cfg: *const PrintCfg,
     out: *std.Io.Writer,
+    indent_count: usize,
 
     // for cyclic
     // cache: std.AutoArrayHashMap(struct{ ptr: [*]const u8, details: *const TypeDetails }, usize),
@@ -155,59 +150,79 @@ const Printer = struct {
     pub fn print(printer: *Printer, comptime fmt: []const u8, args: anytype) Error!void {
         try printer.out.print(fmt, args);
     }
+    pub fn newline(printer: *Printer) Error!void {
+        try printer.out.writeByte('\n');
+        try printer.out.splatByteAll(' ', printer.indent_count * 1);
+    }
+    pub fn indent(printer: *Printer) void {
+        printer.indent_count += 1;
+    }
+    pub fn dedent(printer: *Printer) void {
+        printer.indent_count -= 1;
+    }
 
-    pub fn dump(printer: *Printer, any: DetailedAny, indent: Indent) Error!void {
+    pub fn dump(printer: *Printer, any: DetailedAny) Error!void {
         switch (any.details.value) {
             .custom => |*custom| {
-                try custom.*.dump(printer, any.obj, indent);
+                try custom.*.dump(printer, any.obj);
             },
             .array => |*array| {
                 try printer.setColor(.bright_black);
                 try printer.print("{s}:", .{any.details.name});
                 try printer.setColor(.reset);
+                printer.indent();
+                defer printer.dedent();
                 for (0..array.len) |idx| {
-                    try printer.print("\n{f}", .{indent.incr()});
+                    try printer.newline();
                     try printer.setColor(.magenta);
                     try printer.print("{d}", .{idx});
                     try printer.setColor(.bright_black);
                     try printer.print(": ", .{});
                     try printer.setColor(.reset);
-                    try printer.dump(any.offset(idx * array.stride, array.child), indent.incr());
+                    try printer.dump(any.offset(idx * array.stride, array.child));
                 }
                 if (array.len == 0) {
-                    try printer.print("\n{f}no children", .{indent.incr()});
+                    try printer.newline();
+                    try printer.print("no children", .{});
                 }
             },
             .vector => |*vector| {
                 try printer.setColor(.bright_black);
                 try printer.print("{s}:", .{any.details.name});
                 try printer.setColor(.reset);
+                printer.indent();
+                defer printer.dedent();
                 for (0.., vector.offsets) |idx, offset| {
-                    try printer.print("\n{f}", .{indent.incr()});
+                    try printer.newline();
                     try printer.setColor(.magenta);
                     try printer.print("{d}", .{idx});
                     try printer.setColor(.bright_black);
                     try printer.print(": ", .{});
                     try printer.setColor(.reset);
-                    try printer.dump(any.offset(offset, vector.child), indent.incr());
+                    try printer.dump(any.offset(offset, vector.child));
                 }
                 if (vector.offsets.len == 0) {
-                    try printer.print("\n{f}no children", .{indent.incr()});
+                    try printer.newline();
+                    try printer.print("no children", .{});
                 }
             },
             .struc => |*struc| {
                 try printer.setColor(.bright_black);
                 try printer.print("{s}:", .{any.details.name});
                 try printer.setColor(.reset);
+                printer.indent();
+                defer printer.dedent();
                 for (struc.fields) |field| {
-                    try printer.print("\n{f}{f}", .{ indent.incr(), std.zig.fmtId(field.name) });
+                    try printer.newline();
+                    try printer.print("{f}", .{std.zig.fmtId(field.name)});
                     try printer.setColor(.bright_black);
                     try printer.print(": ", .{});
                     try printer.setColor(.reset);
-                    try printer.dump(any.offset(field.offset, field.details), indent.incr());
+                    try printer.dump(any.offset(field.offset, field.details));
                 }
                 if (struc.fields.len == 0) {
-                    try printer.print("\n{f}no fields", .{indent.incr()});
+                    try printer.newline();
+                    try printer.print("no fields", .{});
                 }
             },
             .todo => |t| {
