@@ -99,16 +99,18 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                         },
                         .many => break :blk .{ .one_pointer = .{ .child = &.{ .name = @typeName(Ty), .value = .unprintable } } },
                         .slice => {
-                            var offsetof: Ty = undefined;
-                            const optr: *const u8 = @as(*const u8, @ptrCast(&offsetof.ptr));
-                            const olen: *const u8 = @as(*const u8, @ptrCast(&offsetof.len));
-                            const oval: *const u8 = @as(*const u8, @ptrCast(&offsetof));
-                            // rip this works for vectors; TODO optr - oval
+                            // var offsetof: Ty = undefined;
+                            // const optr: *const u8 = @as(*const u8, @ptrCast(&offsetof.ptr));
+                            // const olen: *const u8 = @as(*const u8, @ptrCast(&offsetof.len));
+                            // const oval: *const u8 = @as(*const u8, @ptrCast(&offsetof));
+                            // optr - oval, olen - oval
+
+                            // TODO: hack! the memory layout of slices is not well-defined
                             break :blk .{ .slice = .{
                                 .child = typeDetails(p.child),
                                 .stride = @sizeOf(p.child),
-                                .ptr_offset = optr - oval,
-                                .len_offset = olen - oval,
+                                .ptr_offset = 0,
+                                .len_offset = @sizeOf(usize),
                             } };
                         },
                         .c => {
