@@ -64,16 +64,18 @@ pub const Tile = struct {
         return 0;
     }
 };
-const PathTarget = packed struct(u32) {
-    x: u11,
-    y: u11,
-    cost_msec: u10,
-    pub const none: PathTarget = .{ .x = std.math.maxInt(u11), .y = std.math.maxInt(u11), .cost_msec = std.math.maxInt(u10) };
-    pub fn from(pos: vec2i32, msec: u10) PathTarget {
+const PathTarget = struct {
+    pos: vec2i32,
+    cost_msec: u32,
+    pub const none: PathTarget = .{ .pos = @splat(std.math.maxInt(i32)), .cost_msec = std.math.maxInt(i32) };
+    pub fn from(pos: vec2i32, msec: u32) PathTarget {
         const min: vec2i32 = .{ 0, 0 };
         const max: vec2i32 = @intCast(MAP_SIZE);
         if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= max)) return .none;
-        return .{ .x = @intCast(pos[0]), .y = @intCast(pos[1]), .cost_msec = msec };
+        return .{ .pos = pos, .cost_msec = msec };
+    }
+    pub fn valid(self: PathTarget) bool {
+        return self.cost_msec != std.math.maxInt(i32);
     }
 };
 const Path = struct {
@@ -141,6 +143,77 @@ fn calculatePath(map: *Map, pos: vec2i32, path_cfg: *const PathCfg) Path {
 
     return result;
 }
+const Pathfind = struct {
+    map: *Map,
+    cfg: *const PathCfg,
+    queue: Queue,
+    // these should probably be [MAP_SIZE[0] * MAP_SIZE[1]]T instead of AutoArrayHashMap
+    came_from: std.AutoArrayHashMap(vec2i32, vec2i32),
+    cost_so_far: std.AutoArrayHashMap(vec2i32, u64),
+    steps: usize,
+
+    fn init(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !Pathfind {
+        var pathfind: Pathfind = .{
+            .cfg = path_cfg,
+            .map = map,
+            .queue = .init(map.gpa, .{ .dst = dst }),
+            .came_from = .init(map.gpa),
+            .cost_so_far = .init(map.gpa),
+            .steps = 0,
+        };
+        errdefer pathfind.deinit();
+        try pathfind.queue.add(src);
+        try pathfind.came_from.putNoClobber(src, @splat(std.math.minInt(i32)));
+        try pathfind.cost_so_far.putNoClobber(src, 0);
+
+        return pathfind;
+    }
+    fn deinit(this: *Pathfind) void {
+        this.queue.deinit();
+        this.came_from.deinit();
+        this.cost_so_far.deinit();
+    }
+
+    const Context = struct {
+        // TODO: this is wrong. child needs to be struct {pos: vec2i32, heuristic: usize}
+        const Child = vec2i32;
+        dst: vec2i32,
+        fn heuristic(ctx: Context, a: Child) i32 {
+            return @reduce(.Add, @as(vec2i32, @intCast(@abs(ctx.dst - a))));
+        }
+        fn compare(ctx: Context, a: Child, b: Child) std.math.Order {
+            return std.math.order(ctx.heuristic(a), ctx.heuristic(b));
+        }
+    };
+    const Queue = std.PriorityQueue(Context.Child, Context, Context.compare);
+
+    fn step(this: *Pathfind) !bool {
+        while (this.queue.removeOrNull()) |current| {
+            this.steps += 1;
+            if (@reduce(.And, current == this.queue.context.dst)) return false;
+
+            for (calculatePath(this.map, current, this.cfg).bidi) |next| {
+                if (!next.valid()) continue;
+                const new_cost = this.cost_so_far.get(current).? + next.cost_msec;
+                const next_cost = this.cost_so_far.get(next.pos);
+                if (next_cost == null or new_cost < next_cost.?) {
+                    try this.cost_so_far.put(next.pos, new_cost);
+                    try this.queue.add(next.pos); // TODO: this is wrong, priority should be new_cost + heuristicMs(next, goal)
+                    try this.came_from.put(next.pos, current);
+                }
+            }
+        }
+        return false;
+    }
+};
+fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !void {
+    // for no-path detection we ought to do https://en.wikipedia.org/wiki/Connected-component_labeling
+    // ideally, updating when a tile updates rather than every frame if that's something that can be done.
+    var pathfind: Pathfind = try .init(map, src, dst, path_cfg);
+    defer pathfind.deinit();
+    while (try pathfind.step()) {}
+    std.log.err("found path in {d} steps", .{pathfind.steps});
+}
 
 const Map = struct {
     gpa: std.mem.Allocator,
@@ -201,4 +274,6 @@ test Map {
         @import("print.zig").print(stderr, path, &.{ .tty = .detect(std.fs.File.stderr()) }) catch {};
         stderr.writeByte('\n') catch {};
     }
+
+    try pathfindPath(map, .{ 50, 1 }, .{ 25, 2 }, &.{});
 }
