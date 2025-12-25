@@ -27,7 +27,12 @@ const TypeDetails = struct {
             len: usize,
             stride: usize,
             child: *const TypeDetails,
-            sentinel: ?*const anyopaque,
+        },
+        slice: struct {
+            ptr_offset: usize,
+            len_offset: usize,
+            stride: usize,
+            child: *const TypeDetails,
         },
         todo: struct {
             msg: []const u8,
@@ -93,7 +98,20 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                             } };
                         },
                         .many => break :blk .{ .one_pointer = .{ .child = &.{ .name = @typeName(Ty), .value = .unprintable } } },
-                        .slice, .c => {
+                        .slice => {
+                            var offsetof: Ty = undefined;
+                            const optr: *const u8 = @as(*const u8, @ptrCast(&offsetof.ptr));
+                            const olen: *const u8 = @as(*const u8, @ptrCast(&offsetof.len));
+                            const oval: *const u8 = @as(*const u8, @ptrCast(&offsetof));
+                            // rip this works for vectors; TODO optr - oval
+                            break :blk .{ .slice = .{
+                                .child = typeDetails(p.child),
+                                .stride = @sizeOf(p.child),
+                                .ptr_offset = optr - oval,
+                                .len_offset = olen - oval,
+                            } };
+                        },
+                        .c => {
                             break :blk .{ .todo = .{ .msg = @tagName(p.size) } };
                         },
                     }
@@ -132,7 +150,6 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                         .len = arr.len,
                         .stride = @sizeOf(arr.child),
                         .child = typeDetails(arr.child),
-                        .sentinel = arr.sentinel_ptr,
                     } };
                 },
                 else => break :blk .{ .todo = .{ .msg = @typeName(Ty) } },
@@ -166,7 +183,10 @@ const DetailedAny = struct {
         return .{ .obj = any.obj[n..], .details = details };
     }
     fn cast(any: DetailedAny, comptime T: type) *align(1) const T {
-        return @ptrCast(any.obj);
+        return any.castOffset(T, 0);
+    }
+    fn castOffset(any: DetailedAny, comptime T: type, n: usize) *align(1) const T {
+        return @ptrCast(any.obj[n..]);
     }
 };
 const Printer = struct {
@@ -293,6 +313,29 @@ const Printer = struct {
                     try printer.dump(any.offset(idx * array.stride, array.child));
                 }
                 if (array.len == 0) {
+                    try printer.newline();
+                    try printer.print("no children", .{});
+                }
+            },
+            .slice => |*slice| {
+                try printer.setColor(.bright_black);
+                try printer.print("{s}:", .{any.details.name});
+                try printer.setColor(.reset);
+                printer.indent();
+                defer printer.dedent();
+                const ptr = any.castOffset([*]const u8, slice.ptr_offset).*;
+                const len = any.castOffset(usize, slice.len_offset).*;
+                const sub: DetailedAny = .from(ptr, slice.child);
+                for (0..len) |idx| {
+                    try printer.newline();
+                    try printer.setColor(.magenta);
+                    try printer.print("{d}", .{idx});
+                    try printer.setColor(.bright_black);
+                    try printer.print(": ", .{});
+                    try printer.setColor(.reset);
+                    try printer.dump(sub.offset(idx * slice.stride, slice.child));
+                }
+                if (len == 0) {
                     try printer.newline();
                     try printer.print("no children", .{});
                 }
