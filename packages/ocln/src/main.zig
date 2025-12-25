@@ -209,6 +209,7 @@ const Pathfind = struct {
 fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !void {
     // for no-path detection we ought to do https://en.wikipedia.org/wiki/Connected-component_labeling
     // ideally, updating when a tile updates rather than every frame if that's something that can be done.
+    // although that won't work for one-way paths unfortunately
     var pathfind: Pathfind = try .init(map, src, dst, path_cfg);
     defer pathfind.deinit();
     while (try pathfind.step()) {}
