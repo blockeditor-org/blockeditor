@@ -41,7 +41,7 @@ const TypeDetails = struct {
     },
 };
 fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
-    const PackedStructPrinter = struct {
+    return &struct {
         fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
             const cast = arg.cast(Ty);
             try printer.setColor(.bright_black);
@@ -60,19 +60,42 @@ fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: Detai
                 try printer.print("no fields", .{});
             }
         }
-    };
-    return &PackedStructPrinter.doPrint;
+    }.doPrint;
 }
 fn printInt(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
-    const IntPrinter = struct {
+    return &struct {
         fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
             const cast = arg.cast(Ty);
             try printer.setColor(.magenta);
             try printer.print("{d}", .{cast.*});
             try printer.setColor(.reset);
         }
-    };
-    return &IntPrinter.doPrint;
+    }.doPrint;
+}
+fn printMultiArrayList(comptime Ty: type, comptime Child: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
+    std.debug.assert(Ty == std.MultiArrayList(Child));
+    return &struct {
+        fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
+            const cast = arg.cast(std.MultiArrayList(Child));
+            try printer.setColor(.magenta);
+            try printer.setColor(.bright_black);
+            try printer.print("std.MultiArrayList({s}):", .{@typeName(Child)});
+            try printer.setColor(.reset);
+            for (0..cast.len) |idx| {
+                try printer.newline();
+                try printer.setColor(.magenta);
+                try printer.print("{d}", .{idx});
+                try printer.setColor(.bright_black);
+                try printer.print(": ", .{});
+                try printer.setColor(.reset);
+                try printer.dump(.fromAuto(&cast.get(idx)));
+            }
+            if (@typeInfo(Ty).@"struct".fields.len == 0) {
+                try printer.newline();
+                try printer.print("no fields", .{});
+            }
+        }
+    }.doPrint;
 }
 fn typeDetails(comptime Ty: type) *const TypeDetails {
     return &comptime .{
@@ -85,6 +108,22 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                 },
                 else => {},
             }
+            if (@typeInfo(Ty) == .@"struct" and @hasField(Ty, "bytes") and @hasField(Ty, "len") and @hasField(Ty, "capacity") and @hasDecl(Ty, "get")) {
+                // maybe std.MultiArrayList?
+                const get = Ty.get;
+                const getTi = @typeInfo(@TypeOf(get));
+                if (getTi == .@"fn" and getTi.@"fn".return_type != null) {
+                    const Child = getTi.@"fn".return_type.?;
+                    if (Ty == std.MultiArrayList(Child)) {
+                        // is MultiArrayList
+                        // this one can probably be done with offsets but it's a bit complicated & strongly tied to the stdlib
+                        break :blk .{ .custom = .{ .dump = printMultiArrayList(Ty, Child) } };
+                    } else {
+                        @compileLog("incorrectly detected as MultiArraylist:\ntype " ++ @typeName(Ty) ++ "\nimprove heuristic or remove this compileLog statement.");
+                    }
+                }
+            }
+            // TODO: MultiArrayList, AutoArrayHashMap
 
             // default handling
             const ti = @typeInfo(Ty);
@@ -143,8 +182,12 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                     const fields_copy = fields;
                     break :blk .{ .struc = .{ .fields = &fields_copy } };
                 },
-                .int => {
-                    // power of two ints don't need this
+                .int => |int_data| {
+                    if (std.math.divExact(u16, int_data.bits, 8)) |_| {
+                        // TODO: don't need the fn ptr for this one
+                    } else |_| {
+                        // else
+                    }
                     break :blk .{ .custom = .{ .dump = printInt(Ty) } };
                 },
                 .array => |arr| {
@@ -328,6 +371,11 @@ const Printer = struct {
                 const ptr = any.castOffset([*]const u8, slice.ptr_offset).*;
                 const len = any.castOffset(usize, slice.len_offset).*;
                 const sub: DetailedAny = .from(ptr, slice.child);
+                if (len > 50) {
+                    try printer.newline();
+                    try printer.print("...{d} children", .{len});
+                    return;
+                }
                 for (0..len) |idx| {
                     try printer.newline();
                     try printer.setColor(.magenta);
