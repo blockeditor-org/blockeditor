@@ -1,5 +1,7 @@
 const std = @import("std");
 
+// https://en.wikipedia.org/wiki/Connected-component_labeling
+
 const vec2i32 = @Vector(2, i32);
 const vec2usize = @Vector(2, usize);
 
@@ -157,7 +159,6 @@ const Pathfind = struct {
     came_from: std.AutoArrayHashMap(vec2i32, vec2i32),
     cost_so_far: std.AutoArrayHashMap(vec2i32, u64),
     dst: vec2i32,
-    steps: usize,
     // wonder if this could support pathfinding to the nearest item of N by having the heuristic select the nearest one
     // rather than having to re-pathfind N times
 
@@ -169,7 +170,6 @@ const Pathfind = struct {
             .came_from = .init(map.gpa),
             .cost_so_far = .init(map.gpa),
             .dst = dst,
-            .steps = 0,
         };
         errdefer pathfind.deinit();
         try pathfind.queue.add(.{
@@ -208,7 +208,6 @@ const Pathfind = struct {
 
     fn step(this: *Pathfind) !bool {
         const current = this.queue.removeOrNull() orelse return false;
-        this.steps += 1;
         if (@reduce(.And, current.pos == this.dst)) return false;
 
         if (this.cost_so_far.get(current.pos)) |best_ms| {
@@ -234,13 +233,11 @@ const Pathfind = struct {
     }
 };
 fn pathfindPath(map: *Map, src: vec2i32, dst: vec2i32, path_cfg: *const PathCfg) !void {
-    // for no-path detection we ought to do https://en.wikipedia.org/wiki/Connected-component_labeling
-    // ideally, updating when a tile updates rather than every frame if that's something that can be done.
-    // although that won't work for one-way paths unfortunately
     var pathfind: Pathfind = try .init(map, src, dst, path_cfg);
     defer pathfind.deinit();
-    while (try pathfind.step()) {}
-    std.log.err("maybe found path in {d} steps. cost_ms: {?d}", .{ pathfind.steps, pathfind.cost_so_far.get(dst) });
+    var steps: usize = 0;
+    while (try pathfind.step()) : (steps += 1) {}
+    std.log.err("{d} steps; cost_ms: {?d}", .{ steps, pathfind.cost_so_far.get(dst) });
 }
 
 const Map = struct {
