@@ -11,14 +11,14 @@ const vec2usize = @Vector(2, usize);
 
 const MAP_SIZE: vec2usize = .{ 200, 300 };
 
-const TileMaterial = enum {
+const MaterialTag = enum {
     none,
     unobtanium,
     dirt,
     stone,
     shelf,
 
-    fn canStandOn(mat: TileMaterial) bool {
+    fn canStandOn(mat: MaterialTag) bool {
         return switch (mat) {
             .none => false,
             .unobtanium => true,
@@ -27,7 +27,7 @@ const TileMaterial = enum {
             .shelf => true,
         };
     }
-    fn canStandIn(mat: TileMaterial) bool {
+    fn canStandIn(mat: MaterialTag) bool {
         return switch (mat) {
             .none => true,
             .unobtanium => false,
@@ -40,22 +40,22 @@ const TileMaterial = enum {
 pub const milli_per_one = 1000000;
 pub const milli_per_kilo = 1000000000;
 pub const zero_millicelsius_in_millikelvin = 273150000;
-pub const Tile = struct {
-    material: TileMaterial,
+pub const Material = struct {
+    material: MaterialTag,
     mass_milligrams: u64,
     temperature_millikelvin: u64,
-    pub const empty: Tile = .{
+    pub const empty: Material = .{
         .material = .none,
         .mass_milligrams = 0,
         .temperature_millikelvin = 0,
     };
-    pub const unobtanium: Tile = .{
+    pub const unobtanium: Material = .{
         .material = .unobtanium,
         .mass_milligrams = 2000 * milli_per_kilo,
         .temperature_millikelvin = zero_millicelsius_in_millikelvin,
     };
 
-    pub fn energy(this: *const Tile) u128 {
+    pub fn energy(this: *const Material) u128 {
         _ = this;
         // potential energy: mass * gravity * height from y=0
         //    - lifting a tile requires energy, dropping a tile releases energy as heat?
@@ -226,17 +226,18 @@ fn pathfindPath(map: *Map, src: vec2i32, path_cfg: *const PathCfg) !void {
 
 const Player = struct {
     energy_millijoules: u64,
+    contents: [4]Material,
 };
 const PlayerPool = zpool.Pool(16, 16, Player, struct {
     ptr: Player,
 });
 const Map = struct {
     gpa: std.mem.Allocator,
-    tiles: Grid(Tile),
+    tiles: Grid(Material),
     players: PlayerPool,
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) !void {
-        const tiles: Grid(Tile) = try .init(gpa, MAP_SIZE);
+        const tiles: Grid(Material) = try .init(gpa, MAP_SIZE);
         errdefer tiles.deinit(gpa);
         @memset(tiles.items, .empty);
         this.* = .{
