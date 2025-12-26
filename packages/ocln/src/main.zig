@@ -39,20 +39,20 @@ const TileMaterial = enum {
 };
 pub const milli_per_one = 1000000;
 pub const milli_per_kilo = 1000000000;
-pub const zero_mc_in_mk = 273150000;
+pub const zero_millicelsius_in_millikelvin = 273150000;
 pub const Tile = struct {
     material: TileMaterial,
-    mass_mg: u64,
-    temperature_mk: u64,
+    mass_milligrams: u64,
+    temperature_millikelvin: u64,
     pub const empty: Tile = .{
         .material = .none,
-        .mass_mg = 0,
-        .temperature_mk = 0,
+        .mass_milligrams = 0,
+        .temperature_millikelvin = 0,
     };
     pub const unobtanium: Tile = .{
         .material = .unobtanium,
-        .mass_mg = 2000 * milli_per_kilo,
-        .temperature_mk = zero_mc_in_mk,
+        .mass_milligrams = 2000 * milli_per_kilo,
+        .temperature_millikelvin = zero_millicelsius_in_millikelvin,
     };
 
     pub fn energy(this: *const Tile) u128 {
@@ -224,19 +224,16 @@ fn pathfindPath(map: *Map, src: vec2i32, path_cfg: *const PathCfg) !void {
     std.log.info("{d} steps", .{steps});
 }
 
-const CreatureTag = enum {
-    player,
+const Player = struct {
+    energy_millijoules: u64,
 };
-const Creature = struct {
-    kind: CreatureTag,
-};
-const CreaturePool = zpool.Pool(16, 16, Creature, struct {
-    ptr: Creature,
+const PlayerPool = zpool.Pool(16, 16, Player, struct {
+    ptr: Player,
 });
 const Map = struct {
     gpa: std.mem.Allocator,
     tiles: Grid(Tile),
-    creatures: CreaturePool,
+    players: PlayerPool,
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) !void {
         const tiles: Grid(Tile) = try .init(gpa, MAP_SIZE);
@@ -245,12 +242,12 @@ const Map = struct {
         this.* = .{
             .gpa = gpa,
             .tiles = tiles,
-            .creatures = .init(gpa),
+            .players = .init(gpa),
         };
     }
     pub fn deinit(this: *Map) void {
         this.tiles.deinit(this.gpa);
-        this.creatures.deinit();
+        this.players.deinit();
     }
     pub fn generate(this: *Map) void {
         // fill floor and ceiling
