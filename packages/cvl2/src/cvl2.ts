@@ -791,6 +791,7 @@ export const highlights = {
     string: colors.green,
     keyword: colors.blue,
     brackets: colors.brblack,
+    operators: colors.brblack,
     builtin: colors.cyan,
     comment: colors.yellow,
     number: colors.magenta,
@@ -799,7 +800,7 @@ export const highlights = {
 };
 const rawHighlights: Partial<Record<RawTag, string>> = {
     return: highlights.keyword,
-    discard: highlights.brackets,
+    discard: highlights.keyword,
     string: highlights.string,
     comment: highlights.comment,
 };
@@ -807,12 +808,12 @@ const opHighlights: Partial<Record<OpTag, string>> = {
     def: highlights.keyword,
     pub: highlights.keyword,
     assign: highlights.keyword,
-    sep: highlights.brackets,
+    sep: highlights.operators,
     var: highlights.keyword,
 };
 const bracketHighlights: Partial<Record<BracketTag, string>> = {
     string: highlights.brackets,
-    colon_call: highlights.brackets,
+    colon_call: highlights.operators,
     map: highlights.brackets,
     list: highlights.brackets,
     code: highlights.brackets,
@@ -820,7 +821,7 @@ const bracketHighlights: Partial<Record<BracketTag, string>> = {
     inline_comment: highlights.brackets,
 };
 const identPrefixHighlights: Partial<Record<IdentifierTag, string>> = {
-    access: highlights.brackets,
+    access: highlights.operators,
     builtin: highlights.builtin,
 };
 const identValueHighlights: Partial<Record<IdentifierTag, string>> = {
