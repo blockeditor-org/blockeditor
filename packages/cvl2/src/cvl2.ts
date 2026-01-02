@@ -245,7 +245,7 @@ export interface TokenizationResult {
     errors: TokenizationError[];
 }
 
-const identifierRegex = /^[a-zA-Z0-9]$/;
+const identifierRegex = /^[a-zA-Z0-9_]$/;
 const whitespaceRegex = /^\s$/;
 const operatorChars = [..."~!@$%^&*-=+|/<>:."];
 

@@ -770,9 +770,18 @@ type ReadContainer = {
     env: Env,
     lines: {items: SyntaxNode[], pos: TokenPosition}[],
 };
+export type DestructureTag = {
+    kind: "callconv",
+    pos: TokenPosition,
+} | {
+    kind: "error",
+    pos: TokenPosition,
+    tok: ConsumedErrorToken,
+};
 export type Destructure = {
     extract: DestructureExtract,
     type: ComptimeType,
+    tags: DestructureTag[],
 };
 export type DestructureExtract = {
     kind: "single_item",
@@ -806,15 +815,35 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
         importantly, if destructure made a tuple here,
         it would not be equal to the type of the rhs which is problematic
     */
-    const lhsItems = trimWs(src);
+    let lhsItems = trimWs(src);
+    const rawTags = lhsItems.filter(itm => itm.kind === "ident" && itm.identTag === "builtin");
+    lhsItems = lhsItems.filter(itm => !(itm.kind === "ident" && itm.identTag === "builtin"));
+
     if (lhsItems.length < 1) throwErr(env, pos, "Expected at least one item to destructure" + printers.astNode.dumpList(src, 2));
     if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected item for destructuring. TODO support eg 'name: type := value'" + printers.astNode.dumpList(src, 2));
+
+    const processedTags = rawTags.map((tag): DestructureTag => {
+        if (tag.kind === "ident" && tag.str === "callconv_c") {
+            return {
+                kind: "callconv",
+                pos: tag.pos,
+            };
+        } else {
+            return {
+                kind: "error",
+                pos: tag.pos,
+                tok: addErr(env, tag.pos, "Bad tag: "+printers.astNode.dump(tag, 3)),
+            };
+        }
+    });
+
     const ident = lhsItems[0]!;
     if (ident.kind === "ident" && ident.identTag === "normal") {
         if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in destructure");
         return {
             extract: {kind: "single_item", name: ident.str, pos: ident.pos},
             type: {type: "unknown", pos: ident.pos},
+            tags: [],
         };
     } else if (ident.kind === "block" && ident.tag === "list") {
         const args = readBinary(env, ident.pos, ident.items, "sep");
@@ -829,6 +858,7 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
         return {
             extract: {kind: "list", items: extracts, pos: ident.pos},
             type: {type: "tuple", children: types, pos: ident.pos},
+            tags: [],
         };
         throwErr(env, ident.pos, "TODO: support destructing map kind");
     }

@@ -1,6 +1,6 @@
 #builtin.main .= () => c.compile: [
     // sample comment
-    "main" .= (argc: c.ptr(c.ptr(c.char)), argv: c.int) #callconv(c.fn) => c.int: 25
+    "main" .= (argc: c.ptr(c.ptr(c.char)), argv: c.int) #callconv_c => c.int: 25
 ]
 
 demo :: std.Folder [
