@@ -818,8 +818,20 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
     let lhsItems = trimWs(src);
     const rawTags = lhsItems.filter(itm => itm.kind === "ident" && itm.identTag === "builtin");
     lhsItems = lhsItems.filter(itm => !(itm.kind === "ident" && itm.identTag === "builtin"));
-
     if (lhsItems.length < 1) throwErr(env, pos, "Expected at least one item to destructure" + printers.astNode.dumpList(src, 2));
+
+    let type: ComptimeType | undefined;
+    {
+        const last = lhsItems[lhsItems.length - 1]!;
+        if (last.kind === "block" && last.tag === "colon_call") {
+            // for setting the type
+            const block = emptyBlock();
+            const body = analyze(env, {type: "type", pos: compilerPos()}, last.pos, last.items, block);
+            const analyzed = comptimeEval(env, block, body.value, last.pos);
+            type = getComptime(env, "type", analyzed, last.pos).type;
+        }
+    }
+
     if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected item for destructuring. TODO support eg 'name: type := value'" + printers.astNode.dumpList(src, 2));
 
     const processedTags = rawTags.map((tag): DestructureTag => {
@@ -839,10 +851,9 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
 
     const ident = lhsItems[0]!;
     if (ident.kind === "ident" && ident.identTag === "normal") {
-        if (lhsItems.length > 1) throwErr(env, lhsItems[1]!.pos, "Unexpected trailing item in destructure");
         return {
             extract: {kind: "single_item", name: ident.str, pos: ident.pos},
-            type: {type: "unknown", pos: ident.pos},
+            type: type ?? {type: "unknown", pos: ident.pos},
             tags: [],
         };
     } else if (ident.kind === "block" && ident.tag === "list") {
@@ -855,12 +866,12 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
             extracts.push(sub.extract);
             types.push(sub.type);
         }
+        if (type) throwErr(env, ident.pos, "TODO support setting type on block in destructure");
         return {
             extract: {kind: "list", items: extracts, pos: ident.pos},
             type: {type: "tuple", children: types, pos: ident.pos},
             tags: [],
         };
-        throwErr(env, ident.pos, "TODO: support destructing map kind");
     }
     throwErr(env, ident.pos, `Unsupported kind for destructuring: ${ident.kind}`);
 }
