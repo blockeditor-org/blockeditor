@@ -24,11 +24,15 @@ pub fn Grid(comptime Child: type) type {
         pub fn deinit(this: *Self, gpa: std.mem.Allocator) void {
             gpa.free(this.items);
         }
-        pub fn get(this: *Self, pos: vec2i32) Child {
+        pub fn get(this: *const Self, pos: vec2i32) Child {
             const idx = posToIndex(this.size, pos) orelse return .empty;
             return this.items[idx];
         }
-        pub fn set(this: *Self, pos: vec2i32, value: Child) void {
+        pub fn ptr(this: *const Self, pos: vec2i32) *Child {
+            const idx = posToIndex(this.size, pos) orelse return .empty;
+            return &this.items[idx];
+        }
+        pub fn set(this: *const Self, pos: vec2i32, value: Child) void {
             const idx = posToIndex(this.size, pos) orelse return;
             this.items[idx] = value;
         }

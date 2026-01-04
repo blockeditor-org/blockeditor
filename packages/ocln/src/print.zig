@@ -217,12 +217,12 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                     // ideally the fields should be contiguous too. otherwise we could need a StaticMap(u64, []const u8) for the keys
                     break :blk .{ .custom = .{ .dump = printEnum(Ty) } };
                 },
-                .int => |int_data| {
-                    if (std.math.divExact(u16, int_data.bits, 8)) |_| {
-                        // TODO: don't need the fn ptr for this one
-                    } else |_| {
-                        // else
-                    }
+                .int, .float => {
+                    // if (std.math.divExact(u16, int_data.bits, 8)) |_| {
+                    //     // TODO: don't need the fn ptr for this one
+                    // } else |_| {
+                    //     // else
+                    // }
                     break :blk .{ .custom = .{ .dump = printInt(Ty) } };
                 },
                 .array => |arr| {
@@ -276,6 +276,19 @@ const DetailedAny = struct {
         return @ptrCast(any.obj[n..]);
     }
 };
+fn AutoPrintT(comptime T: type) type {
+    return struct {
+        val: T,
+        pub fn format(self: @This(), out: *std.Io.Writer) !void {
+            try print(out, self.val, &.{
+                .tty = .escape_codes,
+            });
+        }
+    };
+}
+pub fn autoPrint(obj: anytype) AutoPrintT(@TypeOf(obj)) {
+    return .{ .val = obj };
+}
 const Printer = struct {
     cfg: *const PrintCfg,
     out: *std.Io.Writer,

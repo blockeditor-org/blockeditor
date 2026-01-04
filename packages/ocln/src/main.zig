@@ -285,3 +285,7 @@ test Map {
 
     try pathfindPath(map, .{ 50, 1 }, &.{});
 }
+
+test {
+    _ = @import("power.zig");
+}
