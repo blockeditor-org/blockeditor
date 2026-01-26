@@ -177,5 +177,23 @@ test "power" {
     try network.calculate();
 
     _ = connection;
-    std.log.info("results: {f}", .{printer.autoPrint(&network)});
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&network),
+        \\*: power.PowerNetwork:
+        \\ nodes: array_list.Aligned(power.Node,null):
+        \\  items: []power.Node:
+        \\   0: power.Node:
+        \\    intrinsic_value: 1080
+        \\   1: power.Node:
+        \\    intrinsic_value: -1080
+        \\  capacity: 16
+        \\ links: array_list.Aligned(power.Link,null):
+        \\  items: []power.Link:
+        \\   0: power.Link:
+        \\    src: 0
+        \\    dst: 1
+        \\    cost: 2000
+        \\    value: 1080
+        \\  capacity: 4
+        \\ gpa: std.testing.allocator
+    );
 }

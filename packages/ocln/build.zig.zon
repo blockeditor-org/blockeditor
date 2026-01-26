@@ -3,6 +3,8 @@
     .version = "0.0.1",
     .dependencies = .{
         .anywhere = .{ .path = "../anywhere" },
+        .beui = .{ .path = "../beui" },
+        .beui_app = .{ .path = "../beui_app" },
     },
     .paths = .{""},
     .fingerprint = 0x6bd225c47151a5b2,

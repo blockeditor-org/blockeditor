@@ -20,6 +20,13 @@ pub const AnyPtr = struct {
 };
 
 pub const testing = struct {
+    // consider changing how snapshots are implemented:
+    // Snapshot.init()
+    // defer Snapshot.deinit()
+    // Snapshot.writer.print()
+    // Snapshot.expect();
+    // also I thought -u was implemented but I guess not
+
     var mutex = std.Thread.Mutex{};
     var _initialized: std.atomic.Value(bool) = .init(false);
     var _should_update: bool = undefined;

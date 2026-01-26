@@ -246,6 +246,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
 }
 const PrintCfg = struct {
     tty: std.Io.tty.Config,
+    include_address: bool = false,
 };
 pub fn print(out: *std.Io.Writer, object: anytype, cfg: *const PrintCfg) Error!void {
     var printer: Printer = .{
@@ -288,6 +289,16 @@ fn AutoPrintT(comptime T: type) type {
 }
 pub fn autoPrint(obj: anytype) AutoPrintT(@TypeOf(obj)) {
     return .{ .val = obj };
+}
+pub fn snapshotPrint(obj: anytype) []const u8 {
+    const sw = struct {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    };
+    const alloc = sw.arena.allocator();
+    var writer = std.Io.Writer.Allocating.init(alloc);
+    defer writer.deinit();
+    print(&writer.writer, obj, &.{ .tty = .no_color, .include_address = false }) catch @panic("oom");
+    return writer.toOwnedSlice() catch @panic("oom");
 }
 const Printer = struct {
     cfg: *const PrintCfg,
@@ -397,10 +408,15 @@ const Printer = struct {
                     try printer.setColor(.reset);
                     return;
                 }
-                try printer.setColor(.blue);
-                try printer.print("0x", .{});
-                try printer.setColor(.magenta);
-                try printer.print("{X}", .{@intFromPtr(any.obj)});
+                if (printer.cfg.include_address) {
+                    try printer.setColor(.blue);
+                    try printer.print("0x", .{});
+                    try printer.setColor(.magenta);
+                    try printer.print("{X}", .{@intFromPtr(any.obj)});
+                } else {
+                    try printer.setColor(.blue);
+                    try printer.print("*", .{});
+                }
                 try printer.setColor(.bright_black);
                 try printer.print(": ", .{});
                 try printer.setColor(.reset);

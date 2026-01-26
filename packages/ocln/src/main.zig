@@ -3,6 +3,7 @@ const anywhere = @import("anywhere");
 const util = anywhere.util;
 const Grid = anywhere.util.grid.Grid;
 const zpool = anywhere.util.zpool;
+const printer = @import("print.zig");
 
 // https://en.wikipedia.org/wiki/Connected-component_labeling
 
@@ -228,7 +229,6 @@ fn pathfindPath(map: *Map, src: vec2i32, path_cfg: *const PathCfg) !void {
     defer pathfind.deinit();
     var steps: usize = 0;
     while (!try pathfind.step()) : (steps += 1) {}
-    std.log.info("{d} steps", .{steps});
 }
 
 const Player = struct {
@@ -280,15 +280,22 @@ test Map {
     map.generate();
 
     const path = calculatePathfindEdges(map, .{ MAP_SIZE[0] / 2, 1 }, &.{});
-    std.log.info("got path:", .{});
-    {
-        var buffer: [64]u8 = undefined;
-        const stderr = std.debug.lockStderrWriter(&buffer);
-        defer std.debug.unlockStderrWriter();
-        try stderr.writeAll("object: ");
-        @import("print.zig").print(stderr, path, &.{ .tty = .detect(std.fs.File.stderr()) }) catch {};
-        stderr.writeByte('\n') catch {};
-    }
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&path),
+        \\*: main.Path:
+        \\ bidi: [4]main.PathTarget:
+        \\  0: main.PathTarget:
+        \\   pos: .{ 2147483647, 2147483647 }
+        \\   cost_msec: 2147483647
+        \\  1: main.PathTarget:
+        \\   pos: .{ 99, 1 }
+        \\   cost_msec: 100
+        \\  2: main.PathTarget:
+        \\   pos: .{ 2147483647, 2147483647 }
+        \\   cost_msec: 2147483647
+        \\  3: main.PathTarget:
+        \\   pos: .{ 101, 1 }
+        \\   cost_msec: 100
+    );
 
     try pathfindPath(map, .{ 50, 1 }, &.{});
 }
