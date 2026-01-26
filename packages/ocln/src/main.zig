@@ -6,6 +6,13 @@ const zpool = anywhere.util.zpool;
 
 // https://en.wikipedia.org/wiki/Connected-component_labeling
 
+// in recipes:
+// - conserve energy. input energy = output energy
+// - mass is basically conserved even when heat is released. the lost mass is very small.
+//   we will probably not make recipes release heat then.
+
+// wire resolution: make a big graph and then simplify it. then send it to wires
+
 const vec2i32 = @Vector(2, i32);
 const vec2usize = @Vector(2, usize);
 
