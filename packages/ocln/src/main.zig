@@ -5,6 +5,35 @@ const Grid = anywhere.util.grid.Grid;
 const zpool = anywhere.util.zpool;
 const printer = @import("print.zig");
 
+const Beui = @import("beui").Beui;
+const B2 = Beui.beui_experiment;
+
+const App = @This();
+gpa: std.mem.Allocator,
+game: Game,
+pub fn init(self: *App, gpa: std.mem.Allocator) void {
+    self.* = .{ .gpa = gpa, .game = undefined };
+    self.game.init(gpa);
+}
+pub fn deinit(self: *App) void {
+    self.game.deinit();
+}
+pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
+    _ = self;
+    return call_id.b2.draw();
+}
+
+const Game = struct {
+    map: Map,
+    pub fn init(game: *Game, gpa: std.mem.Allocator) void {
+        game.* = .{ .map = undefined };
+        game.map.init(gpa) catch @panic("oom");
+    }
+    pub fn deinit(game: *Game) void {
+        game.map.deinit();
+    }
+};
+
 // https://en.wikipedia.org/wiki/Connected-component_labeling
 
 // in recipes:

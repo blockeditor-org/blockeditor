@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
 
     const beui_dep = b.dependency("beui", .{ .target = target, .optimize = optimize });
 
-    const anywhere_dep = b.dependency("anywhere", .{ .target = target, .optimize = optimize });
+    const anywhere_dep = b.dependency("anywhere", .{});
     const ocln = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,

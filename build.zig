@@ -39,6 +39,8 @@ pub fn build(b: *std.Build) void {
 
     const blockeditor_app = deps.beui_app.app(blockeditor_dep, "blockeditor");
     const blockeditor_app_install = deps.beui_app.installApp(b, blockeditor_app);
+    const ocln_app = deps.beui_app.app(ocln_dep, "ocln");
+    const ocln_app_install = deps.beui_app.installApp(b, ocln_app);
     b.installArtifact(blocks_net_dep.artifact("server"));
     b.getInstallStep().dependOn(&b.addInstallBinFile(minigamer_3ds_dep.namedLazyPath("minigamer.3dsx"), "mingamer.3dsx").step);
     // b.installArtifact(texteditor_dep.artifact("zls")); // disabled because zls isn't used so it's a bit of a waste of time to compile
@@ -69,6 +71,12 @@ pub fn build(b: *std.Build) void {
     run_blockeditor.step.dependOn(b.getInstallStep());
     const run_blockeditor_step = b.step("run", "Run");
     run_blockeditor_step.dependOn(&run_blockeditor.step);
+
+    const run_ocln = deps.beui_app.addRunApp(b, ocln_app, ocln_app_install);
+    if (b.args) |args| run_ocln.addArgs(args);
+    run_ocln.step.dependOn(b.getInstallStep());
+    const run_ocln_step = b.step("run-ocln", "Run");
+    run_ocln_step.dependOn(&run_ocln.step);
 
     const run_server = b.addRunArtifact(blocks_net_dep.artifact("server"));
     run_server.step.dependOn(b.getInstallStep());
