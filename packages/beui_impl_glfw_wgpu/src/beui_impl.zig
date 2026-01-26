@@ -901,6 +901,7 @@ pub fn main() !void {
             continue;
         }
         anywhere.zgui.framelog("frame: {d}", .{frame_num});
+        anywhere.zgui.framelog("last frame time: {D}", .{last_frame_time});
 
         if (beui.isKeyHeld(.mouse_middle)) {
             beui.frame.scroll_px += beui.frame.mouse_offset;
