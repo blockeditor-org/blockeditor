@@ -18,23 +18,6 @@ pub const LoadedImage = struct {
     }
 };
 const max_align = @alignOf(std.c.max_align_t);
-fn allocDecoder(
-    gpa: std.mem.Allocator,
-    comptime name: []const u8,
-) !struct { []align(max_align) u8, *wuffs.wuffs_base__image_decoder } {
-    const size = @field(wuffs, "sizeof__wuffs_" ++ name ++ "__decoder")();
-    const init_fn = @field(wuffs, "wuffs_" ++ name ++ "__decoder__initialize");
-    const upcast_fn = @field(wuffs, "wuffs_" ++ name ++ "__decoder__upcast_as__wuffs_base__image_decoder");
-
-    const decoder_raw = try gpa.alignedAlloc(u8, .fromByteUnits(max_align), size);
-    errdefer gpa.free(decoder_raw);
-    for (decoder_raw) |*byte| byte.* = 0;
-
-    try wrapErr(init_fn(@ptrCast(decoder_raw), size, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
-
-    const upcasted = upcast_fn(@ptrCast(decoder_raw)).?;
-    return .{ decoder_raw, upcasted };
-}
 pub const Loader = struct {
     // gpa is required to:
     // - allocate the decoder
@@ -75,22 +58,12 @@ pub const Loader = struct {
         );
         if (g_fourcc < 0) return error.CouldNotGuessFileFormat;
 
-        const decoder_raw, const g_image_decoder = switch (g_fourcc) {
-            wuffs.WUFFS_BASE__FOURCC__BMP => try allocDecoder(gpa, "bmp"),
-            wuffs.WUFFS_BASE__FOURCC__GIF => try allocDecoder(gpa, "gif"),
-            wuffs.WUFFS_BASE__FOURCC__JPEG => try allocDecoder(gpa, "jpeg"),
-            wuffs.WUFFS_BASE__FOURCC__NPBM => try allocDecoder(gpa, "netpbm"),
-            wuffs.WUFFS_BASE__FOURCC__NIE => try allocDecoder(gpa, "nie"),
-            wuffs.WUFFS_BASE__FOURCC__PNG => try allocDecoder(gpa, "png"),
-            wuffs.WUFFS_BASE__FOURCC__QOI => try allocDecoder(gpa, "qoi"),
-            wuffs.WUFFS_BASE__FOURCC__TGA => try allocDecoder(gpa, "tga"),
-            wuffs.WUFFS_BASE__FOURCC__WBMP => try allocDecoder(gpa, "wbmp"),
-            wuffs.WUFFS_BASE__FOURCC__WEBP => try allocDecoder(gpa, "webp"),
-            else => {
-                return error.UnsupportedImageFormat;
-            },
-        };
+        const decoder_size = getDecoderAllocationSize(g_fourcc) orelse return error.UnsupportedImageFormat;
+        const decoder_raw = try gpa.alignedAlloc(u8, .fromByteUnits(max_align), decoder_size);
         errdefer gpa.free(decoder_raw);
+        @memset(decoder_raw, 0);
+
+        const g_image_decoder = try initAndUpcast(g_fourcc, decoder_raw);
 
         var g_image_config = std.mem.zeroes(wuffs.wuffs_base__image_config);
         try wrapErr(wuffs.wuffs_base__image_decoder__decode_image_config(
@@ -143,7 +116,7 @@ pub const Loader = struct {
         try wrapErr(wuffs.wuffs_base__pixel_buffer__set_from_slice(&g_pixbuf, &self.internal.g_image_config.pixcfg, g_pixbuf_slice));
 
         const tab = wuffs.wuffs_base__pixel_buffer__plane(&g_pixbuf, 0);
-        if (tab.width != self.size[0] * 4 or tab.height != self.size[1]) {
+        if (tab.width != self.size[0] * format.channels() or tab.height != self.size[1]) {
             return error.InconsistentPixelBufferDimensions;
         }
 
@@ -186,6 +159,70 @@ fn wrapErr(status: wuffs.wuffs_base__status) !void {
         log.err("image load error: {s}", .{emsg});
         return error.WuffsError;
     }
+}
+
+fn getDecoderAllocationSize(g_fourcc: i32) ?usize {
+    return switch (g_fourcc) {
+        wuffs.WUFFS_BASE__FOURCC__BMP => wuffs.sizeof__wuffs_bmp__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__GIF => wuffs.sizeof__wuffs_gif__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__JPEG => wuffs.sizeof__wuffs_jpeg__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__NPBM => wuffs.sizeof__wuffs_netpbm__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__NIE => wuffs.sizeof__wuffs_nie__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__PNG => wuffs.sizeof__wuffs_png__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__QOI => wuffs.sizeof__wuffs_qoi__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__TGA => wuffs.sizeof__wuffs_tga__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__WBMP => wuffs.sizeof__wuffs_wbmp__decoder(),
+        wuffs.WUFFS_BASE__FOURCC__WEBP => wuffs.sizeof__wuffs_webp__decoder(),
+        else => null,
+    };
+}
+fn initAndUpcast(
+    g_fourcc: i32,
+    decoder_raw: []align(max_align) u8,
+) !*wuffs.wuffs_base__image_decoder {
+    return switch (g_fourcc) {
+        wuffs.WUFFS_BASE__FOURCC__BMP => {
+            try wrapErr(wuffs.wuffs_bmp__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_bmp__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__GIF => {
+            try wrapErr(wuffs.wuffs_gif__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_gif__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__JPEG => {
+            try wrapErr(wuffs.wuffs_jpeg__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_jpeg__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__NPBM => {
+            try wrapErr(wuffs.wuffs_netpbm__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_netpbm__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__NIE => {
+            try wrapErr(wuffs.wuffs_nie__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_nie__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__PNG => {
+            try wrapErr(wuffs.wuffs_png__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_png__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__QOI => {
+            try wrapErr(wuffs.wuffs_qoi__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_qoi__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__TGA => {
+            try wrapErr(wuffs.wuffs_tga__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_tga__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__WBMP => {
+            try wrapErr(wuffs.wuffs_wbmp__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_wbmp__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        wuffs.WUFFS_BASE__FOURCC__WEBP => {
+            try wrapErr(wuffs.wuffs_webp__decoder__initialize(@ptrCast(decoder_raw.ptr), decoder_raw.len, wuffs.WUFFS_VERSION, wuffs.WUFFS_INITIALIZE__ALREADY_ZEROED));
+            return wuffs.wuffs_webp__decoder__upcast_as__wuffs_base__image_decoder(@ptrCast(decoder_raw.ptr)).?;
+        },
+        else => return error.UnsupportedImageFormat,
+    };
 }
 
 test loadImage {
