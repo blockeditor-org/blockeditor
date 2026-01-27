@@ -33,7 +33,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
         loader.read(.rgba_nonpremul, self.art.?.mutate()) catch @panic("loadimage fail");
     }
 
-    // render tiles
+    // render tiles (TODO: for perf let's at least use addVertices directly instead of many calls to addRect)
     for (0..MAP_SIZE[1]) |y| {
         for (0..MAP_SIZE[0]) |x| {
             const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
@@ -49,6 +49,15 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             });
         }
     }
+
+    // next:
+    // - add a mouse catcher
+    //   - [ ] right-click pan
+    //   - [ ] scroll zoom
+    //   - [ ] left click set tile
+    // - keyboard catcher
+    //   - [ ] change active tile to set
+    // - save and load
 
     return rdl;
 }
