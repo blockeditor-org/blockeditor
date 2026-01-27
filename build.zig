@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
     const loadimage_wasm_dep = b.dependency("loadimage_wasm", .{});
     const logicgame_dep = b.dependency("logicgame", .{ .target = target, .optimize = optimize });
     const minigamer_3ds_dep = b.dependency("minigamer_3ds", .{ .optimize = optimize });
-    const ocln_dep = b.dependency("ocln", .{ .target = target, .optimize = optimize });
+    const ocln_dep = b.dependency("ocln", .{ .opts = opts.passIn(b) });
     const sheen_bidi_dep = b.dependency("sheen_bidi", .{ .target = target, .optimize = optimize });
     const texteditor_dep = b.dependency("texteditor", .{ .target = target, .optimize = optimize });
     const tracy_dep = b.dependency("tracy", .{ .target = b.resolveTargetQuery(.{}), .optimize = .ReleaseSafe });
