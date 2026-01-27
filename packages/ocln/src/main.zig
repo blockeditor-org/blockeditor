@@ -327,7 +327,9 @@ const Map = struct {
         this.* = .{
             .gpa = gpa,
             .tiles = tiles,
-            .players = .init(gpa),
+            .players = .init(gpa), // the CI error is because in zpool 'const f = @as([*]F, @ptrCast(@alignCast(p)));',
+            // 'p' is 'undefined' which fails the aligncast because slice.len is 0. so maybe it needs to special-case 0?
+            // unclear why it works on windows
         };
     }
     pub fn deinit(this: *Map) void {
