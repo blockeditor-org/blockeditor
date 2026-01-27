@@ -4,6 +4,7 @@ const util = anywhere.util;
 const Grid = anywhere.util.grid.Grid;
 const zpool = anywhere.util.zpool;
 const printer = @import("print.zig");
+const loadimage = @import("loadimage");
 
 const Beui = @import("beui").Beui;
 const B2 = Beui.beui_experiment;
@@ -11,16 +12,54 @@ const B2 = Beui.beui_experiment;
 const App = @This();
 gpa: std.mem.Allocator,
 game: Game,
+art: ?*B2.ImageCache.Image,
 pub fn init(self: *App, gpa: std.mem.Allocator) void {
-    self.* = .{ .gpa = gpa, .game = undefined };
+    self.* = .{ .gpa = gpa, .game = undefined, .art = null };
     self.game.init(gpa);
+    self.game.map.generate();
 }
 pub fn deinit(self: *App) void {
     self.game.deinit();
+    if (self.art) |art| art.destroy(self.gpa);
 }
 pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
-    _ = self;
-    return call_id.b2.draw();
+    const b2 = call_id.b2;
+    const rdl = call_id.b2.draw();
+
+    if (self.art == null) {
+        var loader: loadimage.Loader = loadimage.Loader.init(self.gpa, @embedFile("art.png")) catch @panic("loadimage fail");
+        defer loader.deinit();
+        self.art = B2.ImageCache.Image.create(self.gpa, @intCast(loader.size), .rgba);
+        loader.read(.rgba_nonpremul, self.art.?.mutate()) catch @panic("loadimage fail");
+    }
+
+    // render tiles
+    for (0..MAP_SIZE[1]) |y| {
+        for (0..MAP_SIZE[0]) |x| {
+            const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
+            const pos: @Vector(2, f32) = @floatFromInt(posint);
+            const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
+            const tile = self.game.map.tiles.get(posint);
+            rdl.addRect(.{
+                .pos = pos * @Vector(2, f32){ 14, 14 },
+                .size = .{ 14, 14 },
+                .uv_pos = uv.pos + (getTileOffset(tile.material) / @Vector(2, f32){ 256.0, 256.0 }) * uv.size,
+                .uv_size = uv.size * (@Vector(2, f32){ 14.0 / 256.0, 14.0 / 256.0 }),
+                .image = .rgba,
+            });
+        }
+    }
+
+    return rdl;
+}
+fn getTileOffset(material: MaterialTag) @Vector(2, f32) {
+    return switch (material) {
+        .none => .{ 1, 1 },
+        .unobtanium => .{ 65, 1 },
+        .stone => .{ 17, 1 },
+        .shelf => .{ 33, 1 },
+        else => .{ 49, 1 },
+    };
 }
 
 const Game = struct {

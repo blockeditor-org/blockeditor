@@ -5,6 +5,7 @@
         .anywhere = .{ .path = "../anywhere" },
         .beui = .{ .path = "../beui" },
         .beui_app = .{ .path = "../beui_app" },
+        .loadimage = .{ .path = "../loadimage" },
     },
     .paths = .{""},
     .fingerprint = 0x6bd225c47151a5b2,

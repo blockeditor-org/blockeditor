@@ -9,7 +9,7 @@
         },
         {
             "name": "Debug Blockeditor",
-            "preLaunchTask": "Build blockeditor (Debug)",
+            "preLaunchTask": "Build (Debug)",
             "type": "midas-gdb",
             "request": "launch",
             "program": "${workspaceFolder}/zig-out/bin/blockeditor",
@@ -22,7 +22,7 @@
         },
         {
           "name": "Debug Blockeditor (Mac)",
-          "preLaunchTask": "Build blockeditor (Debug)",
+          "preLaunchTask": "Build (Debug)",
           "type": "cppdbg",
           "request": "launch",
           "program": "${workspaceFolder}/zig-out/bin/blockeditor",
@@ -35,7 +35,7 @@
         },
         {
             "name": "Debug Blockeditor (Windows)",
-            "preLaunchTask": "Build blockeditor (Debug)",
+            "preLaunchTask": "Build (Debug)",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}\\zig-out\\bin\\blockeditor.exe",
@@ -44,8 +44,28 @@
             "stopAtEntry": true
         },
         {
+            "name": "Debug Ocln (Windows)",
+            "preLaunchTask": "Build (Debug)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\zig-out\\bin\\ocln.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": true
+        },
+        {
+            "name": "Debug Ocln (Windows, ReleaseSafe)",
+            "preLaunchTask": "Build (ReleaseSafe)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\zig-out\\bin\\ocln.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": true
+        },
+        {
             "name": "Profile Blockeditor",
-            "preLaunchTask": "Build blockeditor (ReleaseSafe + Tracy)",
+            "preLaunchTask": "Build (ReleaseSafe + Tracy)",
             "request": "launch",
             "type": "node",
             "runtimeExecutable": "zig",

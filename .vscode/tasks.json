@@ -3,7 +3,7 @@
     "tasks": [
         {
             "type": "process",
-            "label": "Build blockeditor (Debug)",
+            "label": "Build (Debug)",
             "command": "zig",
             "args": [
                 "build",
@@ -13,7 +13,18 @@
         },
         {
             "type": "process",
-            "label": "Build blockeditor (ReleaseSafe + Tracy)",
+            "label": "Build (ReleaseSafe)",
+            "command": "zig",
+            "args": [
+                "build",
+                "--prominent-compile-errors",
+                "-Doptimize=ReleaseSafe",
+            ],
+            "problemMatcher":"$zig"
+        },
+        {
+            "type": "process",
+            "label": "Build (ReleaseSafe + Tracy)",
             "command": "zig",
             "args": [
                 "build",
