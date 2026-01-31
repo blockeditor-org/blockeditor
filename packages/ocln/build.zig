@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const ocln_test = b.addTest(.{ .name = "test_ocln", .root_module = ocln });
+    const ocln_test = b.addTest(.{ .name = "test_ocln", .root_module = ocln, .use_llvm = true });
     if (opts.platform != .android) b.installArtifact(ocln_test);
 
     const run_test_step = b.addRunArtifact(ocln_test);
