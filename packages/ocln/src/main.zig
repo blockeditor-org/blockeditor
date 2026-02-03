@@ -34,6 +34,12 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     }
 
     // render tiles (TODO: for perf let's at least use addVertices directly instead of many calls to addRect)
+    // - 6ms is spent here & then finalizing. so we definitely shouldn't do this. maybe addVertices will be
+    //   enough but we should probably:
+    //   - make it into one buffer
+    //   - send it off in parallel to the gpu (double-buffered, render the previous frame's vertices this frame)
+    //   - make sure the camera buffer is applied as a uniform this frame so we get smooth camera movement
+    //     even if the contents of some renders are one frame delayed
     for (0..MAP_SIZE[1]) |y| {
         for (0..MAP_SIZE[0]) |x| {
             const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
