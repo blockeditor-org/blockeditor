@@ -614,13 +614,13 @@ pub fn executeCommand(self: *Core, command: EditorCommand) void {
                 return;
             }
             // TODO implement as 0-allocation or similar
-            const find_str = self.gpa.alloc(u8, end - start) catch @panic("oom");
+            const find_str = self.gpa.alloc(u8, @intCast(end - start)) catch @panic("oom");
             defer self.gpa.free(find_str);
             block.readSlice(block.positionFromDocbyte(start), find_str);
-            const left_str = self.gpa.alloc(u8, start) catch @panic("oom");
+            const left_str = self.gpa.alloc(u8, @intCast(start)) catch @panic("oom");
             defer self.gpa.free(left_str);
             block.readSlice(block.positionFromDocbyte(0), left_str);
-            const right_str = self.gpa.alloc(u8, block.length() - end) catch @panic("oom");
+            const right_str = self.gpa.alloc(u8, @intCast(block.length() - end)) catch @panic("oom");
             defer self.gpa.free(right_str);
             block.readSlice(block.positionFromDocbyte(end), right_str);
 
