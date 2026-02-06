@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Beui = @import("Beui.zig");
-const render_list = @import("render_list.zig");
+pub const render_list = @import("render_list.zig");
 const tracy = @import("anywhere").tracy;
 const util = @import("anywhere").util;
 const LayoutCache = @import("LayoutCache.zig");

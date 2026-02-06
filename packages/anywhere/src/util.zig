@@ -3,6 +3,12 @@ const std = @import("std");
 pub const zpool = @import("zpool");
 pub const grid = @import("util/grid.zig");
 
+pub const math = struct {
+    pub const vec2i32 = @Vector(2, i32);
+    pub const vec2i64 = @Vector(2, i64);
+    pub const vec2f32 = @Vector(2, f32);
+};
+
 pub const AnyPtr = struct {
     id: [*]const u8,
     val: *anyopaque,

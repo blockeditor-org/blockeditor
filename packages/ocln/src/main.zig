@@ -1,6 +1,7 @@
 const std = @import("std");
 const anywhere = @import("anywhere");
 const util = anywhere.util;
+const math = util.math;
 const Grid = anywhere.util.grid.Grid;
 const zpool = anywhere.util.zpool;
 const printer = @import("print.zig");
@@ -40,21 +41,52 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     //   - send it off in parallel to the gpu (double-buffered, render the previous frame's vertices this frame)
     //   - make sure the camera buffer is applied as a uniform this frame so we get smooth camera movement
     //     even if the contents of some renders are one frame delayed
+    var vertices = std.ArrayList(B2.render_list.RenderListVertex).empty;
+    defer vertices.deinit(self.gpa);
+    var indices = std.ArrayList(B2.render_list.RenderListIndex).empty;
+    defer indices.deinit(self.gpa);
     for (0..MAP_SIZE[1]) |y| {
         for (0..MAP_SIZE[0]) |x| {
             const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
             const pos: @Vector(2, f32) = @floatFromInt(posint);
             const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
             const tile = self.game.map.tiles.get(posint);
-            rdl.addRect(.{
-                .pos = pos * @Vector(2, f32){ 14, 14 },
-                .size = .{ 14, 14 },
-                .uv_pos = uv.pos + (getTileOffset(tile.material) / @Vector(2, f32){ 256.0, 256.0 }) * uv.size,
-                .uv_size = uv.size * (@Vector(2, f32){ 14.0 / 256.0, 14.0 / 256.0 }),
-                .image = .rgba,
-            });
+
+            const rect_pos: math.vec2f32 = pos * math.vec2f32{ 14, 14 };
+            const rect_size: math.vec2f32 = .{ 14, 14 };
+            const uv_pos: math.vec2f32 = uv.pos + (getTileOffset(tile.material) / math.vec2f32{ 256.0, 256.0 }) * uv.size;
+            const uv_size: math.vec2f32 = uv.size * (math.vec2f32{ 14.0 / 256.0, 14.0 / 256.0 });
+
+            const ul = rect_pos;
+            const ur = rect_pos + math.vec2f32{ rect_size[0], 0 };
+            const bl = rect_pos + math.vec2f32{ 0, rect_size[1] };
+            const br = rect_pos + rect_size;
+
+            const uv_ul = uv_pos;
+            const uv_ur = uv_pos + math.vec2f32{ uv_size[0], 0 };
+            const uv_bl = uv_pos + math.vec2f32{ 0, uv_size[1] };
+            const uv_br = uv_pos + uv_size;
+
+            if (vertices.items.len + 3 >= std.math.maxInt(B2.render_list.RenderListIndex)) {
+                // need to commit
+                rdl.addVertices(.rgba, vertices.items, indices.items);
+                vertices.clearRetainingCapacity();
+                indices.clearRetainingCapacity();
+            }
+            const ib: B2.render_list.RenderListIndex = @intCast(vertices.items.len);
+            vertices.appendSlice(self.gpa, &.{
+                .{ .pos = ul, .uv = uv_ul, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
+                .{ .pos = ur, .uv = uv_ur, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
+                .{ .pos = bl, .uv = uv_bl, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
+                .{ .pos = br, .uv = uv_br, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
+            }) catch @panic("oom");
+            indices.appendSlice(self.gpa, &.{
+                ib + 0, ib + 1, ib + 3,
+                ib + 0, ib + 3, ib + 2,
+            }) catch @panic("oom");
         }
     }
+    rdl.addVertices(.rgba, vertices.items, indices.items);
 
     // next:
     // - add a mouse catcher
