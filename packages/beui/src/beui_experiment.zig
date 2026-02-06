@@ -234,6 +234,7 @@ pub const Beui2 = struct {
                                 .pos = mpos,
                                 .action = .down,
                                 .drag_start_pos = self.persistent.mouse_pos_on_drag_start.?,
+                                .offset = self.persistent.uncommitted_move_offset,
                             })) |cursor| {
                                 self.persistent.beui1.frame.cursor = cursor;
                                 // it ate the event, so we set it as the mouse focus
@@ -258,6 +259,7 @@ pub const Beui2 = struct {
                                 .pos = self.persistent.mouse_pos,
                                 .action = .up,
                                 .drag_start_pos = self.persistent.mouse_pos_on_drag_start.?,
+                                .offset = self.persistent.uncommitted_move_offset,
                             }).?;
                         }
                     }
@@ -282,6 +284,7 @@ pub const Beui2 = struct {
                             .pos = mpos,
                             .action = .move_while_down,
                             .drag_start_pos = self.persistent.mouse_pos_on_drag_start.?,
+                            .offset = self.persistent.uncommitted_move_offset,
                         }).?;
                     }
                 }
@@ -301,6 +304,7 @@ pub const Beui2 = struct {
                             .pos = mpos,
                             .action = .move_while_up,
                             .drag_start_pos = mpos,
+                            .offset = self.persistent.uncommitted_move_offset,
                         })) |cursor| {
                             self.persistent.beui1.frame.cursor = cursor;
                             break;
@@ -1502,6 +1506,7 @@ pub const MouseEvent = struct {
     capture_pos: @Vector(2, f32),
     capture_size: @Vector(2, f32),
     pos: ?@Vector(2, f32),
+    offset: @Vector(2, f32),
     drag_start_pos: ?@Vector(2, f32),
     action: enum { down, up, move_while_down, move_while_up },
 };

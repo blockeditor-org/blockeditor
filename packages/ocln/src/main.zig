@@ -13,6 +13,7 @@ const B2 = Beui.beui_experiment;
 const App = @This();
 gpa: std.mem.Allocator,
 game: Game,
+camera: Camera = .{},
 art: ?*B2.ImageCache.Image,
 pub fn init(self: *App, gpa: std.mem.Allocator) void {
     self.* = .{ .gpa = gpa, .game = undefined, .art = null };
@@ -26,6 +27,7 @@ pub fn deinit(self: *App) void {
 pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     const b2 = call_id.b2;
     const rdl = call_id.b2.draw();
+    const frame_size = b2.frame.frame_cfg.size;
 
     if (self.art == null) {
         var loader: loadimage.Loader = loadimage.Loader.init(self.gpa, @embedFile("art.png")) catch @panic("loadimage fail");
@@ -41,6 +43,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     //   - send it off in parallel to the gpu (double-buffered, render the previous frame's vertices this frame)
     //   - make sure the camera buffer is applied as a uniform this frame so we get smooth camera movement
     //     even if the contents of some renders are one frame delayed
+    // especially we want our own vertex format instead of the generic one
     var vertices = std.ArrayList(B2.render_list.RenderListVertex).empty;
     defer vertices.deinit(self.gpa);
     var indices = std.ArrayList(B2.render_list.RenderListIndex).empty;
@@ -52,7 +55,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
             const tile = self.game.map.tiles.get(posint);
 
-            const rect_pos: math.vec2f32 = pos * math.vec2f32{ 14, 14 };
+            const rect_pos: math.vec2f32 = pos * @as(math.vec2f32, @splat(self.camera.scale)) + self.camera.offset;
             const rect_size: math.vec2f32 = .{ 14, 14 };
             const uv_pos: math.vec2f32 = uv.pos + (getTileOffset(tile.material) / math.vec2f32{ 256.0, 256.0 }) * uv.size;
             const uv_size: math.vec2f32 = uv.size * (math.vec2f32{ 14.0 / 256.0, 14.0 / 256.0 });
@@ -88,6 +91,12 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     }
     rdl.addVertices(.rgba, vertices.items, indices.items);
 
+    rdl.addMouseEventCapture2(call_id.sub(@src()), .{ 0, 0 }, frame_size, .{
+        .buttons = .all,
+        .onMouseEvent = .from(self, onMouseEvent),
+        .onScrollEvent = .from(self, onScrollEvent),
+    });
+
     // next:
     // - add a mouse catcher
     //   - [ ] right-click pan
@@ -99,6 +108,28 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
 
     return rdl;
 }
+
+fn onMouseEvent(self: *App, b2: *B2.Beui2, ev: B2.MouseEvent) ?Beui.Cursor {
+    // std.log.info("onMouseEvent: {f}", .{printer.autoPrint(ev)});
+    if (ev.action == .move_while_down or ev.action == .up) {
+        self.camera.offset += ev.offset;
+    }
+    _ = b2;
+    return .arrow;
+}
+fn onScrollEvent(self: *App, b2: *B2.Beui2, ev: B2.ScrollEvent) bool {
+    _ = self;
+    _ = b2;
+    _ = ev;
+    // this isn't called yet oops
+    return true;
+}
+
+const Camera = struct {
+    offset: @Vector(2, f32) = @splat(0),
+    scale: f32 = 14,
+};
+
 fn getTileOffset(material: MaterialTag) @Vector(2, f32) {
     return switch (material) {
         .none => .{ 1, 1 },

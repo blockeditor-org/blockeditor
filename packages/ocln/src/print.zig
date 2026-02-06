@@ -104,6 +104,20 @@ fn printInt(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) E
         }
     }.doPrint;
 }
+fn printOptional(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
+    return &struct {
+        fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
+            const cast = arg.cast(Ty);
+            if (cast.*) |*value| {
+                try printer.dump(.fromAuto(&value));
+            } else {
+                try printer.setColor(.magenta);
+                try printer.writeAll("null");
+                try printer.setColor(.reset);
+            }
+        }
+    }.doPrint;
+}
 fn printMultiArrayList(comptime Ty: type, comptime Child: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
     std.debug.assert(Ty == std.MultiArrayList(Child));
     return &struct {
@@ -237,7 +251,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                     const chTi = @typeInfo(opt.child);
                     if (chTi == .pointer) return typeDetails(opt.child);
                     // else we have to use .custom probably
-                    break :blk .{ .todo = .{ .msg = @typeName(Ty) } };
+                    break :blk .{ .custom = .{ .dump = printOptional(Ty) } };
                 },
                 else => break :blk .{ .todo = .{ .msg = @typeName(Ty) } },
             }
