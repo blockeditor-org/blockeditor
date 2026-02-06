@@ -13,7 +13,7 @@ const B2 = Beui.beui_experiment;
 const App = @This();
 gpa: std.mem.Allocator,
 game: Game,
-camera: Camera = .{},
+interface: Interface = .{},
 art: ?*B2.ImageCache.Image,
 pub fn init(self: *App, gpa: std.mem.Allocator) void {
     self.* = .{ .gpa = gpa, .game = undefined, .art = null };
@@ -55,7 +55,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
             const tile = self.game.map.tiles.get(posint);
 
-            const rect_pos: math.vec2f32 = pos * @as(math.vec2f32, @splat(self.camera.scale)) + self.camera.offset;
+            const rect_pos: math.vec2f32 = pos * @as(math.vec2f32, @splat(self.interface.camera.scale)) + self.interface.camera.offset;
             const rect_size: math.vec2f32 = .{ 14, 14 };
             const uv_pos: math.vec2f32 = uv.pos + (getTileOffset(tile.material) / math.vec2f32{ 256.0, 256.0 }) * uv.size;
             const uv_size: math.vec2f32 = uv.size * (math.vec2f32{ 14.0 / 256.0, 14.0 / 256.0 });
@@ -112,7 +112,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
 fn onMouseEvent(self: *App, b2: *B2.Beui2, ev: B2.MouseEvent) ?Beui.Cursor {
     // std.log.info("onMouseEvent: {f}", .{printer.autoPrint(ev)});
     if (ev.action == .move_while_down or ev.action == .up) {
-        self.camera.offset += ev.offset;
+        self.interface.camera.offset += ev.offset;
     }
     _ = b2;
     return .arrow;
@@ -125,9 +125,17 @@ fn onScrollEvent(self: *App, b2: *B2.Beui2, ev: B2.ScrollEvent) bool {
     return true;
 }
 
-const Camera = struct {
-    offset: @Vector(2, f32) = @splat(0),
-    scale: f32 = 14,
+const Interface = struct {
+    camera: struct {
+        offset: @Vector(2, f32) = @splat(0),
+        scale: f32 = 14,
+    } = .{},
+
+    pub fn serdes(item: *Interface, comptime mode: util.SerializeDeserialize, value: *util.SerializeDeserialize.Value(mode)) void {
+        item.camera.scale = value.unique(f32, &item.camera.scale);
+        item.camera.offset[0] = value.unique(f32, &item.camera.offset[0]);
+        item.camera.offset[1] = value.unique(f32, &item.camera.offset[1]);
+    }
 };
 
 fn getTileOffset(material: MaterialTag) @Vector(2, f32) {
