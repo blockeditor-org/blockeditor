@@ -10,6 +10,18 @@ const loadimage = @import("loadimage");
 const Beui = @import("beui").Beui;
 const B2 = Beui.beui_experiment;
 
+// fluid https://en.wikipedia.org/wiki/Bernoulli%27s_principle#Incompressible_flow_equation
+// https://en.wikipedia.org/wiki/Siphon
+//
+// force amounts
+// 100kPa = 10kN
+// 1kG = 10N
+// a cube of 100Kg water with air above it applies forces:
+// - 11N force down (air pressure + gravity)
+// - 10.5N force left/right (air pressure + ½gravity) (at the bottom it is 1gravity, at the top it is 0gravity, linear interpolation)
+// - 10N force up (cancelling air pressure)
+// - the net is no change
+
 const App = @This();
 gpa: std.mem.Allocator,
 game: Game,
