@@ -69,11 +69,12 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const pos: @Vector(2, f32) = @floatFromInt(posint);
             const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
             const tile = self.game.map.tiles.get(posint);
+            if (tile.material == .none) continue;
 
             const rect_pos: math.vec2f32 = pos * @as(math.vec2f32, @splat(self.interface.camera.scale)) + self.interface.camera.offset;
-            const rect_size: math.vec2f32 = .{ 14, 14 };
+            const rect_size: math.vec2f32 = .{ 16, 16 };
             const uv_pos: math.vec2f32 = uv.pos + (getTileOffset(tile.material) / math.vec2f32{ 256.0, 256.0 }) * uv.size;
-            const uv_size: math.vec2f32 = uv.size * (math.vec2f32{ 14.0 / 256.0, 14.0 / 256.0 });
+            const uv_size: math.vec2f32 = uv.size * (math.vec2f32{ 16.0 / 256.0, 16.0 / 256.0 });
 
             const ul = rect_pos;
             const ur = rect_pos + math.vec2f32{ rect_size[0], 0 };
@@ -105,6 +106,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
         }
     }
     rdl.addVertices(.rgba, vertices.items, indices.items);
+    rdl.addRect(.{ .pos = .{ 0, 0 }, .size = frame_size, .tint = .fromHexRgb(0x00c0c0) });
 
     rdl.addMouseEventCapture2(call_id.sub(@src()), .{ 0, 0 }, frame_size, .{
         .buttons = .all,
@@ -143,7 +145,7 @@ fn onScrollEvent(self: *App, b2: *B2.Beui2, ev: B2.ScrollEvent) bool {
 const Interface = struct {
     camera: struct {
         offset: @Vector(2, f32) = @splat(0),
-        scale: f32 = 14,
+        scale: f32 = 16,
     } = .{},
 
     pub fn serdes(item: *Interface, comptime mode: util.SerializeDeserialize, value: *util.SerializeDeserialize.Value(mode)) void {
@@ -155,11 +157,11 @@ const Interface = struct {
 
 fn getTileOffset(material: MaterialTag) @Vector(2, f32) {
     return switch (material) {
-        .none => .{ 1, 1 },
-        .unobtanium => .{ 65, 1 },
-        .stone => .{ 17, 1 },
-        .shelf => .{ 33, 1 },
-        else => .{ 49, 1 },
+        .unobtanium => .{ 64, 0 },
+        .stone => .{ 16, 0 },
+        .dirt => .{ 16, 16 },
+        .shelf => .{ 32, 9 },
+        else => .{ 48, 0 },
     };
 }
 
@@ -186,7 +188,7 @@ const Game = struct {
 const vec2i32 = @Vector(2, i32);
 const vec2usize = @Vector(2, usize);
 
-const MAP_SIZE: vec2usize = .{ 200, 300 };
+const MAP_SIZE: vec2usize = .{ 45, 20 };
 
 const MaterialTag = enum {
     none,
