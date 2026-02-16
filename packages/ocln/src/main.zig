@@ -22,6 +22,9 @@ const B2 = Beui.beui_experiment;
 // - 10N force up (cancelling air pressure)
 // - the net is no change
 
+// pipes: we need to decide on a mini 3x3 grid vs a hex grid
+// probably 3x3 is our choice. it seems more fun.
+
 const App = @This();
 gpa: std.mem.Allocator,
 game: Game,
