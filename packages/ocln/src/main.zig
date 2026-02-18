@@ -11,6 +11,59 @@ const vec = util.vec;
 const Beui = @import("beui").Beui;
 const B2 = Beui.beui_experiment;
 
+// storage:
+//   for pathfinding, we want:
+//     (x, y) => packed struct {can_stand: bool, can_climb: bool}
+//   for heat transfer, we want:
+//     (x, y, layer) => heat transfer info
+//   for wire resolution, we want:
+//     (x, y) => [4]Wire.Handle: list of wire ids that are on this handle
+//        - this is so when you delete a wire, it can identify which wire to split in the graph
+//        - or when you place a wire, it can identify
+//        - and while rendering, if a wires_and_pipes tile is identified, it can determine which wire sprite to render
+//        - note that crossovers are implemented by having two wires | - whereas connections are implemented by
+//          having four wires -||-
+//     place/remove a wire: add/remove it from the graph
+//  for fluid pressure transfer, we want:
+//    - not sure yet
+//    - we have to go over the whole grid and output [4]f32 for each tile = newtons force in that direction
+//    - and we have to keep stepping somehow to continue to resolve
+//      ie there is a 2N force from the left tile, here is how it propagates (X=water,S=solid,V is applying the force)
+//      V
+//      ↓2N
+//      X →2N X -0N X -0N S
+//      X →2N X →2N X -0N S
+//      X →2N X →2N X →2N S
+//      X →2N X →2N X -0N S
+//      X →2N X -0N X -0N S
+//      X -0N X -0N X -0N S
+//      that might be a linear equation solver. surely there is a way we can shift it over multiple frames
+//      so it doesn't take 8e12 steps for a 100x200 grid.
+//  for gui, we want:
+//     (x, y) => wire|pipe|tile|..., and it can literally be a linear scan if we need. it's once per frame.
+// so:
+// - we will have:
+//   - heat_transfer: Grid(3, i32, HeatTransferInfo)
+//   - flags: Grid(2, i32, TileFlags)
+//   - wire_pool: Pool(16, 16, Wire, struct {ptr: Wire})
+// - TileFlags = packed struct { can_stand: bool, can_climb: bool, has_wire: bool, has_pipe: bool };
+// - for heat transfer we will have a Grid(3, i32, Material)
+// - heat transfer will occur between all layers
+// - we could have 3 layers [tile,wires_and_pipes,buildings]
+
+const Layers = enum {
+    // liquid/gas | solid
+    tile,
+    // none | wire | pipe | wire_and_pipe
+    wires_and_pipes,
+    //
+    buildings,
+
+    pub fn int(self: Layers) i32 {
+        return @intFromEnum(self);
+    }
+};
+
 // fluid https://en.wikipedia.org/wiki/Bernoulli%27s_principle#Incompressible_flow_equation
 // https://en.wikipedia.org/wiki/Siphon
 //
@@ -69,7 +122,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
             const pos: @Vector(2, f32) = @floatFromInt(posint);
             const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
-            const tile = self.game.map.tiles.get(posint);
+            const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() });
             if (tile.material == .none) continue;
 
             const rect_pos: math.vec2f32 = pos * @as(math.vec2f32, @splat(self.interface.camera.scale)) + self.interface.camera.offset;
@@ -187,6 +240,7 @@ const Game = struct {
 // wire resolution: make a big graph and then simplify it. then send it to wires
 
 const MAP_SIZE: vec.by2usize = .{ 45, 20 };
+const MAP_NLAYERS: usize = @typeInfo(Layers).@"enum".fields.len;
 
 const MaterialTag = enum {
     none,
@@ -268,12 +322,12 @@ const Path = struct {
 
 fn checkFit(map: *Map, pos: vec.by2i32) bool {
     return true and
-        map.tiles.get(pos + vec.by2i32{ 0, 1 }).material.canStandIn() and
-        map.tiles.get(pos).material.canStandIn() and
+        map.tile_flags.get(pos + vec.by2i32{ 0, 1 }).can_enter and
+        map.tile_flags.get(pos).can_enter and
         true;
 }
 fn checkStand(map: *Map, pos: vec.by2i32) bool {
-    return map.tiles.get(pos + vec.by2i32{ 0, -1 }).material.canStandOn();
+    return map.tile_flags.get(pos + vec.by2i32{ 0, -1 }).can_stand;
 }
 fn checkStandAndFit(map: *Map, pos: vec.by2i32) bool {
     return checkStand(map, pos) and checkFit(map, pos);
@@ -409,30 +463,50 @@ const PlayerPool = zpool.Pool(16, 16, Player, struct {
 });
 const BuildingEntityTag = struct {};
 
+const TileFlags = packed struct {
+    can_enter: bool,
+    can_stand: bool, // enter=false,stand=true means can climb. enter=false,stand=false = spikes or smth.
+    has_wire: bool,
+    has_pipe: bool,
+    pub const empty: TileFlags = .{
+        .can_enter = false,
+        .can_stand = false,
+        .has_wire = false,
+        .has_pipe = false,
+    };
+};
 const Map = struct {
     gpa: std.mem.Allocator,
-    tiles: Grid(2, i32, Material),
+    materials: Grid(3, i32, Material),
+    tile_flags: Grid(2, i32, TileFlags),
     players: PlayerPool,
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) !void {
-        var tiles: Grid(2, i32, Material) = try .init(gpa, MAP_SIZE);
-        errdefer tiles.deinit(gpa);
-        @memset(tiles.items, .empty);
+        var materials: Grid(3, i32, Material) = try .init(gpa, .{ MAP_SIZE[0], MAP_SIZE[1], MAP_NLAYERS });
+        errdefer materials.deinit(gpa);
+        var tile_flags: Grid(2, i32, TileFlags) = try .init(gpa, MAP_SIZE);
+        errdefer tile_flags.deinit(gpa);
+        @memset(tile_flags.items, .empty);
         this.* = .{
             .gpa = gpa,
-            .tiles = tiles,
+            .materials = materials,
+            .tile_flags = tile_flags,
             .players = .init(gpa),
         };
     }
     pub fn deinit(this: *Map) void {
-        this.tiles.deinit(this.gpa);
+        this.materials.deinit(this.gpa);
+        this.tile_flags.deinit(this.gpa);
         this.players.deinit();
     }
     pub fn generate(this: *Map) void {
         // fill floor and ceiling
         for (0..MAP_SIZE[0]) |x| {
-            this.tiles.set(.{ @intCast(x), 0 }, .unobtanium);
-            this.tiles.set(.{ @intCast(x), @intCast(MAP_SIZE[1] - 1) }, .unobtanium);
+            const xi: i32 = @intCast(x);
+            this.materials.set(.{ xi, 0, Layers.tile.int() }, .unobtanium);
+            this.tile_flags.ptr(.{ xi, 0 }).?.can_stand = true;
+            this.materials.set(.{ xi, @intCast(MAP_SIZE[1] - 1), Layers.tile.int() }, .unobtanium);
+            this.tile_flags.ptr(.{ xi, @intCast(MAP_SIZE[1] - 1) }).?.can_stand = true;
         }
     }
     pub fn measureEnergy(this: *Map) u128 {
