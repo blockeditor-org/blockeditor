@@ -189,6 +189,7 @@ const vec2i32 = @Vector(2, i32);
 const vec2usize = @Vector(2, usize);
 
 const MAP_SIZE: vec2usize = .{ 45, 20 };
+const MAP_NLAYERS = 5;
 
 const MaterialTag = enum {
     none,
@@ -410,38 +411,24 @@ const PlayerPool = zpool.Pool(16, 16, Player, struct {
     ptr: Player,
 });
 const BuildingEntityTag = struct {};
-const BuildingEntity = struct {
-    size: vec2i32,
-    tag: BuildingEntityTag,
-};
-const BuildingEntityPool = zpool.Pool(16, 16, BuildingEntity, struct {
-    ptr: BuildingEntity,
-});
+
 const Map = struct {
     gpa: std.mem.Allocator,
     tiles: Grid(Material),
-    buildings: Grid(BuildingEntityPool.Handle),
-    building_pool: BuildingEntityPool,
     players: PlayerPool,
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) !void {
         var tiles: Grid(Material) = try .init(gpa, MAP_SIZE);
         errdefer tiles.deinit(gpa);
         @memset(tiles.items, .empty);
-        var buildings: Grid(BuildingEntityPool.Handle) = try .init(gpa, MAP_SIZE);
-        errdefer buildings.deinit(gpa);
-        @memset(buildings.items, .nil);
         this.* = .{
             .gpa = gpa,
             .tiles = tiles,
-            .buildings = buildings,
-            .building_pool = .init(gpa),
             .players = .init(gpa),
         };
     }
     pub fn deinit(this: *Map) void {
         this.tiles.deinit(this.gpa);
-        this.buildings.deinit(this.gpa);
         this.players.deinit();
     }
     pub fn generate(this: *Map) void {
