@@ -27,7 +27,7 @@ NodeChildren :: \node Node.filter(n => n.parent == node).sort(a, b => a.name - b
 
 */
 
-type UserType = {link: string} | {intrinsic: string};
+type UserType = string;
 type UserDataFields = {
   [key: string]: UserType,
 };
@@ -56,21 +56,21 @@ type User = {classes: UserData, get: UserGetQueries, insert: UserInsertQueries};
 type ResolveDataFields = {
 
 };
-type ResolveType = {kind: "ref", class: string} | {kind: "u8"} | {kind: "order"};
-type ResolveMappingValue = {
-  class: string,
-  field: string,
+type ResolveType = {kind: "ref", class: string} | {kind: "u8"} | {kind: "Order"};
+type ResolveClass = {
+  fields: Map<string, ResolveType>,
 };
 type ResolveMapping = {
   class: string,
-  fromFields: string[],
-  toFields: string[],
+  fromFields: Set<string>,
+  toFields: Set<string>,
   sortField: string,
   sortMode: ResolveSortMode,
 };
-type ResolveSortMode = "none" | "appendOnly" | "appendPrepend" | "rbTree";
+type ResolveSortMode = "none" | "appendOnly" | "appendPrepend" | "tree";
 type Resolve = {
   mappings: ResolveMapping[],
+  classes: Map<string, ResolveClass>,
 };
 type ResolveMappingCS = {
   class: string,
@@ -82,6 +82,13 @@ function csKey(cs: ResolveMappingCS): string {
     sortField: cs.sortField,
   });
 }
+function amKey(am: ResolveMapping): string {
+  return JSON.stringify({
+    class: am.class,
+    fromFields: [...am.fromFields].toSorted(),
+    sortField: am.sortField,
+  });
+}
 function unionSortMode(a: ResolveSortMode, b: ResolveSortMode): ResolveSortMode {
   if (a === "none") return b;
   if (b === "none") return a;
@@ -89,7 +96,7 @@ function unionSortMode(a: ResolveSortMode, b: ResolveSortMode): ResolveSortMode 
   if (b === "appendOnly") return a;
   if (a === "appendPrepend") return b;
   if (b === "appendPrepend") return a;
-  return "rbTree";
+  return "tree";
 }
 function exclam<T>(v: T | undefined): NoInfer<T> {
   if (!v) throw new Error("no exclam");
@@ -97,6 +104,7 @@ function exclam<T>(v: T | undefined): NoInfer<T> {
 }
 function initDb(user: User) {
   const allMappings: ResolveMapping[] = [];
+  const amToMapping: Map<string, ResolveMapping> = new Map();
   const csToMapping = new Map<string, ResolveMapping[]>();
   function getCS(cs: ResolveMappingCS): ResolveMapping[] {
     const key = csKey(cs);
@@ -105,58 +113,204 @@ function initDb(user: User) {
     return list;
   }
   function addMapping(m: ResolveMapping) {
+    const am = amKey(m);
+    const pm = amToMapping.get(am)!;
+    if (pm) {
+      // extend the mapping rather than adding a new one
+      pm.sortMode = unionSortMode(pm.sortMode, m.sortMode);
+      for (const toField of m.toFields) {
+        pm.toFields.add(toField);
+      }
+      return;
+    }
+    amToMapping.set(am, m);
     allMappings.push(m);
     getCS({class: m.class, sortField: m.sortField}).push(m);
   }
 
   for (const [name, value] of Object.entries(user.get)) {
     if (value.sort.length !== 1) throw new Error("todo (no or multi) sort");
-    const mapping: ResolveMapping = {
+    addMapping({
       class: value.class,
-      fromFields: Object.entries(value.filter).map(([k]) => k),
-      toFields: [...value.get],
+      fromFields: new Set(Object.entries(value.filter).map(([k]) => k)),
+      toFields: new Set(value.get),
       sortField: value.sort[0]![0],
       sortMode: "none",
-    };
-    addMapping(mapping);
+    });
   }
   for (const [name, value] of Object.entries(user.insert)) {
     for (const [insk, insv] of Object.entries(value.insert)) {
       const cs = getCS({class: value.class, sortField: insk});
-      const intrinsicSortMode: ResolveSortMode = insv === "last" ? "appendOnly" : insv === "first" ? "appendPrepend" : "rbTree";
+      const intrinsicSortMode: ResolveSortMode = insv === "last" ? "appendOnly" : insv === "first" ? "appendPrepend" : "tree";
       for (const mapping of cs) {
         mapping.sortMode = unionSortMode(mapping.sortMode, intrinsicSortMode);
       }
     }
   }
 
-  console.log(allMappings);
+  const allClasses: Map<string, ResolveClass> = new Map();
+  for (const [name, desc] of Object.entries(user.classes)) {
+    const resolveClass: ResolveClass = {fields: new Map()};
+    for (const [fieldName, userType] of Object.entries(desc)) {
+      let resolveType: ResolveType;
+      if (Object.hasOwn(user.classes, userType)) {
+        resolveType = {kind: "ref", class: userType};
+      } else if (userType === "u8") {
+        resolveType = {kind: "u8"};
+      } else if (userType === "Order") {
+        resolveType = {kind: "Order"};
+      } else throw new Error("unsupported user type? " + userType);
+      resolveClass.fields.set(fieldName, resolveType);
+    }
+    allClasses.set(name, resolveClass);
+  }
+
+  codegen({
+    mappings: allMappings,
+    classes: allClasses,
+  });
   // which shouldn't be too hard to codegen into
   // Map<Text, ArrayList(u8)>
   // which we should be able to further optimize into
   // Text = struct {data: ArrayList(u8)}
 }
 
-function codegen(mappings: ResolveMapping[]) {
-  let res: string[] = [];
-  for (const mapping of mappings) {
+const codeSym = Symbol("code");
+type Code = {__is_code: typeof codeSym};
+function c(a: TemplateStringsArray, ...b: (Code | undefined)[]): Code {
+  const result: Code[] = [];
+  for (let i = 0; i < a.length; i += 1) {
+    result.push(craw(a[i]!));
+    if (b[i]) result.push(b[i]!);
+  }
+  return craw(result);
+}
+function crender(a: Code): string {
+  const final: string[] = [];
+  crendersub(final, a, 0);
+  return final.join("");
+}
+function crendersub(out: string[], a: Code, indent: number): void {
+  const au = cunwrap(a);
+  if (typeof au === "string") {
+    if (au === "\n") {
+      out.push("\n" + " ".repeat(indent * 4));
+    } else {
+      out.push(au);
+    }
+  }else if (Array.isArray(au)) {
+    for (const elem of au) crendersub(out, elem, indent);
+  }else if ('indent' in au) {
+    return crendersub(out, au.indent, indent + 1);
+  } else throw new Error("crendersubtodo: " + au);
+}
+function cjoin(a: Code[], b: Code, prefixPostfix?: Code, postfix?: Code): Code {
+  postfix ??= prefixPostfix;
+  const result: Code[] = [];
+  if (prefixPostfix && a.length > 0) result.push(prefixPostfix);
+  for (let i = 0; i < a.length; i++) {
+    if (i !== 0) result.push(b);
+    result.push(a[i]!);
+  }
+  if (postfix && a.length > 0) result.push(postfix);
+  return craw(result);
+}
+function cindent(a: Code | undefined): Code {
+  if (!a) return craw([]);
+  return craw({indent: a});
+}
+const cnl = c`\n`;
+function cnljoin(a: Code[], postfix?: Code): Code {
+  return cjoin(a.map(cindent), cindent(c`\n`), cindent(c`${postfix}\n`), c`${cindent(postfix)}\n`);
+}
+type CodeRaw = string | Code[] | {indent: Code};
+function craw(a: CodeRaw): Code {
+  if (Array.isArray(a) && a.length === 1) return a[0]!;
+  return a as unknown as Code;
+}
+function cunwrap(a: Code): CodeRaw {
+  return a as unknown as CodeRaw;
+}
+
+
+function zigString(value: string): Code {
+  // not accurate but good enough for now
+  return craw(JSON.stringify(value));
+}
+function zigIdent(typeClass: string): Code {
+  // not accurate but good enough for now probably
+  if (typeClass.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) return craw(typeClass);
+  return craw("@" + JSON.stringify(typeClass));
+}
+function codegenClassRef(ctx: CodegenCtx, typeClass: string): Code {
+  return c`${zigIdent(typeClass)}.Handle`;
+}
+
+type CodegenCtx = {resolve: Resolve};
+function codegenType(ctx: CodegenCtx, type: ResolveType): Code {
+  if (type.kind === "Order") {
+    throw new Error("order should never be realized");
+  } else if (type.kind === "ref") {
+    return codegenClassRef(ctx, type.class);
+  } else if (type.kind === "u8") {
+    return c`u8`;
+  } else throw new Error("oops");
+}
+function codegenFieldsType(ctx: CodegenCtx, mappingClass: string, mappingFields: Set<string>): Code {
+  const srcClass = ctx.resolve.classes.get(mappingClass)!;
+  let fields: Code[] = [];
+  for (const field of [...mappingFields].toSorted()) {
+    const type = srcClass.fields.get(field)!;
+    fields.push(c`${zigIdent(field)}: ${codegenType(ctx, type)},`);
+  }
+  return c`struct {${cnljoin(fields)}}`;
+}
+const sortModeMap: {[key in ResolveSortMode]: Code} = {
+  none: c`.none`,
+  appendOnly: c`.append_only`,
+  appendPrepend: c`.append_prepend`,
+  tree: c`.tree`,
+};
+
+function codegen(resolve: Resolve) {
+  const ctx: CodegenCtx = {resolve};
+  const lines: Code[] = [];
+  let gid = 0;
+
+  lines.push(c``, c`// Mappings`);
+  for (let i = 0; i < resolve.mappings.length; i++) {
+    const mapping = resolve.mappings[i]!;
     // - give the mapping a name
+    const name = `mapping_${i}`;
     // - generate the type, ie Map(Text.Handle, Sorted(struct {char: u8}))
+    const from = codegenFieldsType(ctx, mapping.class, mapping.fromFields);
+    const to = codegenFieldsType(ctx, mapping.class, mapping.toFields);
+    const sort = sortModeMap[mapping.sortMode];
+    const type = c`Map(${sort}, ${from}, ${to})`;
+
+    lines.push(c`${zigIdent(name)}: ${type},`);
 
     // fn Map(K, V) return AutoArrayHashMap(K, V)
     // fn Sorted(T) switch(order) { .append_only => MultiArrayList(T), .rb_tree => RbTree(T) }
   }
+
+  lines.push(c``, c`// Handle Types`);
+  // we don't actually want all of these. we want Text but not Text.Character
+  for (const [className, classData] of resolve.classes) {
+    lines.push(c`const ${zigIdent(className)} = Pool(32, 32, opaque{}, struct{});`);
+  }
+
   // TODO: generate the insert & get functions
-  return res.join("");
+  console.log(crender(cjoin(lines, cnl, undefined, cnl)));
 }
 
 initDb({
   classes: {
     "Text": {},
     "Text.Character": {
-      owner: {link: "Text"},
-      char: {intrinsic: "u8"},
-      order: {intrinsic: "Order"},
+      owner: "Text",
+      char: "u8",
+      order: "Order",
     },
   },
   get: {
