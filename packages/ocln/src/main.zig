@@ -6,6 +6,7 @@ const Grid = anywhere.util.grid.Grid;
 const zpool = anywhere.util.zpool;
 const printer = @import("print.zig");
 const loadimage = @import("loadimage");
+const vec = util.vec;
 
 const Beui = @import("beui").Beui;
 const B2 = Beui.beui_experiment;
@@ -185,11 +186,7 @@ const Game = struct {
 
 // wire resolution: make a big graph and then simplify it. then send it to wires
 
-const vec2i32 = @Vector(2, i32);
-const vec2usize = @Vector(2, usize);
-
-const MAP_SIZE: vec2usize = .{ 45, 20 };
-const MAP_NLAYERS = 5;
+const MAP_SIZE: vec.by2usize = .{ 45, 20 };
 
 const MaterialTag = enum {
     none,
@@ -251,12 +248,12 @@ pub const Material = struct {
     }
 };
 const PathTarget = struct {
-    pos: vec2i32,
+    pos: vec.by2i32,
     cost_msec: u32,
     pub const none: PathTarget = .{ .pos = @splat(std.math.maxInt(i32)), .cost_msec = std.math.maxInt(i32) };
-    pub fn from(pos: vec2i32, msec: u32) PathTarget {
-        const min: vec2i32 = .{ 0, 0 };
-        const max: vec2i32 = @intCast(MAP_SIZE);
+    pub fn from(pos: vec.by2i32, msec: u32) PathTarget {
+        const min: vec.by2i32 = .{ 0, 0 };
+        const max: vec.by2i32 = @intCast(MAP_SIZE);
         if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= max)) return .none;
         return .{ .pos = pos, .cost_msec = msec };
     }
@@ -269,16 +266,16 @@ const Path = struct {
     bidi: [4]PathTarget,
 };
 
-fn checkFit(map: *Map, pos: vec2i32) bool {
+fn checkFit(map: *Map, pos: vec.by2i32) bool {
     return true and
-        map.tiles.get(pos + vec2i32{ 0, 1 }).material.canStandIn() and
+        map.tiles.get(pos + vec.by2i32{ 0, 1 }).material.canStandIn() and
         map.tiles.get(pos).material.canStandIn() and
         true;
 }
-fn checkStand(map: *Map, pos: vec2i32) bool {
-    return map.tiles.get(pos + vec2i32{ 0, -1 }).material.canStandOn();
+fn checkStand(map: *Map, pos: vec.by2i32) bool {
+    return map.tiles.get(pos + vec.by2i32{ 0, -1 }).material.canStandOn();
 }
-fn checkStandAndFit(map: *Map, pos: vec2i32) bool {
+fn checkStandAndFit(map: *Map, pos: vec.by2i32) bool {
     return checkStand(map, pos) and checkFit(map, pos);
 }
 const LeftRight = enum {
@@ -297,16 +294,16 @@ const PathCfg = struct {
     climb_ms: u10 = 200,
     vault_ms: u10 = 700,
 };
-fn calculatePathfindEdgeLR(map: *Map, pos: vec2i32, lr: LeftRight, path_cfg: *const PathCfg) PathTarget {
+fn calculatePathfindEdgeLR(map: *Map, pos: vec.by2i32, lr: LeftRight, path_cfg: *const PathCfg) PathTarget {
     // todo: should try for stairs down/up? uses path_cfg.vault_ms
-    const pos_one = pos + vec2i32{ lr.get(), 0 };
+    const pos_one = pos + vec.by2i32{ lr.get(), 0 };
     if (!checkFit(map, pos_one)) return .none;
     if (checkStand(map, pos_one)) return .from(pos_one, path_cfg.walk_ms);
-    const pos_two = pos + vec2i32{ lr.get() * 2, 0 };
+    const pos_two = pos + vec.by2i32{ lr.get() * 2, 0 };
     if (checkStandAndFit(map, pos_two)) return .from(pos_two, path_cfg.jump_ms);
     return .none;
 }
-fn calculatePathfindEdges(map: *Map, pos: vec2i32, path_cfg: *const PathCfg) Path {
+fn calculatePathfindEdges(map: *Map, pos: vec.by2i32, path_cfg: *const PathCfg) Path {
     var result: Path = .{
         .bidi = @splat(.none),
     };
@@ -314,13 +311,13 @@ fn calculatePathfindEdges(map: *Map, pos: vec2i32, path_cfg: *const PathCfg) Pat
         // can't be here
         return result;
     }
-    const pos_up = pos + vec2i32{ 0, 1 };
+    const pos_up = pos + vec.by2i32{ 0, 1 };
     if (checkStandAndFit(map, pos_up)) {
         // down
         result.bidi[0] = .from(pos_up, path_cfg.climb_ms);
     }
     result.bidi[1] = calculatePathfindEdgeLR(map, pos, .left, path_cfg);
-    const pos_down = pos + vec2i32{ 0, -1 };
+    const pos_down = pos + vec.by2i32{ 0, -1 };
     if (checkStandAndFit(map, pos_down)) {
         // down
         result.bidi[2] = .from(pos_down, path_cfg.climb_ms);
@@ -334,10 +331,10 @@ const Pathfind = struct {
     cfg: *const PathCfg,
     queue: Queue,
     // TODO: measure, determine if these should be [MAP_SIZE[0] * MAP_SIZE[1]]T instead of AutoArrayHashMap
-    came_from: std.AutoArrayHashMap(vec2i32, vec2i32),
-    cost_so_far: std.AutoArrayHashMap(vec2i32, u64),
+    came_from: std.AutoArrayHashMap(vec.by2i32, vec.by2i32),
+    cost_so_far: std.AutoArrayHashMap(vec.by2i32, u64),
 
-    fn init(map: *Map, src: vec2i32, path_cfg: *const PathCfg) !Pathfind {
+    fn init(map: *Map, src: vec.by2i32, path_cfg: *const PathCfg) !Pathfind {
         var pathfind: Pathfind = .{
             .cfg = path_cfg,
             .map = map,
@@ -363,7 +360,7 @@ const Pathfind = struct {
 
     const Context = struct {
         const Child = struct {
-            pos: vec2i32,
+            pos: vec.by2i32,
             source_ms: u64,
         };
         fn compare(_: Context, a: Child, b: Child) std.math.Order {
@@ -396,7 +393,7 @@ const Pathfind = struct {
         return false;
     }
 };
-fn pathfindPath(map: *Map, src: vec2i32, path_cfg: *const PathCfg) !void {
+fn pathfindPath(map: *Map, src: vec.by2i32, path_cfg: *const PathCfg) !void {
     var pathfind: Pathfind = try .init(map, src, path_cfg);
     defer pathfind.deinit();
     var steps: usize = 0;

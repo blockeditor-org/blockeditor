@@ -1,10 +1,11 @@
-const vec = @import("vector.zig");
+const util = @import("../util.zig");
+const vec = util.vec;
 
-pub fn posToIndex(comptime n: comptime_int, comptime Int: type, size: vec.x(n, usize), pos: vec.x(n, Int)) ?usize {
-    const min: vec.x(n, Int) = @splat(0);
-    const max: vec.x(n, Int) = @intCast(size);
+pub fn posToIndex(comptime n: comptime_int, comptime Int: type, size: vec.by(n, usize), pos: vec.by(n, Int)) ?usize {
+    const min: vec.by(n, Int) = @splat(0);
+    const max: vec.by(n, Int) = @intCast(size);
     if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= max)) return null;
-    const cast: vec.x(n, usize) = @intCast(pos);
+    const cast: vec.by(n, usize) = @intCast(pos);
     var result: usize = 0;
     var multiply: usize = 1;
     inline for (0..n) |index| {
@@ -21,8 +22,8 @@ pub fn Grid(comptime n: comptime_int, comptime Int: type, comptime Child: type) 
 
         const Self = @This();
 
-        const vecXusize = vec.x(n, usize);
-        const vecXInt = vec.x(n, Int);
+        const vecXusize = vec.by(n, usize);
+        const vecXInt = vec.by(n, Int);
 
         pub fn init(gpa: std.mem.Allocator, size: vecXusize) !Self {
             const items = try gpa.alloc(Child, size[0] * size[1]);

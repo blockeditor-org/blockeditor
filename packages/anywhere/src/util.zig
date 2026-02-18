@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const zpool = @import("zpool");
 pub const grid = @import("util/grid.zig");
+pub const vec = @import("util/vector.zig");
 
 pub const math = struct {
     pub const vec2i32 = @Vector(2, i32);
