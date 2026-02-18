@@ -25,10 +25,15 @@ pub fn Grid(comptime n: comptime_int, comptime Int: type, comptime Child: type) 
         const vecXusize = vec.by(n, usize);
         const vecXInt = vec.by(n, Int);
 
-        pub fn init(gpa: std.mem.Allocator, size: vecXusize) !Self {
+        pub const empty: Self = .{ .items = &.{}, .size = @splat(0) };
+
+        pub fn resize(this: *Self, gpa: std.mem.Allocator, size: vecXusize) !void {
             const items = try gpa.alloc(Child, size[0] * size[1]);
-            errdefer gpa.free(items);
-            return .{ .items = items, .size = size };
+            gpa.free(this.items);
+            this.* = .{ .items = items, .size = size };
+        }
+        pub fn fill(this: *Self, value: Child) void {
+            @memset(this.items, value);
         }
         pub fn deinit(this: *Self, gpa: std.mem.Allocator) void {
             gpa.free(this.items);

@@ -87,7 +87,7 @@ art: ?*B2.ImageCache.Image,
 pub fn init(self: *App, gpa: std.mem.Allocator) void {
     self.* = .{ .gpa = gpa, .game = undefined, .art = null };
     self.game.init(gpa);
-    self.game.map.generate();
+    self.game.map.generate(.{ 45, 20 }) catch @panic("oom");
 }
 pub fn deinit(self: *App) void {
     self.game.deinit();
@@ -117,8 +117,8 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     defer vertices.deinit(self.gpa);
     var indices = std.ArrayList(B2.render_list.RenderListIndex).empty;
     defer indices.deinit(self.gpa);
-    for (0..MAP_SIZE[1]) |y| {
-        for (0..MAP_SIZE[0]) |x| {
+    for (0..self.game.map.size_usize[1]) |y| {
+        for (0..self.game.map.size_usize[0]) |x| {
             const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
             const pos: @Vector(2, f32) = @floatFromInt(posint);
             const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
@@ -223,7 +223,7 @@ const Game = struct {
     map: Map,
     pub fn init(game: *Game, gpa: std.mem.Allocator) void {
         game.* = .{ .map = undefined };
-        game.map.init(gpa) catch @panic("oom");
+        game.map.init(gpa);
     }
     pub fn deinit(game: *Game) void {
         game.map.deinit();
@@ -239,7 +239,6 @@ const Game = struct {
 
 // wire resolution: make a big graph and then simplify it. then send it to wires
 
-const MAP_SIZE: vec.by2usize = .{ 45, 20 };
 const MAP_NLAYERS: usize = @typeInfo(Layers).@"enum".fields.len;
 
 const MaterialTag = enum {
@@ -248,6 +247,7 @@ const MaterialTag = enum {
     dirt,
     stone,
     shelf,
+    other,
 
     fn canStandOn(mat: MaterialTag) bool {
         return switch (mat) {
@@ -272,6 +272,11 @@ pub const milli_per_one = 1000000;
 pub const milli_per_kilo = 1000000000;
 pub const zero_millicelsius_in_millikelvin = 273150000;
 pub const Material = struct {
+    // TODO: we should store material properties in here rather than a material tag
+    // because many tiles will have mixed materials (ie oxygen & water, wire & pipe)
+    // and we will approximate that by summing the material properties over their area.
+    // that isn't quite right because a mixed water/air tile will transfer heat faster than
+    // expected to the air above it. but it's probably fine.
     material: MaterialTag,
     mass_milligrams: u64,
     temperature_millikelvin: u64,
@@ -305,10 +310,9 @@ const PathTarget = struct {
     pos: vec.by2i32,
     cost_msec: u32,
     pub const none: PathTarget = .{ .pos = @splat(std.math.maxInt(i32)), .cost_msec = std.math.maxInt(i32) };
-    pub fn from(pos: vec.by2i32, msec: u32) PathTarget {
+    pub fn from(pos: vec.by2i32, size: vec.by2i32, msec: u32) PathTarget {
         const min: vec.by2i32 = .{ 0, 0 };
-        const max: vec.by2i32 = @intCast(MAP_SIZE);
-        if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= max)) return .none;
+        if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= size)) return .none;
         return .{ .pos = pos, .cost_msec = msec };
     }
     pub fn valid(self: PathTarget) bool {
@@ -352,9 +356,9 @@ fn calculatePathfindEdgeLR(map: *Map, pos: vec.by2i32, lr: LeftRight, path_cfg: 
     // todo: should try for stairs down/up? uses path_cfg.vault_ms
     const pos_one = pos + vec.by2i32{ lr.get(), 0 };
     if (!checkFit(map, pos_one)) return .none;
-    if (checkStand(map, pos_one)) return .from(pos_one, path_cfg.walk_ms);
+    if (checkStand(map, pos_one)) return .from(pos_one, map.size_int, path_cfg.walk_ms);
     const pos_two = pos + vec.by2i32{ lr.get() * 2, 0 };
-    if (checkStandAndFit(map, pos_two)) return .from(pos_two, path_cfg.jump_ms);
+    if (checkStandAndFit(map, pos_two)) return .from(pos_two, map.size_int, path_cfg.jump_ms);
     return .none;
 }
 fn calculatePathfindEdges(map: *Map, pos: vec.by2i32, path_cfg: *const PathCfg) Path {
@@ -368,13 +372,13 @@ fn calculatePathfindEdges(map: *Map, pos: vec.by2i32, path_cfg: *const PathCfg) 
     const pos_up = pos + vec.by2i32{ 0, 1 };
     if (checkStandAndFit(map, pos_up)) {
         // down
-        result.bidi[0] = .from(pos_up, path_cfg.climb_ms);
+        result.bidi[0] = .from(pos_up, map.size_int, path_cfg.climb_ms);
     }
     result.bidi[1] = calculatePathfindEdgeLR(map, pos, .left, path_cfg);
     const pos_down = pos + vec.by2i32{ 0, -1 };
     if (checkStandAndFit(map, pos_down)) {
         // down
-        result.bidi[2] = .from(pos_down, path_cfg.climb_ms);
+        result.bidi[2] = .from(pos_down, map.size_int, path_cfg.climb_ms);
     }
     result.bidi[3] = calculatePathfindEdgeLR(map, pos, .right, path_cfg);
 
@@ -458,55 +462,94 @@ const Player = struct {
     energy_millijoules: u64,
     contents: [4]Material,
 };
-const PlayerPool = zpool.Pool(16, 16, Player, struct {
-    ptr: Player,
-});
+const PlayerPool = zpool.Pool(16, 16, Player, struct { ptr: Player });
 const BuildingEntityTag = struct {};
 
 const TileFlags = packed struct {
     can_enter: bool,
     can_stand: bool, // enter=false,stand=true means can climb. enter=false,stand=false = spikes or smth.
-    has_wire: bool,
-    has_pipe: bool,
     pub const empty: TileFlags = .{
-        .can_enter = false,
+        .can_enter = true,
         .can_stand = false,
-        .has_wire = false,
-        .has_pipe = false,
     };
 };
+const Wire = struct {
+    /// sides[0] <= sides[1]. sides[0] != sides[1]. (s1[0] == s2[0]) != (s1[1] == s2[1])
+    sides: [2]vec.by2i32,
+    fn direction(this: *Wire) enum { x, y } {
+        const s1, const s2 = this.sides;
+        if (s1[0] == s2[0] and s1[1] == s2[1]) std.debug.assert(false); // wires must have at least one length
+        std.debug.assert(@reduce(.And, s1 <= s2));
+        if (s1[0] == s2[0]) return .x;
+        if (s1[1] == s2[1]) return .y;
+        std.debug.assert(false); // wires must be either horizontal or vertical
+    }
+    fn canMergeWith(this: *const Wire, other: *const Wire) bool {
+        return this.direction() == other.direction(); // and this.material == other.material
+    }
+    fn hasSide(this: *const Wire, side: vec.by2i32) bool {
+        for (&this.sides) |*our_side| {
+            if (@reduce(.And, our_side.* == side)) return true;
+        }
+        return false;
+    }
+};
+const WirePool = zpool.Pool(16, 16, Wire, struct { ptr: Wire });
+
+const WireRef = [4]WirePool.Handle; // this list is kept sorted with real wires before nil
+const WireRefPool = zpool.Pool(16, 16, WireRef, struct { ptr: WireRef });
 const Map = struct {
     gpa: std.mem.Allocator,
+    size_int: vec.by2i32,
+    size_usize: vec.by2usize,
     materials: Grid(3, i32, Material),
     tile_flags: Grid(2, i32, TileFlags),
+    wire_refs: Grid(2, i32, WireRefPool.Handle),
+    wires: WirePool,
+    wire_ref_pool: WireRefPool,
     players: PlayerPool,
 
-    pub fn init(this: *Map, gpa: std.mem.Allocator) !void {
-        var materials: Grid(3, i32, Material) = try .init(gpa, .{ MAP_SIZE[0], MAP_SIZE[1], MAP_NLAYERS });
-        errdefer materials.deinit(gpa);
-        var tile_flags: Grid(2, i32, TileFlags) = try .init(gpa, MAP_SIZE);
-        errdefer tile_flags.deinit(gpa);
-        @memset(tile_flags.items, .empty);
+    pub fn init(this: *Map, gpa: std.mem.Allocator) void {
         this.* = .{
+            .size_int = @splat(0),
+            .size_usize = @splat(0),
             .gpa = gpa,
-            .materials = materials,
-            .tile_flags = tile_flags,
+            .materials = .empty,
+            .tile_flags = .empty,
+            .wire_refs = .empty,
+            .wires = .init(gpa),
             .players = .init(gpa),
+            .wire_ref_pool = .init(gpa),
         };
     }
     pub fn deinit(this: *Map) void {
         this.materials.deinit(this.gpa);
         this.tile_flags.deinit(this.gpa);
+        this.wire_refs.deinit(this.gpa);
         this.players.deinit();
+        this.wire_ref_pool.deinit();
     }
-    pub fn generate(this: *Map) void {
+    pub fn generate(this: *Map, size: vec.by2usize) !void {
+        this.size_int = @intCast(size);
+        this.size_usize = size;
+        try this.materials.resize(this.gpa, .{ size[0], size[1], MAP_NLAYERS });
+        this.materials.fill(.empty);
+        try this.tile_flags.resize(this.gpa, size);
+        this.tile_flags.fill(.empty);
+        try this.wire_refs.resize(this.gpa, size);
+        this.wire_refs.fill(.nil);
+
+        const sizei = this.size_int;
+
         // fill floor and ceiling
-        for (0..MAP_SIZE[0]) |x| {
+        for (0..size[0]) |x| {
             const xi: i32 = @intCast(x);
             this.materials.set(.{ xi, 0, Layers.tile.int() }, .unobtanium);
             this.tile_flags.ptr(.{ xi, 0 }).?.can_stand = true;
-            this.materials.set(.{ xi, @intCast(MAP_SIZE[1] - 1), Layers.tile.int() }, .unobtanium);
-            this.tile_flags.ptr(.{ xi, @intCast(MAP_SIZE[1] - 1) }).?.can_stand = true;
+            this.tile_flags.ptr(.{ xi, 0 }).?.can_enter = false;
+            this.materials.set(.{ xi, sizei[1] - 1, Layers.tile.int() }, .unobtanium);
+            this.tile_flags.ptr(.{ xi, sizei[1] - 1 }).?.can_stand = true;
+            this.tile_flags.ptr(.{ xi, 0 }).?.can_enter = false;
         }
     }
     pub fn measureEnergy(this: *Map) u128 {
@@ -514,34 +557,185 @@ const Map = struct {
         _ = this;
         return 0;
     }
+
+    fn setWireRefRange(this: *Map, fromPos: vec.by2i32, toPos: vec.by2i32, removeHandle: WirePool.Handle, addHandle: WirePool.Handle) !void {
+        std.debug.assert(@reduce(.And, fromPos <= toPos));
+        var y: i32 = fromPos[1];
+        while (y <= toPos[1]) : (y += 1) {
+            var x: i32 = fromPos[0];
+            while (x <= toPos[0]) : (x += 1) {
+                this.setWireRef(.{ x, y }, removeHandle, addHandle);
+            }
+        }
+    }
+    fn setWireRef(this: *Map, pos: vec.by2i32, remove: WirePool.Handle, add: WirePool.Handle) !void {
+        if (remove == add) return; // nothing to change
+        const wire_ref = this.wire_refs.ptr(pos) orelse return; // out of bounds
+        if (wire_ref.* == .nil) {
+            if (add == .nil) return; // nothing to do
+            wire_ref.* = try this.wire_ref_pool.add(.{ .ptr = @splat(.nil) });
+        }
+        const value = this.wire_ref_pool.getColumnPtrAssumeLive(wire_ref.*, .ptr);
+
+        var new_value_buf: [4]WirePool.Handle = @splat(.nil);
+        var new_value = std.ArrayList(WirePool.Handle).initBuffer(&new_value_buf);
+
+        for (value) |item| {
+            if (item == remove) continue; // ignore the item
+            if (item == add) continue; // ignore the item
+            if (item == .nil) continue; // ignore the item
+            new_value.appendAssumeCapacity(item);
+        }
+        if (add != .nil) new_value.appendAssumeCapacity(add);
+
+        // check empy
+        if (new_value.items.len == 0) {
+            // remove
+            this.wire_ref_pool.removeAssumeLive(wire_ref.*);
+            // unset
+            wire_ref.* = .nil;
+            return;
+        }
+
+        // update list
+        @memcpy(value, &new_value_buf);
+    }
+    fn recalculatePipeWireMaterialRange(this: *Map, fromPos: vec.by2i32, toPos: vec.by2i32) !void {
+        std.debug.assert(@reduce(.And, fromPos <= toPos));
+        var y: i32 = fromPos[1];
+        while (y <= toPos[1]) : (y += 1) {
+            var x: i32 = fromPos[0];
+            while (x <= toPos[0]) : (x += 1) {
+                this.recalculatePipeWireMaterialRange(.{ x, y });
+            }
+        }
+    }
+    fn recalculatePipeWireMaterial(this: *Map, pos: vec.by2i32) !void {
+        // recomputes the pipe/wire material at the tile
+        // TODO: redo this
+        const wire = this.wire_refs.get(pos);
+        this.materials.set(.{ pos[0], pos[1], Layers.wires_and_pipes.int() }, Material{
+            .material = if (wire != .nil) .other else .none,
+            .mass_milligrams = if (wire != .nil) 5_000 else 0, // TODO: sum the mass of the wires
+            .temperature_millikelvin = if (wire != .nil) 298_150, // TODO: take the existing temperature from this.materials and remove or add the new wire
+        });
+    }
+    pub fn getWires(this: *Map, pos: vec.by2i32) [4]WirePool.Handle {
+        const wire_refs = this.wire_refs.get(pos);
+        if (wire_refs == .nil) return @splat(.nil);
+        const data = this.wire_ref_pool.getColumnAssumeLive(wire_refs, .ptr);
+        return data.*;
+    }
+    fn trySplitWire(this: *Map, w1: WirePool.Handle, split_pos: vec.by2i32) !void {
+        const w1_data: *Wire = this.wires.getColumnAssumeLive(w1, .ptr);
+        var w2_data: Wire = w1_data.*;
+        if (w1_data.hasSide(split_pos)) return; // can't split at an endpoint
+
+        w1_data.sides[1] = split_pos;
+        w2_data.sides[0] = split_pos;
+
+        const w2 = try this.wires.add(w2_data);
+
+        this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w1, w2);
+        // add back w1 to the split point
+        this.setWireRef(split_pos, .nil, w1);
+    }
+    fn tryMergeWires(this: *Map, shared_point: vec.by2i32) !void {
+        var w1: WirePool.Handle = .nil;
+        var w2: WirePool.Handle = .nil;
+        for (this.getWires(shared_point)) |wire| {
+            if (wire == .nil) continue;
+            for (.{ &w1, &w2 }) |w| {
+                if (w.* != .nil) {
+                    w.* = wire;
+                    break;
+                }
+            } else return; // can't merge; too many wires
+        }
+        if (w1 == .nil or w2 == .nil) return; // can't merge; not enough wires
+
+        const w1_data: *Wire = this.wires.getColumnAssumeLive(w1, .ptr);
+        const w2_data: *Wire = this.wires.getColumnAssumeLive(w2, .ptr);
+
+        if (!w1_data.canMergeWith(w2_data)) return; // can't merge; not same side or not same material
+
+        // can merge
+
+        // TODO: update wire graph
+
+        for (0..2) |i| w1_data.sides[i] = @min(w1_data.sides[i], w2_data.sides[i]);
+        this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w2, w1);
+        // no need to update materials, they are unchanged.
+    }
+    pub fn createWire(this: *Map, wire_in: Wire) !void {
+        // TODO: implement merging later
+
+        // TODO: (mandatory) find any wires at our target position. if they share a side, split them in half so they can connect to us.
+        // TODO: (optional) after adding the new wire, merge it with any wires on either side where canMergeWith() is true
+
+        // find any wires which need splitting
+        for (wire_in.sides) |side| {
+            for (this.getWires(side)) |existing_wire| {
+                if (existing_wire == .nil) continue;
+                const xw_data: Wire = this.wires.getColumnAssumeLive(existing_wire, .ptr);
+                if (xw_data.hasSide(wire_in.side[0]) or xw_data.hasSide(wire_in.side[1])) continue; // the wire shares a side with us; no action
+                if (xw_data.direction() == wire_in.direction()) continue; // the wire shares a direction with us; no action
+                // must split the wire
+                this.trySplitWire(existing_wire, side);
+                // TODO: update the wire graph: link the new wire to the old wire
+            }
+        }
+
+        {
+            // create the new wire
+            const new_wire = try this.wires.add(wire_in);
+            const wire = this.wires.getColumnAssumeLive(new_wire, .ptr);
+
+            // update the wire graph: add links to existing wires on either side
+            for (wire.sides) |side| {
+                for (this.getWires(side)) |existing_wire| {
+                    if (existing_wire == .nil) continue;
+                    const xw_data: Wire = this.wires.getColumnAssumeLive(existing_wire, .ptr);
+                    if (!xw_data.hasSide(wire.side[0]) and !xw_data.hasSide(wire.side[1])) continue; // this wire crosses over us
+                    // TODO: update the wire graph: link the new wire to the old wire
+                }
+            }
+
+            // keep mirrored data in sync
+            this.setWireRefRange(wire.sides[0], wire.sides[1], .nil, new_wire);
+            this.recalculatePipeWireMaterialRange(wire.sides[0], wire.sides[1]);
+        }
+
+        this.tryMergeWires(wire_in.sides[0]);
+        this.tryMergeWires(wire_in.sides[1]);
+    }
 };
 
 test Map {
     std.testing.log_level = .info;
     var map_raw: Map = undefined;
-    try map_raw.init(std.testing.allocator);
+    map_raw.init(std.testing.allocator);
     defer map_raw.deinit();
     const map = &map_raw;
-    map.generate();
+    try map.generate(.{ 200, 300 });
 
-    const path = calculatePathfindEdges(map, .{ MAP_SIZE[0] / 2, 1 }, &.{});
-    _ = path;
-    // try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&path),
-    //     \\*: main.Path:
-    //     \\ bidi: [4]main.PathTarget:
-    //     \\  0: main.PathTarget:
-    //     \\   pos: .{ 2147483647, 2147483647 }
-    //     \\   cost_msec: 2147483647
-    //     \\  1: main.PathTarget:
-    //     \\   pos: .{ 99, 1 }
-    //     \\   cost_msec: 100
-    //     \\  2: main.PathTarget:
-    //     \\   pos: .{ 2147483647, 2147483647 }
-    //     \\   cost_msec: 2147483647
-    //     \\  3: main.PathTarget:
-    //     \\   pos: .{ 101, 1 }
-    //     \\   cost_msec: 100
-    // );
+    const path = calculatePathfindEdges(map, .{ @divTrunc(map.size_int[0], 2), 1 }, &.{});
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&path),
+        \\*: main.Path:
+        \\ bidi: [4]main.PathTarget:
+        \\  0: main.PathTarget:
+        \\   pos: .{ 2147483647, 2147483647 }
+        \\   cost_msec: 2147483647
+        \\  1: main.PathTarget:
+        \\   pos: .{ 99, 1 }
+        \\   cost_msec: 100
+        \\  2: main.PathTarget:
+        \\   pos: .{ 2147483647, 2147483647 }
+        \\   cost_msec: 2147483647
+        \\  3: main.PathTarget:
+        \\   pos: .{ 101, 1 }
+        \\   cost_msec: 100
+    );
 
     try pathfindPath(map, .{ 50, 1 }, &.{});
 }

@@ -37,7 +37,7 @@ pub const testing = struct {
     var mutex = std.Thread.Mutex{};
     var _initialized: std.atomic.Value(bool) = .init(false);
     var _should_update: bool = undefined;
-    pub fn snap(src: std.builtin.SourceLocation, expected: []const u8, actual: []const u8) !void {
+    pub fn snap(src: std.builtin.SourceLocation, actual: []const u8, expected: []const u8) !void {
         if (!_initialized.load(.acquire)) {
             mutex.lock();
             defer mutex.unlock();
