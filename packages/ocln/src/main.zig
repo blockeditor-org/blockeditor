@@ -414,11 +414,11 @@ const BuildingEntityTag = struct {};
 
 const Map = struct {
     gpa: std.mem.Allocator,
-    tiles: Grid(Material),
+    tiles: Grid(2, i32, Material),
     players: PlayerPool,
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) !void {
-        var tiles: Grid(Material) = try .init(gpa, MAP_SIZE);
+        var tiles: Grid(2, i32, Material) = try .init(gpa, MAP_SIZE);
         errdefer tiles.deinit(gpa);
         @memset(tiles.items, .empty);
         this.* = .{
