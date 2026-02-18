@@ -165,6 +165,16 @@ function initDb(user: User) {
     allClasses.set(name, resolveClass);
   }
 
+  // insert fns:
+  // - find all the places the data needs to be copied to
+  // - insert in all those places
+  // update fns:
+  // - find all the places the data needs to be updated
+  // - update in all those places
+  // get fns:
+  // - find the place the data can be gotten from
+  // - return the value
+
   codegen({
     mappings: allMappings,
     classes: allClasses,
@@ -277,6 +287,9 @@ function codegen(resolve: Resolve) {
   const lines: Code[] = [];
   let gid = 0;
 
+  lines.push(c`const Db = @This();`);
+  lines.push(c`const lib = @import("lib.zig");`);
+
   lines.push(c``, c`// Mappings`);
   for (let i = 0; i < resolve.mappings.length; i++) {
     const mapping = resolve.mappings[i]!;
@@ -299,6 +312,94 @@ function codegen(resolve: Resolve) {
   for (const [className, classData] of resolve.classes) {
     lines.push(c`const ${zigIdent(className)} = Pool(32, 32, opaque{}, struct{});`);
   }
+
+  /*
+  insert and get functions
+  fn @"Text.new"(db: *Db, args: struct {}) std.mem.Allocator.Error!Text.Handle {
+    return db.Text_pool.add(.{}) catch return error.OutOfMemory; // not really sure if this is what we want
+  }
+  fn @"Text.push"(db: *Db, args: struct { owner: Text.Handle, char: u8 }) std.mem.Allocator.Error)@"Text.Character".Handle {
+    try db.text_to_chars_map.insertLast(db.gpa, .{.owner = owner}, .{ .char = args.char });
+    return {}; // Text.Character.Handle is void
+  }
+  fn @"Text.body"(db: *Db, args: struct {owner: Text.Handle}) TextToCharsMap.Iterator {
+    return try db.text_to_chars_map.get(.{ .owner = owner });
+  }
+  */
+
+  const lib = `
+  pub const SortMode = enum { none, append_only, append_prepend, tree };
+  pub fn Map(comptime sort: SortMode, comptime From: type, comptime To: type) type {
+    return struct {
+      const This = @This();
+      const SortBacking = switch(sort) {
+        .append_only => std.MultiArrayList(To),
+        else => @compileError("TODO: Map: ." ++ @tagName(sort)),
+      };
+      backing: std.AutoArrayHashMap(From, SortBacking),
+      valid: u64,
+      
+      pub const ToField = std.meta.FieldEnum(To);
+      pub const Iterator = struct {
+        valid: u64,
+        backing: switch (sort) {
+          .append_only => struct { slice: std.MultiArrayList(To).Slice, index: usize },
+          else => @compileError("TODO: Map.Iterator: ." ++ @tagName(sort)),
+        };
+
+        /// if this returns an empty slice, it is the end.
+        pub fn peek(self: *Iterator, map: *This, comptime field: ToField) []const @FieldType(To, @tagName(field)) {
+          std.debug.assert(self.valid == map.valid);
+          return switch (sort) {
+            .append_only => self.backing.items(field)[self.backing.index..],
+            else => @compileError("TODO: Map.Iterator.peek: ." ++ @tagName(sort)),
+          }
+        }
+        pub fn eat(self: *Iterator, n: usize) void {
+          std.debug.assert(self.valid == map.valid);
+          switch (sort) {
+            .append_only => {
+              std.debug.assert(self.backing.index + n <= self.backing.items.len);
+              self.backing.index += n;
+            },
+            else => @compileError("TODO: Map.Iterator.next: ." ++ @tagName(sort)),
+          }
+        }
+      };
+
+      fn markInvalid(this: *This) void {
+        this.valid +%= 1;
+      }
+
+      // so we don't have this quite right. we 
+      pub fn get(this: *This, from: From): Iterator {
+        const value = this.backing.getPtr(this) orelse return switch (sort) {
+          .append_only => .{ .valid = this.valid, .backing = .{ .slice = .empty, .index = 0 } },
+          else => @compileError("TODO: Map.Get: ." ++ @tagName(sort)),
+        };
+        switch (sort) {
+          .append_only => return .{ .valid = this.valid, .backing = .{ .slice = value.slice(), .index = 0 } },
+          else => @compileError("TODO: Map.Get: ." ++ @tagName(sort)),
+        }
+      }
+
+      fn getOrCreate(this: *This, gpa: std.mem.Allocator, from: From) *SortBacking {
+        this.markInvalid();
+        const gpres = this.backing.getOrPut(this);
+        if (!gpres.found_existing) gpres.value_ptr.* = .empty;
+        return gpres.value_ptr;
+      }
+
+      pub fn insertLast(this: *This, gpa: std.mem.Allocator, from: From, to: To) std.mem.Allocator.Error!void {
+        const list = try this.getOrCreate(gpa, from);
+        switch (sort) {
+          .append_only => try list.append(to),
+          else => @compileError("TODO: Map.insertLast: ." ++ @tagName(sort)),
+        }
+      }
+    };
+  }
+  `;
 
   // TODO: generate the insert & get functions
   console.log(crender(cjoin(lines, cnl, undefined, cnl)));
