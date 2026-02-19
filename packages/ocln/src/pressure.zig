@@ -2,8 +2,11 @@ const std = @import("std");
 const print = @import("print.zig");
 
 const ResponsePattern = enum {
+    // force is reflected
     solid,
+    // force is distributed to all other edges
     liquid,
+    // P=F/A
     gas,
 };
 const GraphNode = struct {
@@ -11,7 +14,7 @@ const GraphNode = struct {
     y_bottom_m: f64,
     response_pattern: ResponsePattern,
 
-    edge_intrinsic_force_N: []f64,
+    edge_intrinsic_force_N: []f64, // can this be a node? maybe? should it be? unclear
     edge_incoming_force_N: []f64,
     edge_outgoing_force_N: []f64,
     edge_nodes: []usize,
@@ -21,14 +24,14 @@ const GraphNode = struct {
     edge_y_tops_m: []f64,
 };
 const Graph = struct {
-    nodes: []const *GraphNode,
+    nodes: []GraphNode,
 
     pub fn printCustomFormat(printer: *print.Printer, arg: print.DetailedAny) !void {
         const graph = arg.cast(Graph);
         try printer.print("Graph:", .{});
         printer.indent();
         defer printer.dedent();
-        for (graph.nodes, 0..) |node, index| {
+        for (graph.nodes, 0..) |*node, index| {
             try printer.newline();
             try printer.dump(.fromAuto(&index));
             try printer.print(": Node:", .{});
@@ -36,7 +39,7 @@ const Graph = struct {
             defer printer.dedent();
             for (0.., node.edge_nodes, node.edge_indices, node.edge_incoming_force_N, node.edge_outgoing_force_N, node.edge_intrinsic_force_N) |i, target, target_index, incoming, outgoing, intrinsic| {
                 try printer.newline();
-                try printer.print("{d}[{d}]->{d}[{d}] received {d:.2}      \tsent {d:.2}kN     \tintrinsic {d:.2}", .{ index, i, target, target_index, incoming / 1000, (outgoing + intrinsic) / 1000, intrinsic / 1000 });
+                try printer.print("{d}[{d}]->{d}[{d}] received {d:.2}      \tsent {d:.2}kN     \tintrinsic {d:.2}", .{ index, i, target, target_index, incoming / 1000, outgoing / 1000, intrinsic / 1000 });
             }
         }
     }
@@ -75,22 +78,22 @@ fn updateNode(node: *GraphNode) void {
 }
 fn update(graph: *Graph) void {
     // first, send outgoing to incoming
-    for (graph.nodes) |node| {
+    for (graph.nodes) |*node| {
         for (node.edge_intrinsic_force_N, node.edge_outgoing_force_N, node.edge_nodes, node.edge_indices) |from_intrinsic, from_outgoing, to_node, to_index| {
-            const to = graph.nodes[to_node];
+            const to = &graph.nodes[to_node];
             const to_incoming = &to.edge_incoming_force_N[to_index];
             const to_intrinsic = to.edge_intrinsic_force_N[to_index];
             to_incoming.* = @max(0, from_intrinsic + from_outgoing - to_intrinsic);
         }
     }
     // clear outgoings
-    for (graph.nodes) |node| {
+    for (graph.nodes) |*node| {
         for (node.edge_outgoing_force_N) |*outgoing| {
             outgoing.* = 0;
         }
     }
     // then, apply incoming to outgoing
-    for (graph.nodes) |node| updateNode(node);
+    for (graph.nodes) |*node| updateNode(node);
 }
 
 test "pressure" {
@@ -99,88 +102,80 @@ test "pressure" {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    const air_node = try arena.create(GraphNode);
-    const water_node = try arena.create(GraphNode);
-    const tile_e_node = try arena.create(GraphNode);
-    const tile_s_node = try arena.create(GraphNode);
-    const tile_w_node = try arena.create(GraphNode);
-    const nodes = [_]*GraphNode{
-        air_node,
-        water_node,
-        tile_e_node,
-        tile_s_node,
-        tile_w_node,
+    var nodes = [_]GraphNode{
+        // air
+        .{
+            .size_m3 = 1,
+            .y_bottom_m = 3,
+            .response_pattern = .gas,
+            .edge_intrinsic_force_N = try arena.dupe(f64, &.{100_000}),
+            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
+            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
+            .edge_nodes = try arena.dupe(usize, &.{1}),
+            .edge_indices = try arena.dupe(usize, &.{0}),
+            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
+            .edge_y_bottoms_m = try arena.dupe(f64, &.{3}),
+            .edge_y_tops_m = try arena.dupe(f64, &.{3}),
+        },
+        // water
+        .{
+            .size_m3 = 1,
+            .y_bottom_m = 2,
+            .response_pattern = .liquid,
+            .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 0, 5_000_000, 10_000_000, 5_000_000 }),
+            .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
+            .edge_outgoing_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
+            .edge_nodes = try arena.dupe(usize, &.{ 0, 2, 3, 4 }),
+            .edge_indices = try arena.dupe(usize, &.{ 0, 0, 0, 0 }),
+            .edge_sizes_m2 = try arena.dupe(f64, &.{ 1, 1, 1, 1 }),
+            .edge_y_bottoms_m = try arena.dupe(f64, &.{ 3, 2, 2, 2 }),
+            .edge_y_tops_m = try arena.dupe(f64, &.{ 3, 3, 2, 3 }),
+        },
+        // tile e
+        .{
+            .size_m3 = 1,
+            .y_bottom_m = 1,
+            .response_pattern = .solid,
+            .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
+            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
+            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
+            .edge_nodes = try arena.dupe(usize, &.{1}),
+            .edge_indices = try arena.dupe(usize, &.{1}),
+            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
+            .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
+            .edge_y_tops_m = try arena.dupe(f64, &.{2}),
+        },
+        // tile s
+        .{
+            .size_m3 = 1,
+            .y_bottom_m = 0,
+            .response_pattern = .solid,
+            .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
+            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
+            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
+            .edge_nodes = try arena.dupe(usize, &.{1}),
+            .edge_indices = try arena.dupe(usize, &.{2}),
+            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
+            .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
+            .edge_y_tops_m = try arena.dupe(f64, &.{1}),
+        },
+        // tile w
+        .{
+            .size_m3 = 1,
+            .y_bottom_m = 1,
+            .response_pattern = .solid,
+            .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
+            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
+            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
+            .edge_nodes = try arena.dupe(usize, &.{1}),
+            .edge_indices = try arena.dupe(usize, &.{3}),
+            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
+            .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
+            .edge_y_tops_m = try arena.dupe(f64, &.{2}),
+        },
     };
     var graph: Graph = .{
         .nodes = &nodes,
-    };
-
-    air_node.* = .{
-        .size_m3 = 1,
-        .y_bottom_m = 3,
-        .response_pattern = .gas,
-
-        .edge_intrinsic_force_N = try arena.dupe(f64, &.{100_000}),
-        .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-        .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-        .edge_nodes = try arena.dupe(usize, &.{1}),
-        .edge_indices = try arena.dupe(usize, &.{0}),
-        .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        .edge_y_bottoms_m = try arena.dupe(f64, &.{3}),
-        .edge_y_tops_m = try arena.dupe(f64, &.{3}),
-    };
-    water_node.* = .{
-        .size_m3 = 1,
-        .y_bottom_m = 2,
-        .response_pattern = .liquid,
-
-        .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 0, 5_000_000, 10_000_000, 5_000_000 }),
-        .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
-        .edge_outgoing_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
-        .edge_nodes = try arena.dupe(usize, &.{ 0, 2, 3, 4 }),
-        .edge_indices = try arena.dupe(usize, &.{ 0, 0, 0, 0 }),
-        .edge_sizes_m2 = try arena.dupe(f64, &.{ 1, 1, 1, 1 }),
-        .edge_y_bottoms_m = try arena.dupe(f64, &.{ 3, 2, 2, 2 }),
-        .edge_y_tops_m = try arena.dupe(f64, &.{ 3, 3, 2, 3 }),
-    };
-    tile_e_node.* = .{
-        .size_m3 = 1,
-        .y_bottom_m = 1,
-        .response_pattern = .solid,
-        .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
-        .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-        .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-        .edge_nodes = try arena.dupe(usize, &.{1}),
-        .edge_indices = try arena.dupe(usize, &.{1}),
-        .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
-        .edge_y_tops_m = try arena.dupe(f64, &.{2}),
-    };
-    tile_s_node.* = .{
-        .size_m3 = 1,
-        .y_bottom_m = 0,
-        .response_pattern = .solid,
-        .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
-        .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-        .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-        .edge_nodes = try arena.dupe(usize, &.{1}),
-        .edge_indices = try arena.dupe(usize, &.{2}),
-        .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
-        .edge_y_tops_m = try arena.dupe(f64, &.{1}),
-    };
-    tile_w_node.* = .{
-        .size_m3 = 1,
-        .y_bottom_m = 1,
-        .response_pattern = .solid,
-        .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
-        .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-        .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-        .edge_nodes = try arena.dupe(usize, &.{1}),
-        .edge_indices = try arena.dupe(usize, &.{3}),
-        .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
-        .edge_y_tops_m = try arena.dupe(f64, &.{2}),
     };
 
     std.log.info("\n{f}", .{print.autoPrint(&graph)});
