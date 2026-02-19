@@ -122,7 +122,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
             const pos: @Vector(2, f32) = @floatFromInt(posint);
             const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
-            const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() });
+            const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
             if (tile.material == .none) continue;
 
             const rect_pos: math.vec2f32 = pos * @as(math.vec2f32, @splat(self.interface.camera.scale)) + self.interface.camera.offset;
@@ -309,7 +309,7 @@ pub const Material = struct {
 const PathTarget = struct {
     pos: vec.by2i32,
     cost_msec: u32,
-    pub const none: PathTarget = .{ .pos = @splat(std.math.maxInt(i32)), .cost_msec = std.math.maxInt(i32) };
+    pub const none: PathTarget = .{ .pos = @splat(std.math.maxInt(i32)), .cost_msec = std.math.maxInt(u32) };
     pub fn from(pos: vec.by2i32, size: vec.by2i32, msec: u32) PathTarget {
         const min: vec.by2i32 = .{ 0, 0 };
         if (@reduce(.Or, pos < min) or @reduce(.Or, pos >= size)) return .none;
@@ -326,12 +326,12 @@ const Path = struct {
 
 fn checkFit(map: *Map, pos: vec.by2i32) bool {
     return true and
-        map.tile_flags.get(pos + vec.by2i32{ 0, 1 }).can_enter and
-        map.tile_flags.get(pos).can_enter and
+        (map.tile_flags.get(pos + vec.by2i32{ 0, 1 }) orelse TileFlags.empty).can_enter and
+        (map.tile_flags.get(pos) orelse TileFlags.empty).can_enter and
         true;
 }
 fn checkStand(map: *Map, pos: vec.by2i32) bool {
-    return map.tile_flags.get(pos + vec.by2i32{ 0, -1 }).can_stand;
+    return (map.tile_flags.get(pos + vec.by2i32{ 0, -1 }) orelse TileFlags.empty).can_stand;
 }
 fn checkStandAndFit(map: *Map, pos: vec.by2i32) bool {
     return checkStand(map, pos) and checkFit(map, pos);
@@ -468,21 +468,23 @@ const BuildingEntityTag = struct {};
 const TileFlags = packed struct {
     can_enter: bool,
     can_stand: bool, // enter=false,stand=true means can climb. enter=false,stand=false = spikes or smth.
+    has_power_port: bool,
     pub const empty: TileFlags = .{
         .can_enter = true,
         .can_stand = false,
+        .has_power_port = false,
     };
 };
 const Wire = struct {
     /// sides[0] <= sides[1]. sides[0] != sides[1]. (s1[0] == s2[0]) != (s1[1] == s2[1])
     sides: [2]vec.by2i32,
-    fn direction(this: *Wire) enum { x, y } {
+    fn direction(this: *const Wire) enum { x, y } {
         const s1, const s2 = this.sides;
-        if (s1[0] == s2[0] and s1[1] == s2[1]) std.debug.assert(false); // wires must have at least one length
+        if (s1[0] == s2[0] and s1[1] == s2[1]) unreachable; // wires must have at least one length
         std.debug.assert(@reduce(.And, s1 <= s2));
         if (s1[0] == s2[0]) return .x;
         if (s1[1] == s2[1]) return .y;
-        std.debug.assert(false); // wires must be either horizontal or vertical
+        unreachable; // wires must be either horizontal or vertical
     }
     fn canMergeWith(this: *const Wire, other: *const Wire) bool {
         return this.direction() == other.direction(); // and this.material == other.material
@@ -496,7 +498,8 @@ const Wire = struct {
 };
 const WirePool = zpool.Pool(16, 16, Wire, struct { ptr: Wire });
 
-const WireRef = [4]WirePool.Handle; // this list is kept sorted with real wires before nil
+const wire_ref_count = 4;
+const WireRef = [wire_ref_count]WirePool.Handle; // this list is kept sorted with real wires before nil
 const WireRefPool = zpool.Pool(16, 16, WireRef, struct { ptr: WireRef });
 const Map = struct {
     gpa: std.mem.Allocator,
@@ -526,6 +529,7 @@ const Map = struct {
         this.materials.deinit(this.gpa);
         this.tile_flags.deinit(this.gpa);
         this.wire_refs.deinit(this.gpa);
+        this.wires.deinit();
         this.players.deinit();
         this.wire_ref_pool.deinit();
     }
@@ -544,12 +548,12 @@ const Map = struct {
         // fill floor and ceiling
         for (0..size[0]) |x| {
             const xi: i32 = @intCast(x);
-            this.materials.set(.{ xi, 0, Layers.tile.int() }, .unobtanium);
-            this.tile_flags.ptr(.{ xi, 0 }).?.can_stand = true;
-            this.tile_flags.ptr(.{ xi, 0 }).?.can_enter = false;
-            this.materials.set(.{ xi, sizei[1] - 1, Layers.tile.int() }, .unobtanium);
-            this.tile_flags.ptr(.{ xi, sizei[1] - 1 }).?.can_stand = true;
-            this.tile_flags.ptr(.{ xi, 0 }).?.can_enter = false;
+            _ = this.materials.set(.{ xi, 0, Layers.tile.int() }, .unobtanium);
+            if (this.tile_flags.ptr(.{ xi, 0 })) |f| f.can_stand = true;
+            if (this.tile_flags.ptr(.{ xi, 0 })) |f| f.can_enter = false;
+            _ = this.materials.set(.{ xi, sizei[1] - 1, Layers.tile.int() }, .unobtanium);
+            if (this.tile_flags.ptr(.{ xi, sizei[1] - 1 })) |f| f.can_stand = true;
+            if (this.tile_flags.ptr(.{ xi, 0 })) |f| f.can_enter = false;
         }
     }
     pub fn measureEnergy(this: *Map) u128 {
@@ -564,29 +568,29 @@ const Map = struct {
         while (y <= toPos[1]) : (y += 1) {
             var x: i32 = fromPos[0];
             while (x <= toPos[0]) : (x += 1) {
-                this.setWireRef(.{ x, y }, removeHandle, addHandle);
+                try this.setWireRef(.{ x, y }, removeHandle, addHandle);
             }
         }
     }
     fn setWireRef(this: *Map, pos: vec.by2i32, remove: WirePool.Handle, add: WirePool.Handle) !void {
-        if (remove == add) return; // nothing to change
+        if (remove.id == add.id) return; // nothing to change
         const wire_ref = this.wire_refs.ptr(pos) orelse return; // out of bounds
-        if (wire_ref.* == .nil) {
-            if (add == .nil) return; // nothing to do
+        if (wire_ref.*.id == WireRefPool.Handle.nil.id) {
+            if (add.id == WirePool.Handle.nil.id) return; // nothing to do
             wire_ref.* = try this.wire_ref_pool.add(.{ .ptr = @splat(.nil) });
         }
         const value = this.wire_ref_pool.getColumnPtrAssumeLive(wire_ref.*, .ptr);
 
-        var new_value_buf: [4]WirePool.Handle = @splat(.nil);
+        var new_value_buf: [wire_ref_count]WirePool.Handle = @splat(.nil);
         var new_value = std.ArrayList(WirePool.Handle).initBuffer(&new_value_buf);
 
         for (value) |item| {
-            if (item == remove) continue; // ignore the item
-            if (item == add) continue; // ignore the item
-            if (item == .nil) continue; // ignore the item
+            if (item.id == remove.id) continue; // ignore the item
+            if (item.id == add.id) continue; // ignore the item
+            if (item.id == WireRefPool.Handle.nil.id) continue; // ignore the item
             new_value.appendAssumeCapacity(item);
         }
-        if (add != .nil) new_value.appendAssumeCapacity(add);
+        if (add.id != WirePool.Handle.nil.id) new_value.appendAssumeCapacity(add);
 
         // check empy
         if (new_value.items.len == 0) {
@@ -606,65 +610,66 @@ const Map = struct {
         while (y <= toPos[1]) : (y += 1) {
             var x: i32 = fromPos[0];
             while (x <= toPos[0]) : (x += 1) {
-                this.recalculatePipeWireMaterialRange(.{ x, y });
+                try this.recalculatePipeWireMaterial(.{ x, y });
             }
         }
     }
     fn recalculatePipeWireMaterial(this: *Map, pos: vec.by2i32) !void {
         // recomputes the pipe/wire material at the tile
         // TODO: redo this
-        const wire = this.wire_refs.get(pos);
-        this.materials.set(.{ pos[0], pos[1], Layers.wires_and_pipes.int() }, Material{
-            .material = if (wire != .nil) .other else .none,
-            .mass_milligrams = if (wire != .nil) 5_000 else 0, // TODO: sum the mass of the wires
-            .temperature_millikelvin = if (wire != .nil) 298_150, // TODO: take the existing temperature from this.materials and remove or add the new wire
+        const wire_ref = this.wire_refs.get(pos) orelse WireRefPool.Handle.nil;
+        const has_wire = wire_ref.id != WireRefPool.Handle.nil.id;
+        _ = this.materials.set(.{ pos[0], pos[1], Layers.wires_and_pipes.int() }, Material{
+            .material = if (has_wire) .other else .none,
+            .mass_milligrams = if (has_wire) 5_000 else 0, // TODO: sum the mass of the wires. TODO: we need to take the existing mass to determine the new mass, and add any added mass
+            .temperature_millikelvin = if (has_wire) 298_150 else 0, // TODO: take the existing temperature from this.materials and remove or add the new wire
         });
     }
-    pub fn getWires(this: *Map, pos: vec.by2i32) [4]WirePool.Handle {
-        const wire_refs = this.wire_refs.get(pos);
-        if (wire_refs == .nil) return @splat(.nil);
-        const data = this.wire_ref_pool.getColumnAssumeLive(wire_refs, .ptr);
-        return data.*;
+    pub fn getWires(this: *Map, pos: vec.by2i32) [wire_ref_count]WirePool.Handle {
+        const wire_refs = this.wire_refs.get(pos) orelse WireRefPool.Handle.nil;
+        if (wire_refs.id == WireRefPool.Handle.nil.id) return @splat(.nil);
+        return this.wire_ref_pool.getColumnPtrAssumeLive(wire_refs, .ptr).*;
     }
     fn trySplitWire(this: *Map, w1: WirePool.Handle, split_pos: vec.by2i32) !void {
-        const w1_data: *Wire = this.wires.getColumnAssumeLive(w1, .ptr);
+        const w1_data: *Wire = this.wires.getColumnPtrAssumeLive(w1, .ptr);
         var w2_data: Wire = w1_data.*;
         if (w1_data.hasSide(split_pos)) return; // can't split at an endpoint
 
         w1_data.sides[1] = split_pos;
         w2_data.sides[0] = split_pos;
 
-        const w2 = try this.wires.add(w2_data);
+        const w2 = try this.wires.add(.{ .ptr = w2_data });
 
-        this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w1, w2);
+        try this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w1, w2);
         // add back w1 to the split point
-        this.setWireRef(split_pos, .nil, w1);
+        try this.setWireRef(split_pos, .nil, w1);
     }
     fn tryMergeWires(this: *Map, shared_point: vec.by2i32) !void {
         var w1: WirePool.Handle = .nil;
         var w2: WirePool.Handle = .nil;
         for (this.getWires(shared_point)) |wire| {
-            if (wire == .nil) continue;
-            for (.{ &w1, &w2 }) |w| {
-                if (w.* != .nil) {
+            if (wire.id == WirePool.Handle.nil.id) continue;
+            for ([_]*WirePool.Handle{ &w1, &w2 }) |w| {
+                if (w.*.id == WirePool.Handle.nil.id) {
                     w.* = wire;
                     break;
                 }
             } else return; // can't merge; too many wires
         }
-        if (w1 == .nil or w2 == .nil) return; // can't merge; not enough wires
+        if (w1.id == WirePool.Handle.nil.id or w2.id == WirePool.Handle.nil.id) return; // can't merge; not enough wires
+        const flags = this.tile_flags.get(shared_point) orelse TileFlags.empty;
+        if (flags.has_power_port) return; // can't merge; there is a machine receiving power at the shared point
 
-        const w1_data: *Wire = this.wires.getColumnAssumeLive(w1, .ptr);
-        const w2_data: *Wire = this.wires.getColumnAssumeLive(w2, .ptr);
+        const w1_data: *Wire = this.wires.getColumnPtrAssumeLive(w1, .ptr);
+        const w2_data: *Wire = this.wires.getColumnPtrAssumeLive(w2, .ptr);
 
         if (!w1_data.canMergeWith(w2_data)) return; // can't merge; not same side or not same material
 
         // can merge
-
-        // TODO: update wire graph
-
-        for (0..2) |i| w1_data.sides[i] = @min(w1_data.sides[i], w2_data.sides[i]);
-        this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w2, w1);
+        w1_data.sides[0] = @min(w1_data.sides[0], w2_data.sides[0]);
+        w1_data.sides[1] = @max(w1_data.sides[1], w2_data.sides[1]);
+        try this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w2, w1);
+        this.wires.removeAssumeLive(w2);
         // no need to update materials, they are unchanged.
     }
     pub fn createWire(this: *Map, wire_in: Wire) !void {
@@ -676,38 +681,33 @@ const Map = struct {
         // find any wires which need splitting
         for (wire_in.sides) |side| {
             for (this.getWires(side)) |existing_wire| {
-                if (existing_wire == .nil) continue;
-                const xw_data: Wire = this.wires.getColumnAssumeLive(existing_wire, .ptr);
-                if (xw_data.hasSide(wire_in.side[0]) or xw_data.hasSide(wire_in.side[1])) continue; // the wire shares a side with us; no action
+                if (existing_wire.id == WirePool.Handle.nil.id) continue;
+                const xw_data: *Wire = this.wires.getColumnPtrAssumeLive(existing_wire, .ptr);
+                if (xw_data.hasSide(wire_in.sides[0]) or xw_data.hasSide(wire_in.sides[1])) continue; // the wire shares a side with us; no action
                 if (xw_data.direction() == wire_in.direction()) continue; // the wire shares a direction with us; no action
                 // must split the wire
-                this.trySplitWire(existing_wire, side);
-                // TODO: update the wire graph: link the new wire to the old wire
+                try this.trySplitWire(existing_wire, side);
             }
         }
 
         {
             // create the new wire
-            const new_wire = try this.wires.add(wire_in);
-            const wire = this.wires.getColumnAssumeLive(new_wire, .ptr);
-
-            // update the wire graph: add links to existing wires on either side
-            for (wire.sides) |side| {
-                for (this.getWires(side)) |existing_wire| {
-                    if (existing_wire == .nil) continue;
-                    const xw_data: Wire = this.wires.getColumnAssumeLive(existing_wire, .ptr);
-                    if (!xw_data.hasSide(wire.side[0]) and !xw_data.hasSide(wire.side[1])) continue; // this wire crosses over us
-                    // TODO: update the wire graph: link the new wire to the old wire
-                }
-            }
+            const new_wire = try this.wires.add(.{ .ptr = wire_in });
+            const wire: *Wire = this.wires.getColumnPtrAssumeLive(new_wire, .ptr);
 
             // keep mirrored data in sync
-            this.setWireRefRange(wire.sides[0], wire.sides[1], .nil, new_wire);
-            this.recalculatePipeWireMaterialRange(wire.sides[0], wire.sides[1]);
+            try this.setWireRefRange(wire.sides[0], wire.sides[1], .nil, new_wire);
+            try this.recalculatePipeWireMaterialRange(wire.sides[0], wire.sides[1]);
         }
 
-        this.tryMergeWires(wire_in.sides[0]);
-        this.tryMergeWires(wire_in.sides[1]);
+        try this.tryMergeWires(wire_in.sides[0]);
+        try this.tryMergeWires(wire_in.sides[1]);
+    }
+    fn generateWireGraph() void {
+        // TODO:
+        // - for each wire:
+        //   - add a vertex at both sides (keep a map of pos -> vertex index, never add the same position twice)
+        //   - add an edge from side[0] to side[1]
     }
 };
 
@@ -721,23 +721,84 @@ test Map {
 
     const path = calculatePathfindEdges(map, .{ @divTrunc(map.size_int[0], 2), 1 }, &.{});
     try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&path),
-        \\*: main.Path:
-        \\ bidi: [4]main.PathTarget:
-        \\  0: main.PathTarget:
-        \\   pos: .{ 2147483647, 2147483647 }
-        \\   cost_msec: 2147483647
-        \\  1: main.PathTarget:
+        \\*: struct:
+        \\ bidi: [4]:
+        \\  0: struct:
+        \\   pos: .{ maxInt(i32), maxInt(i32) }
+        \\   cost_msec: maxInt(u32)
+        \\  1: struct:
         \\   pos: .{ 99, 1 }
         \\   cost_msec: 100
-        \\  2: main.PathTarget:
-        \\   pos: .{ 2147483647, 2147483647 }
-        \\   cost_msec: 2147483647
-        \\  3: main.PathTarget:
+        \\  2: struct:
+        \\   pos: .{ maxInt(i32), maxInt(i32) }
+        \\   cost_msec: maxInt(u32)
+        \\  3: struct:
         \\   pos: .{ 101, 1 }
         \\   cost_msec: 100
     );
 
     try pathfindPath(map, .{ 50, 1 }, &.{});
+
+    // add some wires
+    try map.createWire(.{
+        .sides = .{
+            .{ 10, 10 },
+            .{ 10, 15 },
+        },
+    });
+
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
+        \\*: zpool.Pool:
+        \\ @0.1: struct:
+        \\  ptr: struct:
+        \\   sides: [2]:
+        \\    0: .{ 10, 10 }
+        \\    1: .{ 10, 15 }
+    );
+
+    // extend the wire
+    try map.createWire(.{
+        .sides = .{
+            .{ 10, 15 },
+            .{ 10, 20 },
+        },
+    });
+
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
+        \\*: zpool.Pool:
+        \\ @0.1: struct:
+        \\  ptr: struct:
+        \\   sides: [2]:
+        \\    0: .{ 10, 10 }
+        \\    1: .{ 10, 20 }
+    );
+
+    // split the wire
+    try map.createWire(.{
+        .sides = .{
+            .{ 10, 15 },
+            .{ 30, 15 },
+        },
+    });
+
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
+        \\*: zpool.Pool:
+        \\ @0.1: struct:
+        \\  ptr: struct:
+        \\   sides: [2]:
+        \\    0: .{ 10, 10 }
+        \\    1: .{ 10, 15 }
+        \\ @2.1: struct:
+        \\  ptr: struct:
+        \\   sides: [2]:
+        \\    0: .{ 10, 15 }
+        \\    1: .{ 10, 20 }
+        \\ @3.1: struct:
+        \\  ptr: struct:
+        \\   sides: [2]:
+        \\    0: .{ 10, 15 }
+        \\    1: .{ 30, 15 }
+    );
 }
 
 test {

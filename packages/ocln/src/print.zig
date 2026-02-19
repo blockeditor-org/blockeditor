@@ -17,6 +17,7 @@ const TypeDetails = struct {
     value: union(enum) {
         custom: struct {
             dump: *const fn (printer: *Printer, arg: DetailedAny) Error!void,
+            children: []const TypeDetails = &.{}, // TODO
         },
         allocator,
         one_pointer: struct {
@@ -51,7 +52,11 @@ fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: Detai
         fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
             const cast = arg.cast(Ty);
             try printer.setColor(.bright_black);
-            try printer.print("{s}:", .{@typeName(Ty)});
+            if (printer.cfg.include_type_names) {
+                try printer.print("{s}:", .{@typeName(Ty)});
+            } else {
+                try printer.print(".{}:", .{});
+            }
             try printer.setColor(.reset);
             inline for (@typeInfo(Ty).@"struct".fields) |field| {
                 try printer.newline();
@@ -98,6 +103,28 @@ fn printInt(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) E
     return &struct {
         fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
             const cast = arg.cast(Ty);
+            if (cast.* != 0 and @typeInfo(Ty) == .int) {
+                if (cast.* == std.math.maxInt(Ty)) {
+                    try printer.setColor(.reset);
+                    try printer.print("maxInt(", .{});
+                    try printer.setColor(.cyan);
+                    try printer.print("{s}", .{@typeName(Ty)});
+                    try printer.setColor(.reset);
+                    try printer.print(")", .{});
+                    try printer.setColor(.reset);
+                    return;
+                }
+                if (cast.* == std.math.minInt(Ty)) {
+                    try printer.setColor(.reset);
+                    try printer.print("minInt(", .{});
+                    try printer.setColor(.cyan);
+                    try printer.print("{s}", .{@typeName(Ty)});
+                    try printer.setColor(.reset);
+                    try printer.print(")", .{});
+                    try printer.setColor(.reset);
+                    return;
+                }
+            }
             try printer.setColor(.magenta);
             try printer.print("{d}", .{cast.*});
             try printer.setColor(.reset);
@@ -125,8 +152,14 @@ fn printMultiArrayList(comptime Ty: type, comptime Child: type) *const fn (print
             const cast = arg.cast(std.MultiArrayList(Child));
             try printer.setColor(.magenta);
             try printer.setColor(.bright_black);
-            try printer.print("std.MultiArrayList({s}):", .{@typeName(Child)});
+            if (printer.cfg.include_type_names) {
+                try printer.print("std.MultiArrayList({s}):", .{@typeName(Child)});
+            } else {
+                try printer.print("std.MultiArrayList:", .{});
+            }
             try printer.setColor(.reset);
+            printer.indent();
+            defer printer.dedent();
             for (0..cast.len) |idx| {
                 try printer.newline();
                 try printer.setColor(.magenta);
@@ -135,6 +168,43 @@ fn printMultiArrayList(comptime Ty: type, comptime Child: type) *const fn (print
                 try printer.print(": ", .{});
                 try printer.setColor(.reset);
                 try printer.dump(.fromAuto(&cast.get(idx)));
+            }
+            if (@typeInfo(Ty).@"struct".fields.len == 0) {
+                try printer.newline();
+                try printer.print("no fields", .{});
+            }
+        }
+    }.doPrint;
+}
+fn printZpool(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny) Error!void {
+    return &struct {
+        fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
+            const cast = arg.cast(Ty);
+            try printer.setColor(.magenta);
+            if (printer.cfg.include_type_names) {
+                try printer.setColor(.bright_black);
+                try printer.print("zpool.Pool({s}, {s}):", .{ @typeName(Ty.Resource), @typeName(Ty.Columns) });
+            } else {
+                try printer.print("zpool.Pool:", .{});
+            }
+            try printer.setColor(.reset);
+            printer.indent();
+            defer printer.dedent();
+            var iter = cast.liveHandles();
+            while (iter.next()) |handle| {
+                try printer.newline();
+                try printer.setColor(.bright_black);
+                try printer.print("@", .{});
+                try printer.setColor(.magenta);
+                try printer.print("{d}", .{handle.addressable().index});
+                try printer.setColor(.bright_black);
+                try printer.print(".", .{});
+                try printer.setColor(.magenta);
+                try printer.print("{d}", .{handle.addressable().cycle});
+                try printer.setColor(.bright_black);
+                try printer.print(": ", .{});
+                try printer.setColor(.reset);
+                try printer.dump(.fromAuto(&cast.getColumnsAssumeLive(handle)));
             }
             if (@typeInfo(Ty).@"struct".fields.len == 0) {
                 try printer.newline();
@@ -168,6 +238,18 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
                         @compileLog("incorrectly detected as MultiArraylist:\ntype " ++ @typeName(Ty) ++ "\nimprove heuristic or remove this compileLog statement.");
                     }
                 }
+            }
+            if (@typeInfo(Ty) == .@"struct" and @hasDecl(Ty, "Handle") and @hasDecl(Ty, "Resource") and @hasDecl(Ty, "Columns")) {
+                // maybe zpool.Pool? we can't reconstruct it to test unfortunately because neither it nor handle exposes index_bits
+                break :blk .{ .custom = .{ .dump = printZpool(Ty) } };
+            }
+            if (@typeInfo(Ty) == .@"struct" and @hasDecl(Ty, "Handle") and @hasDecl(Ty, "Resource") and @hasDecl(Ty, "Columns")) {
+                // maybe zpool.Handle? we can't reconstruct it to test unfortunately because it doesn't expose index_bits
+                // TODO: we should add a way to specify a mapping when printing from handle to value of which ptr to use
+                break :blk .{ .custom = .{ .dump = printZpool(Ty) } };
+            }
+            if (@typeInfo(Ty) == .@"struct" and @hasDecl(Ty, "Handle") and @hasDecl(Ty, "Resource") and @hasDecl(Ty, "Columns")) {
+                // maybe zpool.Pool?
             }
             // TODO: MultiArrayList, AutoArrayHashMap
 
@@ -261,6 +343,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
 const PrintCfg = struct {
     tty: std.Io.tty.Config,
     include_address: bool = false,
+    include_type_names: bool = false,
 };
 pub fn print(out: *std.Io.Writer, object: anytype, cfg: *const PrintCfg) Error!void {
     var printer: Printer = .{
@@ -306,12 +389,12 @@ pub fn autoPrint(obj: anytype) AutoPrintT(@TypeOf(obj)) {
 }
 pub fn snapshotPrint(obj: anytype) []const u8 {
     const sw = struct {
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        threadlocal var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     };
     const alloc = sw.arena.allocator();
     var writer = std.Io.Writer.Allocating.init(alloc);
     defer writer.deinit();
-    print(&writer.writer, obj, &.{ .tty = .no_color, .include_address = false }) catch @panic("oom");
+    print(&writer.writer, obj, &.{ .tty = .no_color, .include_address = false, .include_type_names = false }) catch @panic("oom");
     return writer.toOwnedSlice() catch @panic("oom");
 }
 const Printer = struct {
@@ -438,7 +521,11 @@ const Printer = struct {
             },
             .array => |*array| {
                 try printer.setColor(.bright_black);
-                try printer.print("{s}:", .{any.details.name});
+                if (printer.cfg.include_type_names) {
+                    try printer.print("{s}:", .{any.details.name});
+                } else {
+                    try printer.print("[{d}]:", .{array.len});
+                }
                 try printer.setColor(.reset);
                 printer.indent();
                 defer printer.dedent();
@@ -466,7 +553,11 @@ const Printer = struct {
                 }
                 const len = any.castOffset(usize, slice.len_offset).*;
                 try printer.setColor(.bright_black);
-                try printer.print("{s}:", .{any.details.name});
+                if (printer.cfg.include_type_names) {
+                    try printer.print("{s}:", .{any.details.name});
+                } else {
+                    try printer.print("slice:", .{});
+                }
                 try printer.setColor(.reset);
                 printer.indent();
                 defer printer.dedent();
@@ -517,7 +608,11 @@ const Printer = struct {
             },
             .struc => |*struc| {
                 try printer.setColor(.bright_black);
-                try printer.print("{s}:", .{any.details.name});
+                if (printer.cfg.include_type_names) {
+                    try printer.print("{s}:", .{any.details.name});
+                } else {
+                    try printer.print("struct:", .{});
+                }
                 try printer.setColor(.reset);
                 printer.indent();
                 defer printer.dedent();

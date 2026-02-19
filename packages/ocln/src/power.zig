@@ -178,17 +178,17 @@ test "power" {
 
     _ = connection;
     try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&network),
-        \\*: power.PowerNetwork:
-        \\ nodes: array_list.Aligned(power.Node,null):
-        \\  items: []power.Node:
-        \\   0: power.Node:
+        \\*: struct:
+        \\ nodes: struct:
+        \\  items: slice:
+        \\   0: struct:
         \\    intrinsic_value: 1080
-        \\   1: power.Node:
+        \\   1: struct:
         \\    intrinsic_value: -1080
         \\  capacity: 16
-        \\ links: array_list.Aligned(power.Link,null):
-        \\  items: []power.Link:
-        \\   0: power.Link:
+        \\ links: struct:
+        \\  items: slice:
+        \\   0: struct:
         \\    src: 0
         \\    dst: 1
         \\    cost: 2000

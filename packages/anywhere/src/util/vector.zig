@@ -1,9 +1,12 @@
 const vec = @This();
 
-pub fn by(comptime n: comptime_int, comptime T: type) type {
+// todo: we will create a custom vector type
+// we want: reduce,eql,add,sub,mul,div,...etc
+pub fn Vector(comptime n: comptime_int, comptime T: type) type {
     return @Vector(n, T);
 }
 
+pub const by = Vector;
 pub const by2i32 = by(2, i32);
 pub const by2usize = by(2, usize);
 pub const by3i32 = by(3, i32);

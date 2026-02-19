@@ -28,7 +28,7 @@ pub fn Grid(comptime n: comptime_int, comptime Int: type, comptime Child: type) 
         pub const empty: Self = .{ .items = &.{}, .size = @splat(0) };
 
         pub fn resize(this: *Self, gpa: std.mem.Allocator, size: vecXusize) !void {
-            const items = try gpa.alloc(Child, size[0] * size[1]);
+            const items = try gpa.alloc(Child, @reduce(.Mul, size));
             gpa.free(this.items);
             this.* = .{ .items = items, .size = size };
         }
@@ -38,17 +38,18 @@ pub fn Grid(comptime n: comptime_int, comptime Int: type, comptime Child: type) 
         pub fn deinit(this: *Self, gpa: std.mem.Allocator) void {
             gpa.free(this.items);
         }
-        pub fn get(this: *const Self, pos: vecXInt) Child {
-            const idx = this.index(pos) orelse return .empty;
+        pub fn get(this: *const Self, pos: vecXInt) ?Child {
+            const idx = this.index(pos) orelse return null;
             return this.items[idx];
         }
         pub fn ptr(this: *const Self, pos: vecXInt) ?*Child {
             const idx = this.index(pos) orelse return null;
             return &this.items[idx];
         }
-        pub fn set(this: *const Self, pos: vecXInt, value: Child) void {
-            const idx = this.index(pos) orelse return;
+        pub fn set(this: *const Self, pos: vecXInt, value: Child) bool {
+            const idx = this.index(pos) orelse return false;
             this.items[idx] = value;
+            return true;
         }
         fn index(this: *const Self, pos: vecXInt) ?usize {
             return posToIndex(n, Int, this.size, pos);
