@@ -218,6 +218,9 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
         .name = @typeName(Ty),
         .value = blk: {
             // special handling
+            if (@typeInfo(Ty) == .@"struct" and @hasDecl(Ty, "printCustomFormat")) {
+                break :blk .{ .custom = .{ .dump = Ty.printCustomFormat } };
+            }
             switch (Ty) {
                 std.mem.Allocator => {
                     break :blk .allocator;
@@ -343,7 +346,7 @@ fn typeDetails(comptime Ty: type) *const TypeDetails {
 const PrintCfg = struct {
     tty: std.Io.tty.Config,
     include_address: bool = false,
-    include_type_names: bool = false,
+    include_type_names: bool = true,
 };
 pub fn print(out: *std.Io.Writer, object: anytype, cfg: *const PrintCfg) Error!void {
     var printer: Printer = .{
@@ -354,23 +357,23 @@ pub fn print(out: *std.Io.Writer, object: anytype, cfg: *const PrintCfg) Error!v
     try printer.dump(.fromAuto(&object));
 }
 
-const DetailedAny = struct {
+pub const DetailedAny = struct {
     obj: [*]const u8,
     details: *const TypeDetails,
-    fn from(obj: [*]const u8, details: *const TypeDetails) DetailedAny {
+    pub fn from(obj: [*]const u8, details: *const TypeDetails) DetailedAny {
         return .{ .obj = obj, .details = details };
     }
-    fn fromAuto(obj: anytype) DetailedAny {
+    pub fn fromAuto(obj: anytype) DetailedAny {
         const details = typeDetails(@typeInfo(@TypeOf(obj)).pointer.child);
         return .from(@ptrCast(obj), details);
     }
-    fn offset(any: DetailedAny, n: usize, details: *const TypeDetails) DetailedAny {
+    pub fn offset(any: DetailedAny, n: usize, details: *const TypeDetails) DetailedAny {
         return .{ .obj = any.obj[n..], .details = details };
     }
-    fn cast(any: DetailedAny, comptime T: type) *align(1) const T {
+    pub fn cast(any: DetailedAny, comptime T: type) *align(1) const T {
         return any.castOffset(T, 0);
     }
-    fn castOffset(any: DetailedAny, comptime T: type, n: usize) *align(1) const T {
+    pub fn castOffset(any: DetailedAny, comptime T: type, n: usize) *align(1) const T {
         return @ptrCast(any.obj[n..]);
     }
 };
@@ -397,7 +400,7 @@ pub fn snapshotPrint(obj: anytype) []const u8 {
     print(&writer.writer, obj, &.{ .tty = .no_color, .include_address = false, .include_type_names = false }) catch @panic("oom");
     return writer.toOwnedSlice() catch @panic("oom");
 }
-const Printer = struct {
+pub const Printer = struct {
     cfg: *const PrintCfg,
     out: *std.Io.Writer,
     indent_count: usize,

@@ -803,4 +803,5 @@ test Map {
 
 test {
     _ = @import("power.zig");
+    _ = @import("pressure.zig");
 }
