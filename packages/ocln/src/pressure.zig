@@ -29,7 +29,8 @@ const GraphNode = struct {
     size_m3: f64,
     response_pattern: ResponsePattern,
 
-    edge_intrinsic_force_N: []f64, // can this be a node? maybe? should it be? unclear
+    /// we should be able to remove this by adding it directly into the outgoing forces in the update function
+    edge_intrinsic_force_N: []f64,
     edge_incoming_force_N: []f64,
     edge_outgoing_force_N: []f64,
     edge_nodes: []usize,
