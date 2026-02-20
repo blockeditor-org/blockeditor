@@ -178,7 +178,6 @@ fn printZpool(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny)
     return &struct {
         fn doPrint(printer: *Printer, arg: DetailedAny) Error!void {
             const cast = arg.cast(Ty);
-            try printer.setColor(.magenta);
             if (printer.cfg.include_type_names) {
                 try printer.setColor(.bright_black);
                 try printer.print("zpool.Pool({s}, {s}):", .{ @typeName(Ty.Resource), @typeName(Ty.Columns) });
@@ -405,7 +404,7 @@ pub const Printer = struct {
     // for cyclic
     // cache: std.AutoArrayHashMap(struct{ ptr: [*]const u8, details: *const TypeDetails }, usize),
 
-    fn setColor(printer: *Printer, color: std.Io.tty.Color) Error!void {
+    pub fn setColor(printer: *Printer, color: std.Io.tty.Color) Error!void {
         printer.cfg.tty.setColor(printer.out, color) catch return error.WriteFailed;
     }
 

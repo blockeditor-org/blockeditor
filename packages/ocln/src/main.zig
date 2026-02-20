@@ -4,7 +4,7 @@ const util = anywhere.util;
 const math = util.math;
 const Grid = anywhere.util.grid.Grid;
 const zpool = anywhere.util.zpool;
-const printer = @import("print.zig");
+const print = @import("print.zig");
 const loadimage = @import("loadimage");
 const vec = util.vec;
 
@@ -181,7 +181,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
 }
 
 fn onMouseEvent(self: *App, b2: *B2.Beui2, ev: B2.MouseEvent) ?Beui.Cursor {
-    // std.log.info("onMouseEvent: {f}", .{printer.autoPrint(ev)});
+    // std.log.info("onMouseEvent: {f}", .{print.autoPrint(ev)});
     if (ev.action == .move_while_down or ev.action == .up) {
         self.interface.camera.offset += ev.offset;
     }
@@ -522,6 +522,45 @@ fn ConnectionLayer(comptime Data: type) type {
             this.coordinate_to_segments_map.deinit(this.segments._allocator);
             this.segments.deinit();
         }
+
+        pub fn printCustomFormat(printer: *print.Printer, arg: print.DetailedAny) error{WriteFailed}!void {
+            // sort, then print
+            const this = arg.cast(@This());
+            const gpa = this.segments._allocator;
+            var handle_iter = this.segments.liveHandles();
+            var segments = std.ArrayList(SegmentPool.Handle).initCapacity(gpa, this.segments.liveHandleCount()) catch return error.WriteFailed;
+            defer segments.deinit(gpa);
+            while (handle_iter.next()) |handle| segments.appendAssumeCapacity(handle);
+            std.mem.sort(SegmentPool.Handle, segments.items, this, lessThanSegmentHandle);
+
+            try printer.setColor(.bright_black);
+            try printer.print("ConnectionLayer:", .{});
+            try printer.setColor(.reset);
+            printer.indent();
+            defer printer.dedent();
+            for (segments.items) |segment| {
+                try printer.newline();
+                const ptr = this.segments.getColumnPtrAssumeLive(segment, .ptr);
+                try printer.print("{d} <--> {d}: ", .{ ptr.sides[0], ptr.sides[1] });
+                try printer.dump(.fromAuto(&ptr.user));
+            }
+            if (segments.items.len == 0) {
+                try printer.print(" (no fields)", .{});
+            }
+        }
+        fn lessThanSegmentHandle(this: *align(1) const @This(), lhs: SegmentPool.Handle, rhs: SegmentPool.Handle) bool {
+            const lhs_ptr = this.segments.getColumnPtrAssumeLive(lhs, .ptr);
+            const rhs_ptr = this.segments.getColumnPtrAssumeLive(rhs, .ptr);
+            if (lhs_ptr.sides[0][1] < rhs_ptr.sides[0][1]) return true;
+            if (lhs_ptr.sides[0][1] > rhs_ptr.sides[0][1]) return false;
+            if (lhs_ptr.sides[0][0] < rhs_ptr.sides[0][0]) return true;
+            if (lhs_ptr.sides[0][0] > rhs_ptr.sides[0][0]) return false;
+            if (lhs_ptr.sides[1][1] < rhs_ptr.sides[1][1]) return true;
+            if (lhs_ptr.sides[1][1] > rhs_ptr.sides[1][1]) return false;
+            if (lhs_ptr.sides[1][0] < rhs_ptr.sides[1][0]) return true;
+            if (lhs_ptr.sides[1][0] > rhs_ptr.sides[1][0]) return false;
+            unreachable; // there shouldn't be multiple identical segments in the list. uh oh!
+        }
     };
 }
 const Wires = ConnectionLayer(struct {
@@ -732,7 +771,7 @@ test Map {
     try map.generate(.{ 200, 300 });
 
     const path = calculatePathfindEdges(map, .{ @divTrunc(map.size_int[0], 2), 1 }, &.{});
-    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&path),
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&path),
         \\*: struct:
         \\ bidi: [4]:
         \\  0: struct:
@@ -760,14 +799,9 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires2.segments),
-        \\*: zpool.Pool:
-        \\ @0.1: struct:
-        \\  ptr: struct:
-        \\   sides: [2]:
-        \\    0: .{ 10, 10 }
-        \\    1: .{ 10, 15 }
-        \\   user: struct: (no fields)
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires2),
+        \\*: ConnectionLayer:
+        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
     );
 
     // extend the wire
@@ -779,14 +813,9 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires2.segments),
-        \\*: zpool.Pool:
-        \\ @0.1: struct:
-        \\  ptr: struct:
-        \\   sides: [2]:
-        \\    0: .{ 10, 10 }
-        \\    1: .{ 10, 20 }
-        \\   user: struct: (no fields)
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires2),
+        \\*: ConnectionLayer:
+        \\ { 10, 10 } <--> { 10, 20 }: struct: (no fields)
     );
 
     // split the wire
@@ -798,26 +827,11 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires2.segments),
-        \\*: zpool.Pool:
-        \\ @0.1: struct:
-        \\  ptr: struct:
-        \\   sides: [2]:
-        \\    0: .{ 10, 10 }
-        \\    1: .{ 10, 15 }
-        \\   user: struct: (no fields)
-        \\ @2.1: struct:
-        \\  ptr: struct:
-        \\   sides: [2]:
-        \\    0: .{ 10, 15 }
-        \\    1: .{ 10, 20 }
-        \\   user: struct: (no fields)
-        \\ @3.1: struct:
-        \\  ptr: struct:
-        \\   sides: [2]:
-        \\    0: .{ 10, 15 }
-        \\    1: .{ 30, 15 }
-        \\   user: struct: (no fields)
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires2),
+        \\*: ConnectionLayer:
+        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 30, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
     );
 }
 
