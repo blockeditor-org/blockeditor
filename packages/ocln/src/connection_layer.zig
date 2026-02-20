@@ -98,7 +98,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
         pub fn getSegments(this: *@This(), pos: vec.by2i32) [segment_ref_count]SegmentPool.Handle {
             return this.coordinate_to_segments_map.get(pos) orelse return @splat(.nil);
         }
-        fn trySplitSegment(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
+        pub fn trySplitSegment(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
             const w1_data: *Segment = this.segments.getColumnPtrAssumeLive(w1, .ptr);
             var w2_data: Segment = w1_data.*;
             if (w1_data.hasSide(split_pos)) return; // can't split at an endpoint

@@ -465,7 +465,6 @@ const Player = struct {
     contents: [4]Material,
 };
 const PlayerPool = zpool.Pool(16, 16, Player, struct { ptr: Player });
-const BuildingEntityTag = struct {};
 
 const TileFlags = packed struct {
     cannot_enter: bool,
@@ -492,7 +491,48 @@ const Wires = ConnectionLayer(struct {
 });
 const Wire = Wires.Segment;
 
-const Buildings = struct {};
+const BuildingTag = enum {
+    generator,
+};
+const Building = struct {
+    tag: BuildingTag,
+    fn checkPlace(tag: BuildingTag, map: *Map, pos: vec.by2i32) bool {
+        _ = map;
+        _ = pos;
+        return switch (tag) {
+            .generator => {
+                // check pos, pos + (0,1), pos + (1,0), pos + (1,1)
+                // make sure the has_building tag is no for all of them
+                // and the has_power_port tag is no for pos + (1,0)
+            },
+        };
+    }
+    fn place(tag: BuildingTag, map: *Map, pos: vec.by2i32) void {
+        _ = map;
+        _ = pos;
+        return switch (tag) {
+            .generator => {
+                // check pos, pos + (0,1), pos + (1,0), pos + (1,1)
+                // set the has_building tag
+                // and the has_power_port tag for pos + (1,0)
+                // after setting has_power_port, we must trigger trySplit on wires
+            },
+        };
+    }
+    fn destroy(tag: BuildingTag, map: *Map, pos: vec.by2i32) void {
+        _ = map;
+        _ = pos;
+        return switch (tag) {
+            .generator => {
+                // check pos, pos + (0,1), pos + (1,0), pos + (1,1)
+                // unset the has_building tag
+                // and the has_power_port tag for pos + (1,0)
+                // after unsetting has_power_port, we must trigger tryMerge on wires
+            },
+        };
+    }
+};
+const Buildings = zpool.Pool(16, 16, Building, struct { ptr: Building });
 
 const Map = struct {
     gpa: std.mem.Allocator,
