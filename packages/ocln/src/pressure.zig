@@ -164,7 +164,7 @@ fn generateGraph(arena: std.mem.Allocator, grid: *const Grid(2, i32, Tile)) !*Gr
                     },
                     .tile => 0, // tiles are stuck to the background, there is no gravity. we could have some tiles with gravity.
                 };
-                var target_index: usize = 0; // hacky method to get the index of the backref
+                var target_index: usize = 0; // hacky method to get the index of the backref. we could use a third pass to set the backrefs instead.
                 for (directions) |dir2| {
                     if (coordinate_to_node_index.get(coord + direction + dir2) == null) continue;
                     if (@reduce(.And, dir2 == direction * @as(vec.by2i32, @splat(-1)))) break;
