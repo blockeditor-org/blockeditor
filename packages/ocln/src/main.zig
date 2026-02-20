@@ -511,6 +511,17 @@ fn ConnectionLayer(comptime Data: type) type {
 
         coordinate_to_segments_map: std.AutoArrayHashMapUnmanaged(vec.by2i32, [wire_ref_count]WirePool.Handle),
         segments: SegmentPool,
+
+        pub fn init(gpa: std.mem.Allocator) @This() {
+            return .{
+                .coordinate_to_segments_map = .empty,
+                .segments = .init(gpa),
+            };
+        }
+        pub fn deinit(this: *@This()) void {
+            this.coordinate_to_segments_map.deinit(this.segments._allocator);
+            this.segments.deinit();
+        }
     };
 }
 const Wires = ConnectionLayer(struct {
@@ -527,8 +538,7 @@ const Map = struct {
     size_usize: vec.by2usize,
     materials: Grid(3, i32, Material),
     tile_flags: Grid(2, i32, TileFlags),
-    coordinate_to_wires_map: std.AutoArrayHashMapUnmanaged(vec.by2i32, [wire_ref_count]WirePool.Handle),
-    wires: WirePool,
+    wires2: Wires,
     players: PlayerPool,
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) void {
@@ -538,16 +548,14 @@ const Map = struct {
             .gpa = gpa,
             .materials = .empty,
             .tile_flags = .empty,
-            .coordinate_to_wires_map = .empty,
-            .wires = .init(gpa),
+            .wires2 = .init(gpa),
             .players = .init(gpa),
         };
     }
     pub fn deinit(this: *Map) void {
         this.materials.deinit(this.gpa);
         this.tile_flags.deinit(this.gpa);
-        this.coordinate_to_wires_map.deinit(this.gpa);
-        this.wires.deinit();
+        this.wires2.deinit();
         this.players.deinit();
     }
     pub fn generate(this: *Map, size: vec.by2usize) !void {
@@ -589,7 +597,7 @@ const Map = struct {
     }
     fn setWireRef(this: *Map, pos: vec.by2i32, remove: WirePool.Handle, add: WirePool.Handle) !void {
         if (remove.id == add.id) return; // nothing to change
-        const gpres = try this.coordinate_to_wires_map.getOrPutValue(this.gpa, pos, @splat(.nil));
+        const gpres = try this.wires2.coordinate_to_segments_map.getOrPutValue(this.gpa, pos, @splat(.nil));
         const value = gpres.value_ptr;
 
         var new_value_buf: [wire_ref_count]WirePool.Handle = @splat(.nil);
@@ -606,7 +614,7 @@ const Map = struct {
         // check empy
         if (new_value.items.len == 0) {
             // remove
-            std.debug.assert(this.coordinate_to_wires_map.swapRemove(pos)); // invalidates value ptr
+            std.debug.assert(this.wires2.coordinate_to_segments_map.swapRemove(pos)); // invalidates value ptr
             return;
         }
 
@@ -626,7 +634,7 @@ const Map = struct {
     fn recalculatePipeWireMaterial(this: *Map, pos: vec.by2i32) !void {
         // recomputes the pipe/wire material at the tile
         // TODO: redo this
-        const has_wire = this.coordinate_to_wires_map.getPtr(pos) != null;
+        const has_wire = this.wires2.coordinate_to_segments_map.getPtr(pos) != null;
         _ = this.materials.set(.{ pos[0], pos[1], Layers.wires_and_pipes.int() }, Material{
             .material = if (has_wire) .other else .none,
             .mass_milligrams = if (has_wire) 5_000 else 0, // TODO: sum the mass of the wires. TODO: we need to take the existing mass to determine the new mass, and add any added mass
@@ -634,17 +642,17 @@ const Map = struct {
         });
     }
     pub fn getWires(this: *Map, pos: vec.by2i32) [wire_ref_count]WirePool.Handle {
-        return this.coordinate_to_wires_map.get(pos) orelse return @splat(.nil);
+        return this.wires2.coordinate_to_segments_map.get(pos) orelse return @splat(.nil);
     }
     fn trySplitWire(this: *Map, w1: WirePool.Handle, split_pos: vec.by2i32) !void {
-        const w1_data: *Wire = this.wires.getColumnPtrAssumeLive(w1, .ptr);
+        const w1_data: *Wire = this.wires2.segments.getColumnPtrAssumeLive(w1, .ptr);
         var w2_data: Wire = w1_data.*;
         if (w1_data.hasSide(split_pos)) return; // can't split at an endpoint
 
         w1_data.sides[1] = split_pos;
         w2_data.sides[0] = split_pos;
 
-        const w2 = try this.wires.add(.{ .ptr = w2_data });
+        const w2 = try this.wires2.segments.add(.{ .ptr = w2_data });
 
         try this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w1, w2);
         // add back w1 to the split point
@@ -666,8 +674,8 @@ const Map = struct {
         const flags = this.tile_flags.get(shared_point) orelse TileFlags.empty;
         if (flags.has_power_port) return; // can't merge; there is a machine receiving power at the shared point
 
-        const w1_data: *Wire = this.wires.getColumnPtrAssumeLive(w1, .ptr);
-        const w2_data: *Wire = this.wires.getColumnPtrAssumeLive(w2, .ptr);
+        const w1_data: *Wire = this.wires2.segments.getColumnPtrAssumeLive(w1, .ptr);
+        const w2_data: *Wire = this.wires2.segments.getColumnPtrAssumeLive(w2, .ptr);
 
         if (!w1_data.canMergeWith(w2_data)) return; // can't merge; not same side or not same material
 
@@ -675,7 +683,7 @@ const Map = struct {
         w1_data.sides[0] = @min(w1_data.sides[0], w2_data.sides[0]);
         w1_data.sides[1] = @max(w1_data.sides[1], w2_data.sides[1]);
         try this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w2, w1);
-        this.wires.removeAssumeLive(w2);
+        this.wires2.segments.removeAssumeLive(w2);
         // no need to update materials, they are unchanged.
     }
     pub fn createWire(this: *Map, wire_in: Wire) !void {
@@ -686,7 +694,7 @@ const Map = struct {
         for (wire_in.sides) |side| {
             for (this.getWires(side)) |existing_wire| {
                 if (existing_wire.id == WirePool.Handle.nil.id) continue;
-                const xw_data: *Wire = this.wires.getColumnPtrAssumeLive(existing_wire, .ptr);
+                const xw_data: *Wire = this.wires2.segments.getColumnPtrAssumeLive(existing_wire, .ptr);
                 if (xw_data.hasSide(wire_in.sides[0]) or xw_data.hasSide(wire_in.sides[1])) continue; // the wire shares a side with us; no action
                 if (xw_data.direction() == wire_in.direction()) continue; // the wire shares a direction with us; no action
                 // must split the wire
@@ -696,8 +704,8 @@ const Map = struct {
 
         {
             // create the new wire
-            const new_wire = try this.wires.add(.{ .ptr = wire_in });
-            const wire: *Wire = this.wires.getColumnPtrAssumeLive(new_wire, .ptr);
+            const new_wire = try this.wires2.segments.add(.{ .ptr = wire_in });
+            const wire: *Wire = this.wires2.segments.getColumnPtrAssumeLive(new_wire, .ptr);
 
             // keep mirrored data in sync
             try this.setWireRefRange(wire.sides[0], wire.sides[1], .nil, new_wire);
@@ -752,7 +760,7 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires2.segments),
         \\*: zpool.Pool:
         \\ @0.1: struct:
         \\  ptr: struct:
@@ -771,7 +779,7 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires2.segments),
         \\*: zpool.Pool:
         \\ @0.1: struct:
         \\  ptr: struct:
@@ -790,7 +798,7 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
+    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires2.segments),
         \\*: zpool.Pool:
         \\ @0.1: struct:
         \\  ptr: struct:
