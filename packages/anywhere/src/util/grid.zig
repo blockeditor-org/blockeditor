@@ -19,6 +19,7 @@ pub fn Grid(comptime n: comptime_int, comptime Int: type, comptime Child: type) 
     return struct {
         items: []Child,
         size: vecXusize, // TODO: imo we should make this vecXInt
+        // TODO: consider having a stride field so we can get subgrids
 
         const Self = @This();
 
@@ -27,6 +28,11 @@ pub fn Grid(comptime n: comptime_int, comptime Int: type, comptime Child: type) 
 
         pub const empty: Self = .{ .items = &.{}, .size = @splat(0) };
 
+        pub fn fromSizeSlice(size: vecXusize, slice: []Child) @This() {
+            std.debug.assert(slice.len == @reduce(.Mul, size));
+            return .{ .items = slice, .size = size };
+        }
+        /// clears the items. does not copy existing. all new items are undefined.
         pub fn resize(this: *Self, gpa: std.mem.Allocator, size: vecXusize) !void {
             const items = try gpa.alloc(Child, @reduce(.Mul, size));
             gpa.free(this.items);
