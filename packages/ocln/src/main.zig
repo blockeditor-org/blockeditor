@@ -469,10 +469,12 @@ const TileFlags = packed struct {
     can_enter: bool,
     can_stand: bool, // enter=false,stand=true means can climb. enter=false,stand=false = spikes or smth.
     has_power_port: bool,
+    has_pipe_port: bool,
     pub const empty: TileFlags = .{
         .can_enter = true,
         .can_stand = false,
         .has_power_port = false,
+        .has_pipe_port = false,
     };
 };
 
@@ -580,7 +582,7 @@ fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             // add back w1 to the split point
             try this.setWireRef(split_pos, .nil, w1);
         }
-        fn tryMergeWires(this: *@This(), context: Context, shared_point: vec.by2i32) !void {
+        pub fn tryMergeWires(this: *@This(), context: Context, shared_point: vec.by2i32) !void {
             var w1: WirePool.Handle = .nil;
             var w2: WirePool.Handle = .nil;
             for (this.getWires(shared_point)) |wire| {
@@ -667,10 +669,10 @@ fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             const rhs_ptr = this.segments.getColumnPtrAssumeLive(rhs, .ptr);
             if (lhs_ptr.sides[0][1] < rhs_ptr.sides[0][1]) return true;
             if (lhs_ptr.sides[0][1] > rhs_ptr.sides[0][1]) return false;
-            if (lhs_ptr.sides[0][0] < rhs_ptr.sides[0][0]) return true;
-            if (lhs_ptr.sides[0][0] > rhs_ptr.sides[0][0]) return false;
             if (lhs_ptr.sides[1][1] < rhs_ptr.sides[1][1]) return true;
             if (lhs_ptr.sides[1][1] > rhs_ptr.sides[1][1]) return false;
+            if (lhs_ptr.sides[0][0] < rhs_ptr.sides[0][0]) return true;
+            if (lhs_ptr.sides[0][0] > rhs_ptr.sides[0][0]) return false;
             if (lhs_ptr.sides[1][0] < rhs_ptr.sides[1][0]) return true;
             if (lhs_ptr.sides[1][0] > rhs_ptr.sides[1][0]) return false;
             unreachable; // there shouldn't be multiple identical segments in the list. uh oh!
@@ -684,8 +686,7 @@ const Wires = ConnectionLayer(struct {
 }, struct {
     map: *Map,
     fn hasIntrinsic(this: @This(), pos: vec.by2i32) bool {
-        const flags = this.map.tile_flags.get(pos) orelse TileFlags.empty;
-        return flags.has_power_port;
+        return this.map.getFlag(pos, .has_power_port);
     }
 });
 const Wire = Wires.Segment;
@@ -774,6 +775,15 @@ const Map = struct {
         try this.wires.createWire(.{ .map = this }, wire);
         try this.recalculatePipeWireMaterialRange(wire.sides[0], wire.sides[1]);
     }
+
+    fn getFlag(this: *Map, pos: vec.by2i32, comptime flag: std.meta.FieldEnum(TileFlags)) @FieldType(TileFlags, @tagName(flag)) {
+        const value = this.tile_flags.get(pos) orelse TileFlags.empty;
+        return @field(value, @tagName(flag));
+    }
+    fn setFlag(this: *Map, pos: vec.by2i32, comptime flag: std.meta.FieldEnum(TileFlags), value: @FieldType(TileFlags, @tagName(flag))) void {
+        var ptr = this.tile_flags.ptr(pos) orelse return;
+        @field(ptr, @tagName(flag)) = value;
+    }
 };
 
 test Map {
@@ -845,6 +855,35 @@ test Map {
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
         \\ { 10, 15 } <--> { 30, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
+    );
+
+    // don't merge with has_power_port
+    map.setFlag(.{ 30, 15 }, .has_power_port, true);
+    try map.createWire(.{
+        .sides = .{
+            .{ 30, 15 },
+            .{ 45, 15 },
+        },
+        .user = .{},
+    });
+
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+        \\*: ConnectionLayer:
+        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 30, 15 }: struct: (no fields)
+        \\ { 30, 15 } <--> { 45, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
+    );
+
+    // merge when the power port is removed
+    map.setFlag(.{ 30, 15 }, .has_power_port, false);
+    try map.wires.tryMergeWires(.{ .map = map }, .{ 30, 15 });
+
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+        \\*: ConnectionLayer:
+        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
         \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
     );
 }
