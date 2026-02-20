@@ -1,5 +1,8 @@
 const std = @import("std");
 const print = @import("print.zig");
+const anywhere = @import("anywhere");
+const Grid = anywhere.util.grid.Grid;
+const vec = anywhere.util.vec;
 
 // scenerios to test:
 // stable states:
@@ -44,7 +47,7 @@ const Graph = struct {
         for (graph.nodes, 0..) |*node, index| {
             try printer.newline();
             try printer.dump(.fromAuto(&index));
-            try printer.print(": Node:", .{});
+            try printer.print(": .{s}:", .{@tagName(node.response_pattern)});
             printer.indent();
             defer printer.dedent();
             for (0.., node.edge_nodes, node.edge_indices, node.edge_incoming_force_N, node.edge_outgoing_force_N, node.edge_intrinsic_force_N) |i, target, target_index, incoming, outgoing, intrinsic| {
@@ -107,104 +110,124 @@ fn update(graph: *Graph) void {
     for (graph.nodes) |*node| updateNode(node);
 }
 
+const Tile = enum {
+    none,
+    air,
+    water,
+    tile,
+};
+fn generateGraph(arena: std.mem.Allocator, grid: *const Grid(2, i32, Tile)) !*Graph {
+    var coordinate_to_node_index = std.AutoArrayHashMap(vec.by2i32, usize).init(arena);
+    var tiles = std.ArrayList(GraphNode).empty;
+
+    // first pass: define all nodes
+    {
+        var iter = vec.Iterator(2, i32).size(@intCast(grid.size));
+        while (iter.next()) |coord| {
+            const value = grid.get(coord) orelse continue;
+            if (value == .none) continue;
+            try coordinate_to_node_index.putNoClobber(coord, tiles.items.len);
+            try tiles.append(arena, undefined);
+        }
+    }
+    // second pass: define all links
+    {
+        var iter = vec.Iterator(2, i32).posSize(.{ 0, 0 }, @intCast(grid.size));
+        while (iter.next()) |coord| {
+            const value = grid.get(coord) orelse continue;
+            if (value == .none) continue;
+
+            const directions = [_]vec.by2i32{
+                vec.by2i32{ 0, 1 },
+                vec.by2i32{ 0, -1 },
+                vec.by2i32{ 1, 0 },
+                vec.by2i32{ -1, 0 },
+            };
+            var results = std.MultiArrayList(struct {
+                intrinsic_force_N: f64,
+                incoming_force_N: f64,
+                outgoing_force_N: f64,
+                node: usize,
+                index: usize,
+                size_m2: f64,
+            }).empty;
+            for (directions) |direction| {
+                const target = coordinate_to_node_index.get(coord + direction) orelse continue;
+
+                const intrinsic_force_N: f64 = switch (value) {
+                    .none => unreachable,
+                    .air => 100_000, // 100kPa over 1m² = 100kN
+                    .water => blk: {
+                        if (direction[1] == -1) break :blk 10_000_000; // 1Mg (t) with 10m/s² gravity = 10MN
+                        if (direction[1] == 0) break :blk 5_000_000; // half of the down force
+                        break :blk 0;
+                    },
+                    .tile => 0, // tiles are stuck to the background, there is no gravity. we could have some tiles with gravity.
+                };
+                var target_index: usize = 0; // hacky method to get the index of the backref
+                for (directions) |dir2| {
+                    if (coordinate_to_node_index.get(coord + direction + dir2) == null) continue;
+                    if (@reduce(.And, dir2 == direction * @as(vec.by2i32, @splat(-1)))) break;
+                    target_index += 1;
+                } else unreachable;
+
+                try results.append(arena, .{
+                    .intrinsic_force_N = intrinsic_force_N,
+                    .incoming_force_N = 0,
+                    .outgoing_force_N = 0,
+                    .node = target,
+                    .index = target_index,
+                    .size_m2 = 1,
+                });
+            }
+            const final = results.toOwnedSlice();
+
+            const index = coordinate_to_node_index.get(coord).?;
+            tiles.items[index] = .{
+                .size_m3 = 1,
+                .response_pattern = switch (value) {
+                    .none => unreachable,
+                    .air => .gas,
+                    .water => .liquid,
+                    .tile => .solid,
+                },
+                .edge_intrinsic_force_N = final.items(.intrinsic_force_N),
+                .edge_incoming_force_N = final.items(.incoming_force_N),
+                .edge_outgoing_force_N = final.items(.outgoing_force_N),
+                .edge_nodes = final.items(.node),
+                .edge_indices = final.items(.index),
+                .edge_sizes_m2 = final.items(.size_m2),
+            };
+        }
+    }
+
+    const result = try arena.create(Graph);
+    result.* = .{ .nodes = try tiles.toOwnedSlice(arena) };
+    return result;
+}
+
 test "pressure" {
     // generate a graph. there is 1m³ air and 1m³ water
     var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    var nodes = [_]GraphNode{
-        // air bottom
-        .{
-            .size_m3 = 1,
-            .response_pattern = .gas,
-            .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 100_000, 100_000 }),
-            .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0 }),
-            .edge_outgoing_force_N = try arena.dupe(f64, &.{ 0, 0 }),
-            .edge_nodes = try arena.dupe(usize, &.{ 6, 5 }), // n,s
-            .edge_indices = try arena.dupe(usize, &.{ 0, 0 }),
-            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        },
-        // water bottom
-        .{
-            .size_m3 = 1,
-            .response_pattern = .liquid,
-            .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 0, 5_000_000, 10_000_000, 5_000_000 }),
-            .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
-            .edge_outgoing_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
-            .edge_nodes = try arena.dupe(usize, &.{ 5, 2, 3, 4 }),
-            .edge_indices = try arena.dupe(usize, &.{ 1, 0, 0, 0 }),
-            .edge_sizes_m2 = try arena.dupe(f64, &.{ 1, 1, 1, 1 }),
-        },
-        // tile e
-        .{
-            .size_m3 = 1,
-            .response_pattern = .solid,
-            .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
-            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-            .edge_nodes = try arena.dupe(usize, &.{1}),
-            .edge_indices = try arena.dupe(usize, &.{1}),
-            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        },
-        // tile s
-        .{
-            .size_m3 = 1,
-            .response_pattern = .solid,
-            .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
-            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-            .edge_nodes = try arena.dupe(usize, &.{1}),
-            .edge_indices = try arena.dupe(usize, &.{2}),
-            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        },
-        // tile w
-        .{
-            .size_m3 = 1,
-            .response_pattern = .solid,
-            .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
-            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-            .edge_nodes = try arena.dupe(usize, &.{1}),
-            .edge_indices = try arena.dupe(usize, &.{3}),
-            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        },
-        // water top
-        .{
-            .size_m3 = 1,
-            .response_pattern = .liquid,
-            .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 0, 10_000_000 }),
-            .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0 }),
-            .edge_outgoing_force_N = try arena.dupe(f64, &.{ 0, 0 }),
-            .edge_nodes = try arena.dupe(usize, &.{ 0, 1 }),
-            .edge_indices = try arena.dupe(usize, &.{ 0, 0 }),
-            .edge_sizes_m2 = try arena.dupe(f64, &.{ 1, 1 }),
-        },
-        // air top
-        .{
-            .size_m3 = 1,
-            .response_pattern = .gas,
-            .edge_intrinsic_force_N = try arena.dupe(f64, &.{100_000}),
-            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-            .edge_nodes = try arena.dupe(usize, &.{5}),
-            .edge_indices = try arena.dupe(usize, &.{0}),
-            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-        },
-    };
-    var graph: Graph = .{
-        .nodes = &nodes,
-    };
+    var grid: Grid(2, i32, Tile) = .empty;
+    try grid.resize(arena, .{ 20, 20 });
+    grid.fill(.none);
+    // sample
+    _ = grid.set(.{ 10, 6 }, .air);
+    _ = grid.set(.{ 10, 5 }, .water);
+    _ = grid.set(.{ 10, 4 }, .tile);
+    _ = grid.set(.{ 9, 5 }, .tile);
+    _ = grid.set(.{ 11, 5 }, .tile);
+    _ = grid.set(.{ 9, 6 }, .tile);
+    _ = grid.set(.{ 11, 6 }, .tile);
+    _ = grid.set(.{ 10, 7 }, .tile);
+    const graph = try generateGraph(arena, &grid);
 
-    std.log.info("\n{f}", .{print.autoPrint(&graph)});
-    update(&graph);
-    std.log.info("\n{f}", .{print.autoPrint(&graph)});
-    update(&graph);
-    std.log.info("\n{f}", .{print.autoPrint(&graph)});
-    update(&graph);
-    std.log.info("\n{f}", .{print.autoPrint(&graph)});
-    update(&graph);
+    std.log.info("\n{f}", .{print.autoPrint(graph)});
     std.log.info("...step", .{});
-    for (0..10000) |_| update(&graph);
-    std.log.info("\n{f}", .{print.autoPrint(&graph)});
+    for (0..10000) |_| update(graph);
+    std.log.info("\n{f}", .{print.autoPrint(graph)});
 }

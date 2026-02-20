@@ -18,7 +18,7 @@ pub fn posToIndex(comptime n: comptime_int, comptime Int: type, size: vec.by(n, 
 pub fn Grid(comptime n: comptime_int, comptime Int: type, comptime Child: type) type {
     return struct {
         items: []Child,
-        size: vecXusize,
+        size: vecXusize, // TODO: imo we should make this vecXInt
 
         const Self = @This();
 

@@ -12,22 +12,22 @@ pub const by2usize = by(2, usize);
 pub const by3i32 = by(3, i32);
 pub const by3usize = by(3, usize);
 
-pub fn Iterator(comptime T: type) type {
+pub fn Iterator(comptime n: comptime_int, comptime T: type) type {
     return struct {
-        const n = @typeInfo(T).vector.len;
-        min: T,
-        max: T,
-        value: T,
-        pub fn size(sizeValue: T) @This() {
+        const vecXT = by(n, T);
+        min: vecXT,
+        max: vecXT,
+        value: vecXT,
+        pub fn size(sizeValue: vecXT) @This() {
             return .posSize(@splat(0), sizeValue);
         }
-        pub fn posSize(pos: T, sizeValue: T) @This() {
-            return .{ .min = pos, .max = size - @as(T, @splat(1)), .value = sizeValue };
+        pub fn posSize(pos: vecXT, sizeValue: vecXT) @This() {
+            return .{ .min = pos, .max = sizeValue - @as(vecXT, @splat(1)), .value = pos };
         }
-        pub fn minMax(min: T, max: T) @This() {
+        pub fn minMax(min: vecXT, max: vecXT) @This() {
             return .{ .min = min, .max = max, .value = min };
         }
-        pub fn next(self: *@This()) ?T {
+        pub fn next(self: *@This()) ?vecXT {
             const res = self.value;
             for (0..n) |i| {
                 self.value[i] += 1;
