@@ -217,25 +217,10 @@ test "pressure" {
     try grid.resize(arena, .{ 20, 20 });
     grid.fill(.none);
     // sample
-    _ = grid.set(.{ 10, 7 }, .tile);
-    _ = grid.set(.{ 11, 7 }, .tile);
-    _ = grid.set(.{ 12, 7 }, .tile);
-    _ = grid.set(.{ 13, 7 }, .tile);
-
-    _ = grid.set(.{ 10, 6 }, .tile);
-    _ = grid.set(.{ 11, 6 }, .air);
-    _ = grid.set(.{ 12, 6 }, .air);
-    _ = grid.set(.{ 13, 6 }, .tile);
-
-    _ = grid.set(.{ 10, 5 }, .tile);
-    _ = grid.set(.{ 11, 5 }, .water);
-    _ = grid.set(.{ 12, 5 }, .water);
-    _ = grid.set(.{ 13, 5 }, .tile);
-
-    _ = grid.set(.{ 10, 4 }, .tile);
-    _ = grid.set(.{ 11, 4 }, .tile);
-    _ = grid.set(.{ 12, 4 }, .tile);
-    _ = grid.set(.{ 13, 4 }, .tile);
+    grid.setRow(.{ 10, 7 }, &.{ .tile, .tile, .tile, .tile });
+    grid.setRow(.{ 10, 6 }, &.{ .tile, .air, .air, .tile });
+    grid.setRow(.{ 10, 5 }, &.{ .tile, .water, .water, .tile });
+    grid.setRow(.{ 10, 4 }, &.{ .tile, .tile, .tile, .tile });
 
     const graph = try generateGraph(arena, &grid);
 

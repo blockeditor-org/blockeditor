@@ -51,6 +51,12 @@ pub fn Grid(comptime n: comptime_int, comptime Int: type, comptime Child: type) 
             this.items[idx] = value;
             return true;
         }
+        pub fn setRow(this: *const Self, pos: vecXInt, values: []const Child) void {
+            if (values.len == 0) return;
+            const start = this.index(pos).?;
+            const end = this.index(pos + vecXInt{ @intCast(values.len - 1), 0 }).?;
+            @memcpy(this.items[start .. end + 1], values);
+        }
         fn index(this: *const Self, pos: vecXInt) ?usize {
             return posToIndex(n, Int, this.size, pos);
         }
