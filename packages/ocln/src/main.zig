@@ -475,52 +475,51 @@ const TileFlags = packed struct {
         .has_power_port = false,
     };
 };
-const Wire = struct {
-    /// sides[0] <= sides[1]. sides[0] != sides[1]. (s1[0] == s2[0]) != (s1[1] == s2[1])
-    sides: [2]vec.by2i32,
-    fn direction(this: *const Wire) enum { x, y } {
-        const s1, const s2 = this.sides;
-        if (s1[0] == s2[0] and s1[1] == s2[1]) unreachable; // wires must have at least one length
-        std.debug.assert(@reduce(.And, s1 <= s2));
-        if (s1[0] == s2[0]) return .x;
-        if (s1[1] == s2[1]) return .y;
-        unreachable; // wires must be either horizontal or vertical
-    }
-    fn canMergeWith(this: *const Wire, other: *const Wire) bool {
-        return this.direction() == other.direction(); // and this.material == other.material
-    }
-    fn hasSide(this: *const Wire, side: vec.by2i32) bool {
-        for (&this.sides) |*our_side| {
-            if (@reduce(.And, our_side.* == side)) return true;
-        }
-        return false;
-    }
-};
-const WirePool = zpool.Pool(16, 16, Wire, struct { ptr: Wire });
 
 const wire_ref_count = 4;
-const WireRef = [wire_ref_count]WirePool.Handle; // this list is kept sorted with real wires before nil
-const WireRefPool = zpool.Pool(16, 16, WireRef, struct { ptr: WireRef });
 
 /// represents a layer of connection-type buildings,
 /// eg power wires or pipes
 fn ConnectionLayer(comptime Data: type) type {
-    _ = Data;
     return struct {
-        const Ref = struct {
-            segments: [4]SegmentPool.Handle,
+        const Segment = struct {
+            /// technically could save a byte and make safer by using {x,y,len} with a direction flag in len
+            /// that way it wouldn't be able to store invalid states. but that seems complicated.
+            /// sides[0] <= sides[1]. sides[0] != sides[1]. (min[0] == max[0]) != (min[1] == max[1])
+            sides: [2]vec.by2i32,
+            user: Data,
+
+            fn direction(this: *const Wire) enum { x, y } {
+                const s1, const s2 = this.sides;
+                if (s1[0] == s2[0] and s1[1] == s2[1]) unreachable; // wires must have at least one length
+                std.debug.assert(@reduce(.And, s1 <= s2));
+                if (s1[0] == s2[0]) return .x;
+                if (s1[1] == s2[1]) return .y;
+                unreachable; // wires must be either horizontal or vertical
+            }
+            fn canMergeWith(this: *const Wire, other: *const Wire) bool {
+                return this.direction() == other.direction() and this.user.canMergeWith(&other.user);
+            }
+            fn hasSide(this: *const Wire, side: vec.by2i32) bool {
+                for (&this.sides) |*our_side| {
+                    if (@reduce(.And, our_side.* == side)) return true;
+                }
+                return false;
+            }
         };
-        const RefPool = zpool.Pool(16, 16, Ref, struct { ptr: Ref });
-        const Segment = struct {};
         const SegmentPool = zpool.Pool(16, 16, Segment, struct { ptr: Segment });
 
-        // we have one which is a Map<GridTile,
-        // does it really need to be a full grid? how often are we querying it?
-        // pretty rarely. let's make it a map.
-
-        refs: Grid(2, i32, RefPool.Handle),
+        coordinate_to_segments_map: std.AutoArrayHashMapUnmanaged(vec.by2i32, [wire_ref_count]WirePool.Handle),
+        segments: SegmentPool,
     };
 }
+const Wires = ConnectionLayer(struct {
+    fn canMergeWith(_: *const @This(), _: *const @This()) bool {
+        return true; // TODO
+    }
+});
+const Wire = Wires.Segment;
+const WirePool = Wires.SegmentPool;
 
 const Map = struct {
     gpa: std.mem.Allocator,
@@ -599,7 +598,7 @@ const Map = struct {
         for (value) |item| {
             if (item.id == remove.id) continue; // ignore the item
             if (item.id == add.id) continue; // ignore the item
-            if (item.id == WireRefPool.Handle.nil.id) continue; // ignore the item
+            if (item.id == WirePool.Handle.nil.id) continue; // ignore the item
             new_value.appendAssumeCapacity(item);
         }
         if (add.id != WirePool.Handle.nil.id) new_value.appendAssumeCapacity(add);
@@ -750,6 +749,7 @@ test Map {
             .{ 10, 10 },
             .{ 10, 15 },
         },
+        .user = .{},
     });
 
     try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
@@ -759,6 +759,7 @@ test Map {
         \\   sides: [2]:
         \\    0: .{ 10, 10 }
         \\    1: .{ 10, 15 }
+        \\   user: struct: (no fields)
     );
 
     // extend the wire
@@ -767,6 +768,7 @@ test Map {
             .{ 10, 15 },
             .{ 10, 20 },
         },
+        .user = .{},
     });
 
     try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
@@ -776,6 +778,7 @@ test Map {
         \\   sides: [2]:
         \\    0: .{ 10, 10 }
         \\    1: .{ 10, 20 }
+        \\   user: struct: (no fields)
     );
 
     // split the wire
@@ -784,6 +787,7 @@ test Map {
             .{ 10, 15 },
             .{ 30, 15 },
         },
+        .user = .{},
     });
 
     try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&map.wires),
@@ -793,16 +797,19 @@ test Map {
         \\   sides: [2]:
         \\    0: .{ 10, 10 }
         \\    1: .{ 10, 15 }
+        \\   user: struct: (no fields)
         \\ @2.1: struct:
         \\  ptr: struct:
         \\   sides: [2]:
         \\    0: .{ 10, 15 }
         \\    1: .{ 10, 20 }
+        \\   user: struct: (no fields)
         \\ @3.1: struct:
         \\  ptr: struct:
         \\   sides: [2]:
         \\    0: .{ 10, 15 }
         \\    1: .{ 30, 15 }
+        \\   user: struct: (no fields)
     );
 }
 

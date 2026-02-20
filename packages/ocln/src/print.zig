@@ -67,8 +67,7 @@ fn printPackedStruct(comptime Ty: type) *const fn (printer: *Printer, arg: Detai
                 try printer.dump(.fromAuto(&@field(cast, field.name)));
             }
             if (@typeInfo(Ty).@"struct".fields.len == 0) {
-                try printer.newline();
-                try printer.print("no fields", .{});
+                try printer.print(" (no fields)", .{});
             }
         }
     }.doPrint;
@@ -170,8 +169,7 @@ fn printMultiArrayList(comptime Ty: type, comptime Child: type) *const fn (print
                 try printer.dump(.fromAuto(&cast.get(idx)));
             }
             if (@typeInfo(Ty).@"struct".fields.len == 0) {
-                try printer.newline();
-                try printer.print("no fields", .{});
+                try printer.print(" (no fields)", .{});
             }
         }
     }.doPrint;
@@ -207,8 +205,7 @@ fn printZpool(comptime Ty: type) *const fn (printer: *Printer, arg: DetailedAny)
                 try printer.dump(.fromAuto(&cast.getColumnsAssumeLive(handle)));
             }
             if (@typeInfo(Ty).@"struct".fields.len == 0) {
-                try printer.newline();
-                try printer.print("no fields", .{});
+                try printer.print(" (no fields)", .{});
             }
         }
     }.doPrint;
@@ -628,8 +625,7 @@ pub const Printer = struct {
                     try printer.dump(any.offset(field.offset, field.details));
                 }
                 if (struc.fields.len == 0) {
-                    try printer.newline();
-                    try printer.print("no fields", .{});
+                    try printer.print(" (no fields)", .{});
                 }
             },
             .todo => |t| {
