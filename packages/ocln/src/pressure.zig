@@ -331,7 +331,31 @@ test "trapped water. what happens?" {
     // a u shape needs to work right still. we can't just be exchanging air where there's
     // actually no path
 
-    // if (true) return error.SkipZigTest;
+    if (true) return error.SkipZigTest;
+
+    for (0..10000) |_| update(gen.graph);
+
+    std.log.info("{f}", .{print.autoPrint(gen)});
+}
+
+test "siphon?" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    var tiles = [_]Tile{
+        // note that this is upside-down
+        .none, .none, .none,  .none,  .tile,  .tile, .none,
+        .none, .tile, .tile,  .tile,  .water, .air,  .tile,
+        .tile, .air,  .water, .tile,  .water, .tile, .tile,
+        .none, .tile, .water, .water, .water, .tile, .none,
+        .none, .none, .tile,  .tile,  .tile,  .none, .none,
+    };
+    var grid: Grid(2, i32, Tile) = .fromSizeSlice(.{ 7, 5 }, &tiles);
+
+    const gen = try generateGraph(arena, &grid);
+
+    if (true) return error.SkipZigTest;
 
     for (0..10000) |_| update(gen.graph);
 
