@@ -572,7 +572,7 @@ const Map = struct {
     }
 
     pub fn createWire(this: *@This(), wire: Wire) !void {
-        try this.wires.createWire(.{ .map = this }, wire);
+        try this.wires.createSegment(.{ .map = this }, wire);
         try this.recalculatePipeWireMaterialRange(wire.sides[0], wire.sides[1]);
     }
 
@@ -678,7 +678,7 @@ test Map {
 
     // merge when the power port is removed
     map.setFlag(.{ 30, 15 }, .has_power_port, false);
-    try map.wires.tryMergeWires(.{ .map = map }, .{ 30, 15 });
+    try map.wires.tryMergeSegments(.{ .map = map }, .{ 30, 15 });
 
     try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
         \\*: ConnectionLayer:

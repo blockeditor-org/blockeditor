@@ -8,7 +8,7 @@ const print = @import("print.zig");
 const loadimage = @import("loadimage");
 const vec = util.vec;
 
-const wire_ref_count = 4;
+const segment_ref_count = 4;
 
 /// represents a layer of connection-type buildings,
 /// eg power wires / pipes / logic wires / storage wires / etc
@@ -25,11 +25,11 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
 
             fn direction(this: *const Segment) enum { x, y } {
                 const s1, const s2 = this.sides;
-                if (s1[0] == s2[0] and s1[1] == s2[1]) unreachable; // wires must have at least one length
+                if (s1[0] == s2[0] and s1[1] == s2[1]) unreachable; // segments must have at least one length
                 std.debug.assert(@reduce(.And, s1 <= s2));
                 if (s1[0] == s2[0]) return .x;
                 if (s1[1] == s2[1]) return .y;
-                unreachable; // wires must be either horizontal or vertical
+                unreachable; // segments must be either horizontal or vertical
             }
             fn canMergeWith(this: *const Segment, other: *const Segment) bool {
                 return this.direction() == other.direction() and this.user.canMergeWith(&other.user);
@@ -44,7 +44,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
         const SegmentPool = zpool.Pool(16, 16, Segment, struct { ptr: Segment });
 
         gpa: std.mem.Allocator,
-        coordinate_to_segments_map: std.AutoArrayHashMapUnmanaged(vec.by2i32, [wire_ref_count]SegmentPool.Handle),
+        coordinate_to_segments_map: std.AutoArrayHashMapUnmanaged(vec.by2i32, [segment_ref_count]SegmentPool.Handle),
         segments: SegmentPool,
 
         pub fn init(gpa: std.mem.Allocator) @This() {
@@ -59,22 +59,22 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             this.segments.deinit();
         }
 
-        fn setWireRefRange(this: *@This(), fromPos: vec.by2i32, toPos: vec.by2i32, removeHandle: SegmentPool.Handle, addHandle: SegmentPool.Handle) !void {
+        fn setSegmentRefRange(this: *@This(), fromPos: vec.by2i32, toPos: vec.by2i32, removeHandle: SegmentPool.Handle, addHandle: SegmentPool.Handle) !void {
             std.debug.assert(@reduce(.And, fromPos <= toPos));
             var y: i32 = fromPos[1];
             while (y <= toPos[1]) : (y += 1) {
                 var x: i32 = fromPos[0];
                 while (x <= toPos[0]) : (x += 1) {
-                    try this.setWireRef(.{ x, y }, removeHandle, addHandle);
+                    try this.setSegmentRef(.{ x, y }, removeHandle, addHandle);
                 }
             }
         }
-        fn setWireRef(this: *@This(), pos: vec.by2i32, remove: SegmentPool.Handle, add: SegmentPool.Handle) !void {
+        fn setSegmentRef(this: *@This(), pos: vec.by2i32, remove: SegmentPool.Handle, add: SegmentPool.Handle) !void {
             if (remove.id == add.id) return; // nothing to change
             const gpres = try this.coordinate_to_segments_map.getOrPutValue(this.gpa, pos, @splat(.nil));
             const value = gpres.value_ptr;
 
-            var new_value_buf: [wire_ref_count]SegmentPool.Handle = @splat(.nil);
+            var new_value_buf: [segment_ref_count]SegmentPool.Handle = @splat(.nil);
             var new_value = std.ArrayList(SegmentPool.Handle).initBuffer(&new_value_buf);
 
             for (value) |item| {
@@ -95,10 +95,10 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             // update list
             @memcpy(value, &new_value_buf);
         }
-        pub fn getWires(this: *@This(), pos: vec.by2i32) [wire_ref_count]SegmentPool.Handle {
+        pub fn getSegments(this: *@This(), pos: vec.by2i32) [segment_ref_count]SegmentPool.Handle {
             return this.coordinate_to_segments_map.get(pos) orelse return @splat(.nil);
         }
-        fn trySplitWire(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
+        fn trySplitSegment(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
             const w1_data: *Segment = this.segments.getColumnPtrAssumeLive(w1, .ptr);
             var w2_data: Segment = w1_data.*;
             if (w1_data.hasSide(split_pos)) return; // can't split at an endpoint
@@ -108,23 +108,23 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
 
             const w2 = try this.segments.add(.{ .ptr = w2_data });
 
-            try this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w1, w2);
+            try this.setSegmentRefRange(w2_data.sides[0], w2_data.sides[1], w1, w2);
             // add back w1 to the split point
-            try this.setWireRef(split_pos, .nil, w1);
+            try this.setSegmentRef(split_pos, .nil, w1);
         }
-        pub fn tryMergeWires(this: *@This(), context: Context, shared_point: vec.by2i32) !void {
+        pub fn tryMergeSegments(this: *@This(), context: Context, shared_point: vec.by2i32) !void {
             var w1: SegmentPool.Handle = .nil;
             var w2: SegmentPool.Handle = .nil;
-            for (this.getWires(shared_point)) |wire| {
-                if (wire.id == SegmentPool.Handle.nil.id) continue;
+            for (this.getSegments(shared_point)) |segment| {
+                if (segment.id == SegmentPool.Handle.nil.id) continue;
                 for ([_]*SegmentPool.Handle{ &w1, &w2 }) |w| {
                     if (w.*.id == SegmentPool.Handle.nil.id) {
-                        w.* = wire;
+                        w.* = segment;
                         break;
                     }
-                } else return; // can't merge; too many wires
+                } else return; // can't merge; too many segments
             }
-            if (w1.id == SegmentPool.Handle.nil.id or w2.id == SegmentPool.Handle.nil.id) return; // can't merge; not enough wires
+            if (w1.id == SegmentPool.Handle.nil.id or w2.id == SegmentPool.Handle.nil.id) return; // can't merge; not enough segments
             if (context.hasIntrinsic(shared_point)) return; // can't merge; there is a machine receiving power at the shared point
 
             const w1_data: *Segment = this.segments.getColumnPtrAssumeLive(w1, .ptr);
@@ -135,38 +135,38 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             // can merge
             w1_data.sides[0] = @min(w1_data.sides[0], w2_data.sides[0]);
             w1_data.sides[1] = @max(w1_data.sides[1], w2_data.sides[1]);
-            try this.setWireRefRange(w2_data.sides[0], w2_data.sides[1], w2, w1);
+            try this.setSegmentRefRange(w2_data.sides[0], w2_data.sides[1], w2, w1);
             this.segments.removeAssumeLive(w2);
             // no need to update materials, they are unchanged.
         }
-        pub fn createWire(this: *@This(), context: Context, wire_in: Segment) !void {
-            // TODO: after merging, loop over the wire and find any tiles with context.hasIntrinsic(point).
-            // split the wire there to attach to the power port. when a power port is removed, we can merge the wire.
+        pub fn createSegment(this: *@This(), context: Context, segment_in: Segment) !void {
+            // TODO: after merging, loop over the segment and find any tiles with context.hasIntrinsic(point).
+            // split the segment there to attach to the power port. when a power port is removed, we can merge the segment.
             // actually it doesn't even need to be after merging, it can be before
 
-            // find any wires which need splitting
-            for (wire_in.sides) |side| {
-                for (this.getWires(side)) |existing_wire| {
-                    if (existing_wire.id == SegmentPool.Handle.nil.id) continue;
-                    const xw_data: *Segment = this.segments.getColumnPtrAssumeLive(existing_wire, .ptr);
-                    if (xw_data.hasSide(wire_in.sides[0]) or xw_data.hasSide(wire_in.sides[1])) continue; // the wire shares a side with us; no action
-                    if (xw_data.direction() == wire_in.direction()) continue; // the wire shares a direction with us; no action
-                    // must split the wire
-                    try this.trySplitWire(existing_wire, side);
+            // find any segments which need splitting
+            for (segment_in.sides) |side| {
+                for (this.getSegments(side)) |existing_segment| {
+                    if (existing_segment.id == SegmentPool.Handle.nil.id) continue;
+                    const xw_data: *Segment = this.segments.getColumnPtrAssumeLive(existing_segment, .ptr);
+                    if (xw_data.hasSide(segment_in.sides[0]) or xw_data.hasSide(segment_in.sides[1])) continue; // the segment shares a side with us; no action
+                    if (xw_data.direction() == segment_in.direction()) continue; // the segment shares a direction with us; no action
+                    // must split the segment
+                    try this.trySplitSegment(existing_segment, side);
                 }
             }
 
             {
-                // create the new wire
-                const new_wire = try this.segments.add(.{ .ptr = wire_in });
-                const wire: *Segment = this.segments.getColumnPtrAssumeLive(new_wire, .ptr);
+                // create the new segment
+                const new_segment = try this.segments.add(.{ .ptr = segment_in });
+                const segment: *Segment = this.segments.getColumnPtrAssumeLive(new_segment, .ptr);
 
                 // keep mirrored data in sync
-                try this.setWireRefRange(wire.sides[0], wire.sides[1], .nil, new_wire);
+                try this.setSegmentRefRange(segment.sides[0], segment.sides[1], .nil, new_segment);
             }
 
-            try this.tryMergeWires(context, wire_in.sides[0]);
-            try this.tryMergeWires(context, wire_in.sides[1]);
+            try this.tryMergeSegments(context, segment_in.sides[0]);
+            try this.tryMergeSegments(context, segment_in.sides[1]);
         }
 
         pub fn printCustomFormat(printer: *print.Printer, arg: print.DetailedAny) error{WriteFailed}!void {
