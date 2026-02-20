@@ -11,7 +11,6 @@ const ResponsePattern = enum {
 };
 const GraphNode = struct {
     size_m3: f64,
-    y_bottom_m: f64,
     response_pattern: ResponsePattern,
 
     edge_intrinsic_force_N: []f64, // can this be a node? maybe? should it be? unclear
@@ -20,8 +19,6 @@ const GraphNode = struct {
     edge_nodes: []usize,
     edge_indices: []usize,
     edge_sizes_m2: []f64,
-    edge_y_bottoms_m: []f64,
-    edge_y_tops_m: []f64,
 };
 const Graph = struct {
     nodes: []GraphNode,
@@ -106,7 +103,6 @@ test "pressure" {
         // air
         .{
             .size_m3 = 1,
-            .y_bottom_m = 3,
             .response_pattern = .gas,
             .edge_intrinsic_force_N = try arena.dupe(f64, &.{100_000}),
             .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
@@ -114,13 +110,10 @@ test "pressure" {
             .edge_nodes = try arena.dupe(usize, &.{1}),
             .edge_indices = try arena.dupe(usize, &.{0}),
             .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-            .edge_y_bottoms_m = try arena.dupe(f64, &.{3}),
-            .edge_y_tops_m = try arena.dupe(f64, &.{3}),
         },
         // water
         .{
             .size_m3 = 1,
-            .y_bottom_m = 2,
             .response_pattern = .liquid,
             .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 0, 5_000_000, 10_000_000, 5_000_000 }),
             .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
@@ -128,13 +121,10 @@ test "pressure" {
             .edge_nodes = try arena.dupe(usize, &.{ 0, 2, 3, 4 }),
             .edge_indices = try arena.dupe(usize, &.{ 0, 0, 0, 0 }),
             .edge_sizes_m2 = try arena.dupe(f64, &.{ 1, 1, 1, 1 }),
-            .edge_y_bottoms_m = try arena.dupe(f64, &.{ 3, 2, 2, 2 }),
-            .edge_y_tops_m = try arena.dupe(f64, &.{ 3, 3, 2, 3 }),
         },
         // tile e
         .{
             .size_m3 = 1,
-            .y_bottom_m = 1,
             .response_pattern = .solid,
             .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
             .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
@@ -142,13 +132,10 @@ test "pressure" {
             .edge_nodes = try arena.dupe(usize, &.{1}),
             .edge_indices = try arena.dupe(usize, &.{1}),
             .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-            .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
-            .edge_y_tops_m = try arena.dupe(f64, &.{2}),
         },
         // tile s
         .{
             .size_m3 = 1,
-            .y_bottom_m = 0,
             .response_pattern = .solid,
             .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
             .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
@@ -156,13 +143,10 @@ test "pressure" {
             .edge_nodes = try arena.dupe(usize, &.{1}),
             .edge_indices = try arena.dupe(usize, &.{2}),
             .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-            .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
-            .edge_y_tops_m = try arena.dupe(f64, &.{1}),
         },
         // tile w
         .{
             .size_m3 = 1,
-            .y_bottom_m = 1,
             .response_pattern = .solid,
             .edge_intrinsic_force_N = try arena.dupe(f64, &.{0}),
             .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
@@ -170,8 +154,6 @@ test "pressure" {
             .edge_nodes = try arena.dupe(usize, &.{1}),
             .edge_indices = try arena.dupe(usize, &.{3}),
             .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
-            .edge_y_bottoms_m = try arena.dupe(f64, &.{1}),
-            .edge_y_tops_m = try arena.dupe(f64, &.{2}),
         },
     };
     var graph: Graph = .{
