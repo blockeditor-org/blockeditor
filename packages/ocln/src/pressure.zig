@@ -48,6 +48,7 @@ fn updateSolid(node: *GraphNode) void {
     }
 }
 fn updateLiquid(node: *GraphNode) void {
+    // this doesn't seem right - if two sides have force, shouldn't the output go to the two remaining sides?
     var total_size_m: f64 = 0;
     var total_incoming_N: f64 = 0;
     for (node.edge_sizes_m2, node.edge_incoming_force_N) |edge_size_m, incoming_N| {
