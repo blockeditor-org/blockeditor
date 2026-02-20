@@ -673,10 +673,8 @@ const Map = struct {
         // no need to update materials, they are unchanged.
     }
     pub fn createWire(this: *Map, wire_in: Wire) !void {
-        // TODO: implement merging later
-
-        // TODO: (mandatory) find any wires at our target position. if they share a side, split them in half so they can connect to us.
-        // TODO: (optional) after adding the new wire, merge it with any wires on either side where canMergeWith() is true
+        // TODO: after merging, loop over the wire and find any tiles with has_power_port.
+        // split the wire there to attach to the power port. when a power port is removed, we can merge the wire.
 
         // find any wires which need splitting
         for (wire_in.sides) |side| {
