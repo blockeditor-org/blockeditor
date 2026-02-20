@@ -1,6 +1,19 @@
 const std = @import("std");
 const print = @import("print.zig");
 
+// scenerios to test:
+// stable states:
+// - 2x2 water with 1x2 air above and tiles all around.
+//   - make sure the tiles still only get 100kN of air pressure even though there's two air tiles both pushing on the water 100kN each.
+//   - should they only get 100kN air pressure? surely right?
+// - similar to the top one, one container fully filled with water connected to one half water half air.
+//   the one fully filled with water can't drain at all.
+//   - make sure the air does not change in pressure.
+// unstable states:
+// - two containers connected at the bottom. one has 75% water, one 25% water.
+//   they should cause the air pressures to change and get more level.
+// - air pressure powered siphon? chain powered siphon?
+
 const ResponsePattern = enum {
     // force is reflected
     solid,
@@ -101,26 +114,26 @@ test "pressure" {
     const arena = arena_allocator.allocator();
 
     var nodes = [_]GraphNode{
-        // air
+        // air bottom
         .{
             .size_m3 = 1,
             .response_pattern = .gas,
-            .edge_intrinsic_force_N = try arena.dupe(f64, &.{100_000}),
-            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
-            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
-            .edge_nodes = try arena.dupe(usize, &.{1}),
-            .edge_indices = try arena.dupe(usize, &.{0}),
+            .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 100_000, 100_000 }),
+            .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0 }),
+            .edge_outgoing_force_N = try arena.dupe(f64, &.{ 0, 0 }),
+            .edge_nodes = try arena.dupe(usize, &.{ 6, 5 }), // n,s
+            .edge_indices = try arena.dupe(usize, &.{ 0, 0 }),
             .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
         },
-        // water
+        // water bottom
         .{
             .size_m3 = 1,
             .response_pattern = .liquid,
             .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 0, 5_000_000, 10_000_000, 5_000_000 }),
             .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
             .edge_outgoing_force_N = try arena.dupe(f64, &.{ 0, 0, 0, 0 }),
-            .edge_nodes = try arena.dupe(usize, &.{ 0, 2, 3, 4 }),
-            .edge_indices = try arena.dupe(usize, &.{ 0, 0, 0, 0 }),
+            .edge_nodes = try arena.dupe(usize, &.{ 5, 2, 3, 4 }),
+            .edge_indices = try arena.dupe(usize, &.{ 1, 0, 0, 0 }),
             .edge_sizes_m2 = try arena.dupe(f64, &.{ 1, 1, 1, 1 }),
         },
         // tile e
@@ -156,6 +169,28 @@ test "pressure" {
             .edge_indices = try arena.dupe(usize, &.{3}),
             .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
         },
+        // water top
+        .{
+            .size_m3 = 1,
+            .response_pattern = .liquid,
+            .edge_intrinsic_force_N = try arena.dupe(f64, &.{ 0, 10_000_000 }),
+            .edge_incoming_force_N = try arena.dupe(f64, &.{ 0, 0 }),
+            .edge_outgoing_force_N = try arena.dupe(f64, &.{ 0, 0 }),
+            .edge_nodes = try arena.dupe(usize, &.{ 0, 1 }),
+            .edge_indices = try arena.dupe(usize, &.{ 0, 0 }),
+            .edge_sizes_m2 = try arena.dupe(f64, &.{ 1, 1 }),
+        },
+        // air top
+        .{
+            .size_m3 = 1,
+            .response_pattern = .gas,
+            .edge_intrinsic_force_N = try arena.dupe(f64, &.{100_000}),
+            .edge_incoming_force_N = try arena.dupe(f64, &.{0}),
+            .edge_outgoing_force_N = try arena.dupe(f64, &.{0}),
+            .edge_nodes = try arena.dupe(usize, &.{5}),
+            .edge_indices = try arena.dupe(usize, &.{0}),
+            .edge_sizes_m2 = try arena.dupe(f64, &.{1}),
+        },
     };
     var graph: Graph = .{
         .nodes = &nodes,
@@ -170,6 +205,6 @@ test "pressure" {
     std.log.info("\n{f}", .{print.autoPrint(&graph)});
     update(&graph);
     std.log.info("...step", .{});
-    for (0..1000) |_| update(&graph);
+    for (0..10000) |_| update(&graph);
     std.log.info("\n{f}", .{print.autoPrint(&graph)});
 }
