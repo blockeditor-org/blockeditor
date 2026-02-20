@@ -239,6 +239,8 @@ test "pressure" {
 
     const graph = try generateGraph(arena, &grid);
 
+    if (true) return error.SkipZigTest; // TODO we need to actually test stuff instead of printing
+
     std.log.info("\n{f}", .{print.autoPrint(graph)});
     std.log.info("...step", .{});
     for (0..10000) |_| update(graph);

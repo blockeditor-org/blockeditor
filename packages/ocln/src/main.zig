@@ -528,9 +528,8 @@ const Map = struct {
     size_usize: vec.by2usize,
     materials: Grid(3, i32, Material),
     tile_flags: Grid(2, i32, TileFlags),
-    wire_refs: Grid(2, i32, WireRefPool.Handle),
+    coordinate_to_wires_map: std.AutoArrayHashMapUnmanaged(vec.by2i32, [wire_ref_count]WirePool.Handle),
     wires: WirePool,
-    wire_ref_pool: WireRefPool,
     players: PlayerPool,
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) void {
@@ -540,19 +539,17 @@ const Map = struct {
             .gpa = gpa,
             .materials = .empty,
             .tile_flags = .empty,
-            .wire_refs = .empty,
+            .coordinate_to_wires_map = .empty,
             .wires = .init(gpa),
             .players = .init(gpa),
-            .wire_ref_pool = .init(gpa),
         };
     }
     pub fn deinit(this: *Map) void {
         this.materials.deinit(this.gpa);
         this.tile_flags.deinit(this.gpa);
-        this.wire_refs.deinit(this.gpa);
+        this.coordinate_to_wires_map.deinit(this.gpa);
         this.wires.deinit();
         this.players.deinit();
-        this.wire_ref_pool.deinit();
     }
     pub fn generate(this: *Map, size: vec.by2usize) !void {
         this.size_int = @intCast(size);
@@ -561,8 +558,6 @@ const Map = struct {
         this.materials.fill(.empty);
         try this.tile_flags.resize(this.gpa, size);
         this.tile_flags.fill(.empty);
-        try this.wire_refs.resize(this.gpa, size);
-        this.wire_refs.fill(.nil);
 
         const sizei = this.size_int;
 
@@ -595,12 +590,8 @@ const Map = struct {
     }
     fn setWireRef(this: *Map, pos: vec.by2i32, remove: WirePool.Handle, add: WirePool.Handle) !void {
         if (remove.id == add.id) return; // nothing to change
-        const wire_ref = this.wire_refs.ptr(pos) orelse return; // out of bounds
-        if (wire_ref.*.id == WireRefPool.Handle.nil.id) {
-            if (add.id == WirePool.Handle.nil.id) return; // nothing to do
-            wire_ref.* = try this.wire_ref_pool.add(.{ .ptr = @splat(.nil) });
-        }
-        const value = this.wire_ref_pool.getColumnPtrAssumeLive(wire_ref.*, .ptr);
+        const gpres = try this.coordinate_to_wires_map.getOrPutValue(this.gpa, pos, @splat(.nil));
+        const value = gpres.value_ptr;
 
         var new_value_buf: [wire_ref_count]WirePool.Handle = @splat(.nil);
         var new_value = std.ArrayList(WirePool.Handle).initBuffer(&new_value_buf);
@@ -616,9 +607,7 @@ const Map = struct {
         // check empy
         if (new_value.items.len == 0) {
             // remove
-            this.wire_ref_pool.removeAssumeLive(wire_ref.*);
-            // unset
-            wire_ref.* = .nil;
+            std.debug.assert(this.coordinate_to_wires_map.swapRemove(pos)); // invalidates value ptr
             return;
         }
 
@@ -638,8 +627,7 @@ const Map = struct {
     fn recalculatePipeWireMaterial(this: *Map, pos: vec.by2i32) !void {
         // recomputes the pipe/wire material at the tile
         // TODO: redo this
-        const wire_ref = this.wire_refs.get(pos) orelse WireRefPool.Handle.nil;
-        const has_wire = wire_ref.id != WireRefPool.Handle.nil.id;
+        const has_wire = this.coordinate_to_wires_map.getPtr(pos) != null;
         _ = this.materials.set(.{ pos[0], pos[1], Layers.wires_and_pipes.int() }, Material{
             .material = if (has_wire) .other else .none,
             .mass_milligrams = if (has_wire) 5_000 else 0, // TODO: sum the mass of the wires. TODO: we need to take the existing mass to determine the new mass, and add any added mass
@@ -647,9 +635,7 @@ const Map = struct {
         });
     }
     pub fn getWires(this: *Map, pos: vec.by2i32) [wire_ref_count]WirePool.Handle {
-        const wire_refs = this.wire_refs.get(pos) orelse WireRefPool.Handle.nil;
-        if (wire_refs.id == WireRefPool.Handle.nil.id) return @splat(.nil);
-        return this.wire_ref_pool.getColumnPtrAssumeLive(wire_refs, .ptr).*;
+        return this.coordinate_to_wires_map.get(pos) orelse return @splat(.nil);
     }
     fn trySplitWire(this: *Map, w1: WirePool.Handle, split_pos: vec.by2i32) !void {
         const w1_data: *Wire = this.wires.getColumnPtrAssumeLive(w1, .ptr);
