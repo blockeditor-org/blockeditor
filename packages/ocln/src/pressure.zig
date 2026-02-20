@@ -6,9 +6,9 @@ const vec = anywhere.util.vec;
 
 // scenerios to test:
 // stable states:
-// - 2x2 water with 1x2 air above and tiles all around.
-//   - make sure the tiles still only get 100kN of air pressure even though there's two air tiles both pushing on the water 100kN each.
-//   - should they only get 100kN air pressure? surely right?
+// - [x] 2x2 water with 1x2 air above and tiles all around.
+//        - make sure the tiles still only get 100kN of air pressure even though there's two air tiles both pushing on the water 100kN each.
+//        - should they only get 100kN air pressure? surely right?
 // - similar to the top one, one container fully filled with water connected to one half water half air.
 //   the one fully filled with water can't drain at all.
 //   - make sure the air does not change in pressure.
@@ -216,14 +216,26 @@ test "pressure" {
     try grid.resize(arena, .{ 20, 20 });
     grid.fill(.none);
     // sample
-    _ = grid.set(.{ 10, 6 }, .air);
-    _ = grid.set(.{ 10, 5 }, .water);
-    _ = grid.set(.{ 10, 4 }, .tile);
-    _ = grid.set(.{ 9, 5 }, .tile);
-    _ = grid.set(.{ 11, 5 }, .tile);
-    _ = grid.set(.{ 9, 6 }, .tile);
-    _ = grid.set(.{ 11, 6 }, .tile);
     _ = grid.set(.{ 10, 7 }, .tile);
+    _ = grid.set(.{ 11, 7 }, .tile);
+    _ = grid.set(.{ 12, 7 }, .tile);
+    _ = grid.set(.{ 13, 7 }, .tile);
+
+    _ = grid.set(.{ 10, 6 }, .tile);
+    _ = grid.set(.{ 11, 6 }, .air);
+    _ = grid.set(.{ 12, 6 }, .air);
+    _ = grid.set(.{ 13, 6 }, .tile);
+
+    _ = grid.set(.{ 10, 5 }, .tile);
+    _ = grid.set(.{ 11, 5 }, .water);
+    _ = grid.set(.{ 12, 5 }, .water);
+    _ = grid.set(.{ 13, 5 }, .tile);
+
+    _ = grid.set(.{ 10, 4 }, .tile);
+    _ = grid.set(.{ 11, 4 }, .tile);
+    _ = grid.set(.{ 12, 4 }, .tile);
+    _ = grid.set(.{ 13, 4 }, .tile);
+
     const graph = try generateGraph(arena, &grid);
 
     std.log.info("\n{f}", .{print.autoPrint(graph)});
