@@ -328,12 +328,12 @@ const Path = struct {
 
 fn checkFit(map: *Map, pos: vec.by2i32) bool {
     return true and
-        (map.tile_flags.get(pos + vec.by2i32{ 0, 1 }) orelse TileFlags.empty).can_enter and
-        (map.tile_flags.get(pos) orelse TileFlags.empty).can_enter and
+        !map.getFlag(pos + vec.by2i32{ 0, 1 }, .cannot_enter) and
+        !map.getFlag(pos, .cannot_enter) and
         true;
 }
 fn checkStand(map: *Map, pos: vec.by2i32) bool {
-    return (map.tile_flags.get(pos + vec.by2i32{ 0, -1 }) orelse TileFlags.empty).can_stand;
+    return map.getFlag(pos + vec.by2i32{ 0, -1 }, .can_stand);
 }
 fn checkStandAndFit(map: *Map, pos: vec.by2i32) bool {
     return checkStand(map, pos) and checkFit(map, pos);
@@ -468,12 +468,12 @@ const PlayerPool = zpool.Pool(16, 16, Player, struct { ptr: Player });
 const BuildingEntityTag = struct {};
 
 const TileFlags = packed struct {
-    can_enter: bool,
+    cannot_enter: bool,
     can_stand: bool, // enter=false,stand=true means can climb. enter=false,stand=false = spikes or smth.
     has_power_port: bool,
     has_pipe_port: bool,
     pub const empty: TileFlags = .{
-        .can_enter = true,
+        .cannot_enter = false,
         .can_stand = false,
         .has_power_port = false,
         .has_pipe_port = false,
@@ -491,6 +491,8 @@ const Wires = ConnectionLayer(struct {
     }
 });
 const Wire = Wires.Segment;
+
+const Buildings = struct {};
 
 const Map = struct {
     gpa: std.mem.Allocator,
@@ -533,10 +535,10 @@ const Map = struct {
             const xi: i32 = @intCast(x);
             _ = this.materials.set(.{ xi, 0, Layers.tile.int() }, .unobtanium);
             if (this.tile_flags.ptr(.{ xi, 0 })) |f| f.can_stand = true;
-            if (this.tile_flags.ptr(.{ xi, 0 })) |f| f.can_enter = false;
+            if (this.tile_flags.ptr(.{ xi, 0 })) |f| f.cannot_enter = true;
             _ = this.materials.set(.{ xi, sizei[1] - 1, Layers.tile.int() }, .unobtanium);
             if (this.tile_flags.ptr(.{ xi, sizei[1] - 1 })) |f| f.can_stand = true;
-            if (this.tile_flags.ptr(.{ xi, 0 })) |f| f.can_enter = false;
+            if (this.tile_flags.ptr(.{ xi, 0 })) |f| f.cannot_enter = true;
         }
     }
     pub fn measureEnergy(this: *Map) u128 {
