@@ -53,7 +53,7 @@ const Graph = struct {
             defer printer.dedent();
             for (0.., node.edge_nodes, node.edge_indices, node.edge_incoming_force_N, node.edge_outgoing_force_N, node.edge_intrinsic_force_N) |i, target, target_index, incoming, outgoing, intrinsic| {
                 try printer.newline();
-                try printer.print("{d}[{d}]->{d}[{d}] received {d:.2}      \tsent {d:.2}kN     \tintrinsic {d:.2}", .{ index, i, target, target_index, incoming / 1000, outgoing / 1000, intrinsic / 1000 });
+                try printer.print("{d}[{d}]->{d}[{d}] received {d:.2} / sent {d:.2}kN / intrinsic {d:.2}", .{ index, i, target, target_index, incoming / 1000, outgoing / 1000, intrinsic / 1000 });
             }
         }
     }
@@ -239,10 +239,75 @@ test "pressure" {
 
     const graph = try generateGraph(arena, &grid);
 
-    if (true) return error.SkipZigTest; // TODO we need to actually test stuff instead of printing
+    // if (true) return error.SkipZigTest; // TODO we need to actually test stuff instead of printing
 
-    std.log.info("\n{f}", .{print.autoPrint(graph)});
-    std.log.info("...step", .{});
     for (0..10000) |_| update(graph);
-    std.log.info("\n{f}", .{print.autoPrint(graph)});
+
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(graph),
+        \\*: Graph:
+        \\ 0: .solid:
+        \\  0[0]->4[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  0[1]->1[2] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\ 1: .solid:
+        \\  1[0]->5[1] received 10100.00 / sent 10100.00kN / intrinsic 0.00
+        \\  1[1]->2[2] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  1[2]->0[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\ 2: .solid:
+        \\  2[0]->6[1] received 10100.00 / sent 10100.00kN / intrinsic 0.00
+        \\  2[1]->3[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  2[2]->1[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\ 3: .solid:
+        \\  3[0]->7[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  3[1]->2[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\ 4: .solid:
+        \\  4[0]->8[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  4[1]->0[0] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  4[2]->5[3] received 5100.00 / sent 5100.00kN / intrinsic 0.00
+        \\ 5: .liquid:
+        \\  5[0]->9[1] received 100.00 / sent 100.00kN / intrinsic 0.00
+        \\  5[1]->1[0] received 100.00 / sent 100.00kN / intrinsic 10000.00
+        \\  5[2]->6[3] received 100.00 / sent 100.00kN / intrinsic 5000.00
+        \\  5[3]->4[2] received 100.00 / sent 100.00kN / intrinsic 5000.00
+        \\ 6: .liquid:
+        \\  6[0]->10[1] received 100.00 / sent 100.00kN / intrinsic 0.00
+        \\  6[1]->2[0] received 100.00 / sent 100.00kN / intrinsic 10000.00
+        \\  6[2]->7[2] received 100.00 / sent 100.00kN / intrinsic 5000.00
+        \\  6[3]->5[2] received 100.00 / sent 100.00kN / intrinsic 5000.00
+        \\ 7: .solid:
+        \\  7[0]->11[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  7[1]->3[0] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  7[2]->6[2] received 5100.00 / sent 5100.00kN / intrinsic 0.00
+        \\ 8: .solid:
+        \\  8[0]->12[0] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  8[1]->4[0] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  8[2]->9[3] received 100.00 / sent 100.00kN / intrinsic 0.00
+        \\ 9: .gas:
+        \\  9[0]->13[0] received 0.00 / sent 0.00kN / intrinsic 100.00
+        \\  9[1]->5[0] received 0.00 / sent 0.00kN / intrinsic 100.00
+        \\  9[2]->10[3] received 0.00 / sent 0.00kN / intrinsic 100.00
+        \\  9[3]->8[2] received 0.00 / sent 0.00kN / intrinsic 100.00
+        \\ 10: .gas:
+        \\  10[0]->14[0] received 0.00 / sent 0.00kN / intrinsic 100.00
+        \\  10[1]->6[0] received 0.00 / sent 0.00kN / intrinsic 100.00
+        \\  10[2]->11[2] received 0.00 / sent 0.00kN / intrinsic 100.00
+        \\  10[3]->9[2] received 0.00 / sent 0.00kN / intrinsic 100.00
+        \\ 11: .solid:
+        \\  11[0]->15[0] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  11[1]->7[0] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  11[2]->10[2] received 100.00 / sent 100.00kN / intrinsic 0.00
+        \\ 12: .solid:
+        \\  12[0]->8[0] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  12[1]->13[2] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\ 13: .solid:
+        \\  13[0]->9[0] received 100.00 / sent 100.00kN / intrinsic 0.00
+        \\  13[1]->14[2] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  13[2]->12[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\ 14: .solid:
+        \\  14[0]->10[0] received 100.00 / sent 100.00kN / intrinsic 0.00
+        \\  14[1]->15[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  14[2]->13[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\ 15: .solid:
+        \\  15[0]->11[0] received 0.00 / sent 0.00kN / intrinsic 0.00
+        \\  15[1]->14[1] received 0.00 / sent 0.00kN / intrinsic 0.00
+    );
 }
