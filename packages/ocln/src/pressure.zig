@@ -81,7 +81,7 @@ fn update(graph: *Graph) void {
             const to = &graph.nodes[to_node];
             const to_incoming = &to.edge_incoming_force_N[to_index];
             const to_intrinsic = to.edge_intrinsic_force_N[to_index];
-            to_incoming.* = @max(0, from_intrinsic + from_outgoing - to_intrinsic);
+            to_incoming.* = from_intrinsic + from_outgoing - to_intrinsic;
         }
     }
     // clear outgoings
