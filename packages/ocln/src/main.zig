@@ -501,6 +501,27 @@ const WirePool = zpool.Pool(16, 16, Wire, struct { ptr: Wire });
 const wire_ref_count = 4;
 const WireRef = [wire_ref_count]WirePool.Handle; // this list is kept sorted with real wires before nil
 const WireRefPool = zpool.Pool(16, 16, WireRef, struct { ptr: WireRef });
+
+/// represents a layer of connection-type buildings,
+/// eg power wires or pipes
+fn ConnectionLayer(comptime Data: type) type {
+    _ = Data;
+    return struct {
+        const Ref = struct {
+            segments: [4]SegmentPool.Handle,
+        };
+        const RefPool = zpool.Pool(16, 16, Ref, struct { ptr: Ref });
+        const Segment = struct {};
+        const SegmentPool = zpool.Pool(16, 16, Segment, struct { ptr: Segment });
+
+        // we have one which is a Map<GridTile,
+        // does it really need to be a full grid? how often are we querying it?
+        // pretty rarely. let's make it a map.
+
+        refs: Grid(2, i32, RefPool.Handle),
+    };
+}
+
 const Map = struct {
     gpa: std.mem.Allocator,
     size_int: vec.by2i32,
