@@ -319,17 +319,11 @@ test "trapped water. what happens?" {
 
     const gen = try generateGraph(arena, &grid);
 
-    // this is the wrong output. we should see that the tile on the top right does not
-    // receive any force from the bottom. but instead we see it getting 10mN force.
-    // but if the bottom of that tile was replaced with air and the wall kept, that water
-    // would go nowhere! there's nowhere for air to enter
-    //
-    // ... how do we represent that? what does that even mean?
-    // we're allowing air to enter via directly down, if the hole is large enough. because
-    // the air under the water will exchange places with the water and cause turbulence.
-    // and we could allow it on the side the same way, but the case with
-    // a u shape needs to work right still. we can't just be exchanging air where there's
-    // actually no path
+    // we expect to see the water in the top left to be lower pressure,
+    // and the tile in the top right to not be receiving any force from the bottom.
+    // I think?
+    // or maybe it does receive force from the bottom, but that force is usually
+    // countered by air pressure? I'm not sure
 
     if (true) return error.SkipZigTest;
 
