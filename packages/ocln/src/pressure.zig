@@ -164,8 +164,8 @@ fn generateGraph(arena: std.mem.Allocator, grid: *const Grid(2, i32, Tile)) !Gen
                     .none => unreachable,
                     .air => 100_000, // 100kPa over 1m² = 100kN
                     .water => blk: {
-                        if (direction[1] == -1) break :blk 10_000_000; // 1Mg (t) with 10m/s² gravity = 10MN
-                        if (direction[1] == 0) break :blk 5_000_000; // half of the down force
+                        if (direction[1] == -1) break :blk 10_000; // 1Mg (t) with 10m/s² gravity = 10kN
+                        if (direction[1] == 0) break :blk 5_000; // half of the down force
                         break :blk 0;
                     },
                     .tile => 0, // tiles are stuck to the background, there is no gravity. we could have some tiles with gravity.
@@ -240,11 +240,11 @@ test "pressure" {
         \\  0[0]->4[1] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\  0[1]->1[2] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\ 1: .solid:
-        \\  1[0]->5[1] received 10100.00kN / sent 10100.00kN / intrinsic 0.00
+        \\  1[0]->5[1] received 110.00kN / sent 110.00kN / intrinsic 0.00
         \\  1[1]->2[2] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\  1[2]->0[1] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\ 2: .solid:
-        \\  2[0]->6[1] received 10100.00kN / sent 10100.00kN / intrinsic 0.00
+        \\  2[0]->6[1] received 110.00kN / sent 110.00kN / intrinsic 0.00
         \\  2[1]->3[1] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\  2[2]->1[1] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\ 3: .solid:
@@ -253,21 +253,21 @@ test "pressure" {
         \\ 4: .solid:
         \\  4[0]->8[1] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\  4[1]->0[0] received 0.00kN / sent 0.00kN / intrinsic 0.00
-        \\  4[2]->5[3] received 5100.00kN / sent 5100.00kN / intrinsic 0.00
+        \\  4[2]->5[3] received 105.00kN / sent 105.00kN / intrinsic 0.00
         \\ 5: .liquid:
         \\  5[0]->9[1] received 100.00kN / sent 100.00kN / intrinsic 0.00
-        \\  5[1]->1[0] received 100.00kN / sent 100.00kN / intrinsic 10000.00
-        \\  5[2]->6[3] received 100.00kN / sent 100.00kN / intrinsic 5000.00
-        \\  5[3]->4[2] received 100.00kN / sent 100.00kN / intrinsic 5000.00
+        \\  5[1]->1[0] received 100.00kN / sent 100.00kN / intrinsic 10.00
+        \\  5[2]->6[3] received 100.00kN / sent 100.00kN / intrinsic 5.00
+        \\  5[3]->4[2] received 100.00kN / sent 100.00kN / intrinsic 5.00
         \\ 6: .liquid:
         \\  6[0]->10[1] received 100.00kN / sent 100.00kN / intrinsic 0.00
-        \\  6[1]->2[0] received 100.00kN / sent 100.00kN / intrinsic 10000.00
-        \\  6[2]->7[2] received 100.00kN / sent 100.00kN / intrinsic 5000.00
-        \\  6[3]->5[2] received 100.00kN / sent 100.00kN / intrinsic 5000.00
+        \\  6[1]->2[0] received 100.00kN / sent 100.00kN / intrinsic 10.00
+        \\  6[2]->7[2] received 100.00kN / sent 100.00kN / intrinsic 5.00
+        \\  6[3]->5[2] received 100.00kN / sent 100.00kN / intrinsic 5.00
         \\ 7: .solid:
         \\  7[0]->11[1] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\  7[1]->3[0] received 0.00kN / sent 0.00kN / intrinsic 0.00
-        \\  7[2]->6[2] received 5100.00kN / sent 5100.00kN / intrinsic 0.00
+        \\  7[2]->6[2] received 105.00kN / sent 105.00kN / intrinsic 0.00
         \\ 8: .solid:
         \\  8[0]->12[0] received 0.00kN / sent 0.00kN / intrinsic 0.00
         \\  8[1]->4[0] received 0.00kN / sent 0.00kN / intrinsic 0.00
