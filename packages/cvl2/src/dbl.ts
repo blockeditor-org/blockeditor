@@ -47,12 +47,17 @@ type UserGetQueries = {
     get: string[],
   }
 };
+type UserDeleteQueries = {
+  [key: string]: UserBaseQuery & {
+    filter: {[key: string]: UserQueryProvider},
+  }
+};
 type UserInsertQueries = {
   [key: string]: UserBaseQuery & {
     insert: {[key: string]: UserQueryProvider},
   },
 };
-type User = {classes: UserData, get: UserGetQueries, insert: UserInsertQueries};
+type User = {classes: UserData, get: UserGetQueries, delete: UserDeleteQueries, insert: UserInsertQueries};
 type ResolveDataFields = {
 
 };
@@ -416,6 +421,9 @@ initDb({
   },
   get: {
     "Text.body": {args: ["text"], class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [["order", "asc"]], get: ["char"]},
+  },
+  delete: {
+    "Text.clear": {args: ["text"], class: "Text.Character", filter: {owner: {arg: "text"}}}
   },
   insert: {
     "Text.new": {args: [], class: "Text", insert: {}},
