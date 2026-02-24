@@ -98,7 +98,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
         pub fn getSegments(this: *@This(), pos: vec.by2i32) [segment_ref_count]SegmentPool.Handle {
             return this.coordinate_to_segments_map.get(pos) orelse return @splat(.nil);
         }
-        fn trySplitSegment(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
+        fn trySplitOneSegment(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
             const w1_data: *Segment = this.segments.getColumnPtrAssumeLive(w1, .ptr);
             var w2_data: Segment = w1_data.*;
             if (w1_data.hasSide(split_pos)) return; // can't split at an endpoint
@@ -111,6 +111,28 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             try this.setSegmentRefRange(w2_data.sides[0], w2_data.sides[1], w1, w2);
             // add back w1 to the split point
             try this.setSegmentRef(split_pos, .nil, w1);
+        }
+        fn trySplitSegments(this: *@This(), context: Context, pos: vec.by2i32) !void {
+
+            // determine if wants split, split
+            const segments = this.getSegments(pos);
+            const wants_split = wants_split: {
+                if (context.hasIntrinsic(pos)) break :wants_split true;
+                for (segments) |seg| {
+                    if (seg.id == SegmentPool.Handle.nil.id) continue;
+                    const seg_data: *Segment = this.segments.getColumnPtrAssumeLive(seg, .ptr);
+                    if (seg_data.hasSide(pos)) {
+                        break :wants_split true;
+                    }
+                }
+                break :wants_split false;
+            };
+            if (wants_split) {
+                for (segments) |seg| {
+                    if (!this.segments.isLiveHandle(seg)) continue; // after splitting, the segments list may update. also, seg may be nil.
+                    try this.trySplitOneSegment(seg, pos);
+                }
+            }
         }
         fn tryMergeSegments(this: *@This(), context: Context, shared_point: vec.by2i32) !void {
             var w1: SegmentPool.Handle = .nil;
@@ -140,19 +162,6 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             // no need to update materials, they are unchanged.
         }
         pub fn createSegment(this: *@This(), context: Context, segment_in: Segment) !void {
-            // find any segments which need splitting
-            // TODO: remove this
-            for (segment_in.sides) |side| {
-                for (this.getSegments(side)) |existing_segment| {
-                    if (existing_segment.id == SegmentPool.Handle.nil.id) continue;
-                    const xw_data: *Segment = this.segments.getColumnPtrAssumeLive(existing_segment, .ptr);
-                    if (xw_data.hasSide(segment_in.sides[0]) or xw_data.hasSide(segment_in.sides[1])) continue; // the segment shares a side with us; no action
-                    if (xw_data.direction() == segment_in.direction()) continue; // the segment shares a direction with us; no action
-                    // must split the segment
-                    try this.trySplitSegment(existing_segment, side);
-                }
-            }
-
             {
                 // create the new segment
                 const new_segment = try this.segments.add(.{ .ptr = segment_in });
@@ -162,13 +171,12 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                 try this.setSegmentRefRange(segment.sides[0], segment.sides[1], .nil, new_segment);
             }
 
+            // update affected tiles, splitting or merging as needed
             var iter = vec.Iterator(2, i32).minMaxInclusive(segment_in.sides[0], segment_in.sides[1]);
             while (iter.next()) |pos| try this.syncSegments(context, pos);
         }
         pub fn syncSegments(this: *@This(), context: Context, pos: vec.by2i32) !void {
-            // TODO: split if needed:
-            // - a split is needed if there are two segments here and one starts or ends on the tile
-            // - or if there is a power port on this tile
+            try this.trySplitSegments(context, pos);
             try this.tryMergeSegments(context, pos);
         }
 

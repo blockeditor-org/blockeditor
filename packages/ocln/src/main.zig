@@ -824,6 +824,22 @@ test Map {
         \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
         \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
     );
+
+    // add a wire that goes through the end point of another wire (it should split)
+    try map.createWire(.{
+        .sides = .{ .{ 45, 10 }, .{ 45, 20 } },
+        .user = .{},
+    });
+
+    // add a wire that intersects the end point of the left-right wire. it should split in half.
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+        \\*: ConnectionLayer:
+        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
+        \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
+        \\ { 45, 15 } <--> { 45, 20 }: struct: (no fields)
+    );
 }
 
 test {
