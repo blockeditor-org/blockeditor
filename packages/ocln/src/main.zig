@@ -606,22 +606,22 @@ const Map = struct {
 
     fn canPlaceBuilding(this: *Map, building: Building) PlaceBuildingStatus {
         const descriptor = building_to_descriptor_map.get(building.tag);
-        var range = vec.Iterator(2, i32).size(descriptor.grid.size);
+        var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         var result: PlaceBuildingStatus = .{ .pos = building.center, .status = .success };
         while (range.next()) |subpos| {
             const index = descriptor.grid.get(subpos).?;
             const expected = descriptor.flags[index];
             const pos = building.center + descriptor.offset + subpos;
-            const actual = this.tile_flags.get(pos) orelse return .{ .pos = pos, .message = .error_out_of_bounds };
+            const actual = this.tile_flags.get(pos) orelse return .{ .pos = pos, .status = .error_out_of_bounds };
 
             if (expected.set_building and actual.has_building) {
-                return .{ .pos = pos, .message = .error_has_building };
+                return .{ .pos = pos, .status = .error_has_building };
             }
             if (expected.set_power_port and actual.has_power_port) {
-                return .{ .pos = pos, .message = .error_has_power_port };
+                return .{ .pos = pos, .status = .error_has_power_port };
             }
             if (expected.needs_tile and !actual.cannot_enter) {
-                result = .{ .pos = pos, .message = .warning_missing_foundation };
+                result = .{ .pos = pos, .status = .warning_missing_tile };
             }
         }
         return result; // success
@@ -698,7 +698,7 @@ const PlaceBuildingStatus = struct {
 const building_to_descriptor_map: std.EnumArray(BuildingTag, BuildingDescriptor) = .init(.{
     .generator = @as(BuildingDescriptor, .{
         .offset = .{ -1, 1 },
-        .grid = .fromSizeSlice(.{ 3, 4 }, @constCast(&[_]usize{
+        .grid = .fromSizeSlice(.{ 3, 5 }, @constCast(&[_]usize{
             // note that this is upside-down
             0, 0, 1,
             0, 0, 0,
@@ -839,6 +839,15 @@ test Map {
         \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
         \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
         \\ { 45, 15 } <--> { 45, 20 }: struct: (no fields)
+    );
+
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(map.canPlaceBuilding(.{
+        .tag = .generator,
+        .center = .{ 30, 15 },
+    })),
+        \\struct:
+        \\ pos: .{ 30, 20 }
+        \\ status: .warning_missing_tile
     );
 }
 

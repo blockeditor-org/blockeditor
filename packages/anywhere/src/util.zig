@@ -37,7 +37,8 @@ pub const testing = struct {
     var mutex = std.Thread.Mutex{};
     var _initialized: std.atomic.Value(bool) = .init(false);
     var _should_update: bool = undefined;
-    pub fn snap(src: std.builtin.SourceLocation, actual: []const u8, expected: []const u8) !void {
+    // TODO: actual must be moved before src. so snap(actual, @src(), null);
+    pub fn snap(src: std.builtin.SourceLocation, actual: []const u8, expected: ?[]const u8) !void {
         if (!_initialized.load(.acquire)) {
             mutex.lock();
             defer mutex.unlock();
@@ -53,7 +54,7 @@ pub const testing = struct {
             }
             _initialized.raw = true;
         }
-        if (_should_update and !std.mem.eql(u8, expected, actual)) {
+        if (_should_update and (expected == null or !std.mem.eql(u8, expected.?, actual))) {
             mutex.lock();
             defer mutex.unlock();
 
@@ -62,7 +63,7 @@ pub const testing = struct {
 
             return;
         }
-        try std.testing.expectEqualStrings(expected, actual);
+        try std.testing.expectEqualStrings(expected orelse "(needs update)", actual);
 
         // TODO:
         // - the env var will contain a file
