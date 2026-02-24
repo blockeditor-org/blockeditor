@@ -469,13 +469,17 @@ const PlayerPool = zpool.Pool(16, 16, Player, struct { ptr: Player });
 const TileFlags = packed struct {
     cannot_enter: bool,
     can_stand: bool, // enter=false,stand=true means can climb. enter=false,stand=false = spikes or smth.
+    /// indicates that the building on this tile has a power port
     has_power_port: bool,
+    /// indicates that the building on this tile has a pipe port
     has_pipe_port: bool,
+    has_building: bool,
     pub const empty: TileFlags = .{
         .cannot_enter = false,
         .can_stand = false,
         .has_power_port = false,
         .has_pipe_port = false,
+        .has_building = false,
     };
 };
 
@@ -496,43 +500,10 @@ const BuildingTag = enum {
 };
 const Building = struct {
     tag: BuildingTag,
-    fn checkPlace(tag: BuildingTag, map: *Map, pos: vec.by2i32) bool {
-        _ = map;
-        _ = pos;
-        return switch (tag) {
-            .generator => {
-                // check pos, pos + (0,1), pos + (1,0), pos + (1,1)
-                // make sure the has_building tag is no for all of them
-                // and the has_power_port tag is no for pos + (1,0)
-            },
-        };
-    }
-    fn place(tag: BuildingTag, map: *Map, pos: vec.by2i32) void {
-        _ = map;
-        _ = pos;
-        return switch (tag) {
-            .generator => {
-                // check pos, pos + (0,1), pos + (1,0), pos + (1,1)
-                // set the has_building tag
-                // and the has_power_port tag for pos + (1,0)
-                // after setting has_power_port, we must trigger trySplit on wires
-            },
-        };
-    }
-    fn destroy(tag: BuildingTag, map: *Map, pos: vec.by2i32) void {
-        _ = map;
-        _ = pos;
-        return switch (tag) {
-            .generator => {
-                // check pos, pos + (0,1), pos + (1,0), pos + (1,1)
-                // unset the has_building tag
-                // and the has_power_port tag for pos + (1,0)
-                // after unsetting has_power_port, we must trigger tryMerge on wires
-            },
-        };
-    }
+    center: vec.by2i32,
 };
-const Buildings = zpool.Pool(16, 16, Building, struct { ptr: Building });
+const BuildingInfo = struct {};
+const BuildingPool = zpool.Pool(16, 16, Building, struct { ptr: Building });
 
 const Map = struct {
     gpa: std.mem.Allocator,
@@ -540,6 +511,8 @@ const Map = struct {
     size_usize: vec.by2usize,
     materials: Grid(3, i32, Material),
     tile_flags: Grid(2, i32, TileFlags),
+    building_pool: BuildingPool,
+    pos_to_building: std.AutoArrayHashMapUnmanaged(vec.by2i32, BuildingPool.Handle),
     wires: Wires,
     players: PlayerPool,
 
@@ -552,11 +525,15 @@ const Map = struct {
             .tile_flags = .empty,
             .wires = .init(gpa),
             .players = .init(gpa),
+            .pos_to_building = .empty,
+            .building_pool = .init(gpa),
         };
     }
     pub fn deinit(this: *Map) void {
         this.materials.deinit(this.gpa);
         this.tile_flags.deinit(this.gpa);
+        this.pos_to_building.deinit(this.gpa);
+        this.building_pool.deinit();
         this.wires.deinit();
         this.players.deinit();
     }
@@ -626,6 +603,125 @@ const Map = struct {
         var ptr = this.tile_flags.ptr(pos) orelse return;
         @field(ptr, @tagName(flag)) = value;
     }
+
+    fn canPlaceBuilding(this: *Map, building: Building) PlaceBuildingStatus {
+        const descriptor = building_to_descriptor_map.get(building.tag);
+        var range = vec.Iterator(2, i32).size(descriptor.grid.size);
+        var result: PlaceBuildingStatus = .{ .pos = building.center, .status = .success };
+        while (range.next()) |subpos| {
+            const index = descriptor.grid.get(subpos).?;
+            const expected = descriptor.flags[index];
+            const pos = building.center + descriptor.offset + subpos;
+            const actual = this.tile_flags.get(pos) orelse return .{ .pos = pos, .message = .error_out_of_bounds };
+
+            if (expected.set_building and actual.has_building) {
+                return .{ .pos = pos, .message = .error_has_building };
+            }
+            if (expected.set_power_port and actual.has_power_port) {
+                return .{ .pos = pos, .message = .error_has_power_port };
+            }
+            if (expected.needs_tile and !actual.cannot_enter) {
+                result = .{ .pos = pos, .message = .warning_missing_foundation };
+            }
+        }
+        return result; // success
+    }
+    fn placeBuilding(this: *Map, building: Building) !void {
+        const status = this.canPlaceBuilding(building);
+        std.debug.assert(status.ok()); // you're supposed to make sure it can be placed first
+
+        const placed_id = try this.building_pool.add(building);
+
+        const descriptor = building_to_descriptor_map.get(building.tag);
+        var range = vec.Iterator(2, i32).size(descriptor.grid.size);
+        while (range.next()) |subpos| {
+            const index = descriptor.grid.get(subpos).?;
+            const expected = descriptor.flags[index];
+            const pos = building.center + descriptor.offset + subpos;
+            const actual = this.tile_flags.ptr(pos) orelse unreachable;
+
+            if (expected.set_building) {
+                std.debug.assert(!actual.has_building);
+                actual.has_building = true;
+                this.pos_to_building.putNoClobber(this.gpa, pos, placed_id);
+            }
+            if (expected.set_power_port) {
+                std.debug.assert(!actual.has_power_port);
+                actual.has_power_port = true;
+                try this.wires.syncSegments(.{ .map = this }, pos);
+            }
+        }
+    }
+    fn removeBuilding(this: *Map, building_id: BuildingPool.Handle) !void {
+        const building: Building = this.building_pool.getColumn(building_id, .ptr);
+
+        const descriptor = building_to_descriptor_map.get(building.tag);
+        var range = vec.Iterator(2, i32).size(descriptor.grid.size);
+        while (range.next()) |subpos| {
+            const index = descriptor.grid.get(subpos).?;
+            const expected = descriptor.flags[index];
+            const pos = building.center + descriptor.offset + subpos;
+            const actual = this.tile_flags.ptr(pos) orelse unreachable;
+
+            if (expected.set_building) {
+                std.debug.assert(actual.has_building);
+                actual.has_building = false;
+                std.debug.assert(this.pos_to_building.swapRemove(pos));
+            }
+            if (expected.set_power_port) {
+                std.debug.assert(actual.has_power_port);
+                actual.has_power_port = false;
+                try this.wires.syncSegments(.{ .map = this }, pos);
+            }
+        }
+
+        this.building_pool.remove(building);
+    }
+};
+
+const PlaceBuildingStatus = struct {
+    pos: @Vector(2, i32),
+    status: enum {
+        success,
+        warning_missing_tile,
+        error_has_building,
+        error_has_power_port,
+        error_out_of_bounds,
+    },
+    fn ok(self: PlaceBuildingStatus) bool {
+        return switch (self.status) {
+            .success, .warning_missing_tile => true,
+            else => false,
+        };
+    }
+};
+const building_to_descriptor_map: std.EnumArray(BuildingTag, BuildingDescriptor) = .init(.{
+    .generator = @as(BuildingDescriptor, .{
+        .offset = .{ -1, 1 },
+        .grid = .fromSizeSlice(.{ 3, 4 }, @constCast(&[_]usize{
+            // note that this is upside-down
+            0, 0, 1,
+            0, 0, 0,
+            0, 0, 0,
+            0, 0, 0,
+            2, 2, 2,
+        })),
+        .flags = &.{
+            .{ .set_building = true },
+            .{ .set_building = true, .set_power_port = true },
+            .{ .needs_tile = true },
+        },
+    }),
+});
+const BuildingDescriptor = struct {
+    offset: @Vector(2, i32),
+    grid: Grid(2, i32, usize),
+    flags: []const BuildingDescriptorFlag,
+};
+const BuildingDescriptorFlag = packed struct {
+    set_building: bool = false,
+    set_power_port: bool = false,
+    needs_tile: bool = false,
 };
 
 test Map {
@@ -720,7 +816,7 @@ test Map {
 
     // merge when the power port is removed
     map.setFlag(.{ 30, 15 }, .has_power_port, false);
-    try map.wires.tryMergeSegments(.{ .map = map }, .{ 30, 15 });
+    try map.wires.syncSegments(.{ .map = map }, .{ 30, 15 });
 
     try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
         \\*: ConnectionLayer:

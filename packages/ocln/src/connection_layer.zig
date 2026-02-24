@@ -98,7 +98,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
         pub fn getSegments(this: *@This(), pos: vec.by2i32) [segment_ref_count]SegmentPool.Handle {
             return this.coordinate_to_segments_map.get(pos) orelse return @splat(.nil);
         }
-        pub fn trySplitSegment(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
+        fn trySplitSegment(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
             const w1_data: *Segment = this.segments.getColumnPtrAssumeLive(w1, .ptr);
             var w2_data: Segment = w1_data.*;
             if (w1_data.hasSide(split_pos)) return; // can't split at an endpoint
@@ -112,7 +112,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             // add back w1 to the split point
             try this.setSegmentRef(split_pos, .nil, w1);
         }
-        pub fn tryMergeSegments(this: *@This(), context: Context, shared_point: vec.by2i32) !void {
+        fn tryMergeSegments(this: *@This(), context: Context, shared_point: vec.by2i32) !void {
             var w1: SegmentPool.Handle = .nil;
             var w2: SegmentPool.Handle = .nil;
             for (this.getSegments(shared_point)) |segment| {
@@ -140,11 +140,8 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             // no need to update materials, they are unchanged.
         }
         pub fn createSegment(this: *@This(), context: Context, segment_in: Segment) !void {
-            // TODO: after merging, loop over the segment and find any tiles with context.hasIntrinsic(point).
-            // split the segment there to attach to the power port. when a power port is removed, we can merge the segment.
-            // actually it doesn't even need to be after merging, it can be before
-
             // find any segments which need splitting
+            // TODO: remove this
             for (segment_in.sides) |side| {
                 for (this.getSegments(side)) |existing_segment| {
                     if (existing_segment.id == SegmentPool.Handle.nil.id) continue;
@@ -165,8 +162,14 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                 try this.setSegmentRefRange(segment.sides[0], segment.sides[1], .nil, new_segment);
             }
 
-            try this.tryMergeSegments(context, segment_in.sides[0]);
-            try this.tryMergeSegments(context, segment_in.sides[1]);
+            var iter = vec.Iterator(2, i32).minMaxInclusive(segment_in.sides[0], segment_in.sides[1]);
+            while (iter.next()) |pos| try this.syncSegments(context, pos);
+        }
+        pub fn syncSegments(this: *@This(), context: Context, pos: vec.by2i32) !void {
+            // TODO: split if needed:
+            // - a split is needed if there are two segments here and one starts or ends on the tile
+            // - or if there is a power port on this tile
+            try this.tryMergeSegments(context, pos);
         }
 
         pub fn printCustomFormat(printer: *print.Printer, arg: print.DetailedAny) error{WriteFailed}!void {

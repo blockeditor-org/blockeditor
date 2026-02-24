@@ -16,22 +16,27 @@ pub fn Iterator(comptime n: comptime_int, comptime T: type) type {
     return struct {
         const vecXT = by(n, T);
         min: vecXT,
+        /// exclusive
         max: vecXT,
         value: vecXT,
         pub fn size(sizeValue: vecXT) @This() {
             return .posSize(@splat(0), sizeValue);
         }
         pub fn posSize(pos: vecXT, sizeValue: vecXT) @This() {
-            return .{ .min = pos, .max = sizeValue - @as(vecXT, @splat(1)), .value = pos };
+            return .minMax(pos, sizeValue - pos);
         }
+        /// max is exclusive
         pub fn minMax(min: vecXT, max: vecXT) @This() {
             return .{ .min = min, .max = max, .value = min };
+        }
+        pub fn minMaxInclusive(min: vecXT, max: vecXT) @This() {
+            return .{ .min = min, .max = max + @as(vecXT, @splat(1)), .value = min };
         }
         pub fn next(self: *@This()) ?vecXT {
             const res = self.value;
             for (0..n) |i| {
                 self.value[i] += 1;
-                if (self.value[i] <= self.max[i]) break;
+                if (self.value[i] < self.max[i]) break;
                 self.value[i] = self.min[i];
             } else return null;
             return res;
