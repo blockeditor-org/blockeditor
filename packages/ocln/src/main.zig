@@ -611,7 +611,7 @@ const Map = struct {
         while (range.next()) |subpos| {
             const index = descriptor.grid.get(subpos).?;
             const expected = descriptor.flags[index];
-            const pos = building.center + descriptor.offset + subpos;
+            const pos = building.center - descriptor.offset + subpos;
             const actual = this.tile_flags.get(pos) orelse return .{ .pos = pos, .status = .error_out_of_bounds };
 
             if (expected.set_building and actual.has_building) {
@@ -626,24 +626,24 @@ const Map = struct {
         }
         return result; // success
     }
-    fn placeBuilding(this: *Map, building: Building) !void {
+    fn placeBuilding(this: *Map, building: Building) !BuildingPool.Handle {
         const status = this.canPlaceBuilding(building);
         std.debug.assert(status.ok()); // you're supposed to make sure it can be placed first
 
-        const placed_id = try this.building_pool.add(building);
+        const placed_id = try this.building_pool.add(.{ .ptr = building });
 
         const descriptor = building_to_descriptor_map.get(building.tag);
-        var range = vec.Iterator(2, i32).size(descriptor.grid.size);
+        var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         while (range.next()) |subpos| {
             const index = descriptor.grid.get(subpos).?;
             const expected = descriptor.flags[index];
-            const pos = building.center + descriptor.offset + subpos;
+            const pos = building.center - descriptor.offset + subpos;
             const actual = this.tile_flags.ptr(pos) orelse unreachable;
 
             if (expected.set_building) {
                 std.debug.assert(!actual.has_building);
                 actual.has_building = true;
-                this.pos_to_building.putNoClobber(this.gpa, pos, placed_id);
+                try this.pos_to_building.putNoClobber(this.gpa, pos, placed_id);
             }
             if (expected.set_power_port) {
                 std.debug.assert(!actual.has_power_port);
@@ -651,16 +651,18 @@ const Map = struct {
                 try this.wires.syncSegments(.{ .map = this }, pos);
             }
         }
+
+        return placed_id;
     }
     fn removeBuilding(this: *Map, building_id: BuildingPool.Handle) !void {
-        const building: Building = this.building_pool.getColumn(building_id, .ptr);
+        const building: Building = this.building_pool.getColumnAssumeLive(building_id, .ptr);
 
         const descriptor = building_to_descriptor_map.get(building.tag);
-        var range = vec.Iterator(2, i32).size(descriptor.grid.size);
+        var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         while (range.next()) |subpos| {
             const index = descriptor.grid.get(subpos).?;
             const expected = descriptor.flags[index];
-            const pos = building.center + descriptor.offset + subpos;
+            const pos = building.center - descriptor.offset + subpos;
             const actual = this.tile_flags.ptr(pos) orelse unreachable;
 
             if (expected.set_building) {
@@ -675,7 +677,7 @@ const Map = struct {
             }
         }
 
-        this.building_pool.remove(building);
+        this.building_pool.removeAssumeLive(building_id);
     }
 };
 
@@ -697,14 +699,14 @@ const PlaceBuildingStatus = struct {
 };
 const building_to_descriptor_map: std.EnumArray(BuildingTag, BuildingDescriptor) = .init(.{
     .generator = @as(BuildingDescriptor, .{
-        .offset = .{ -1, 1 },
+        .offset = .{ 1, 1 },
         .grid = .fromSizeSlice(.{ 3, 5 }, @constCast(&[_]usize{
             // note that this is upside-down
+            2, 2, 2,
             0, 0, 1,
             0, 0, 0,
             0, 0, 0,
             0, 0, 0,
-            2, 2, 2,
         })),
         .flags = &.{
             .{ .set_building = true },
@@ -841,12 +843,61 @@ test Map {
         \\ { 45, 15 } <--> { 45, 20 }: struct: (no fields)
     );
 
+    // can place but missing tile
     try anywhere.util.testing.snap(@src(), print.snapshotPrint(map.canPlaceBuilding(.{
         .tag = .generator,
         .center = .{ 30, 15 },
     })),
         \\struct:
-        \\ pos: .{ 30, 20 }
+        \\ pos: .{ 31, 14 }
+        \\ status: .warning_missing_tile
+    );
+
+    const placed = try map.placeBuilding(.{
+        .tag = .generator,
+        .center = .{ 30, 15 },
+    });
+
+    // can't place again, there's already a building there
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(map.canPlaceBuilding(.{
+        .tag = .generator,
+        .center = .{ 30, 15 },
+    })),
+        \\struct:
+        \\ pos: .{ 29, 15 }
+        \\ status: .error_has_building
+    );
+
+    // placing the building should have split the layer in half
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+        \\*: ConnectionLayer:
+        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
+        \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 31, 15 }: struct: (no fields)
+        \\ { 31, 15 } <--> { 45, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
+        \\ { 45, 15 } <--> { 45, 20 }: struct: (no fields)
+    );
+
+    try map.removeBuilding(placed);
+
+    // un-split
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+        \\*: ConnectionLayer:
+        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
+        \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
+        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
+        \\ { 45, 15 } <--> { 45, 20 }: struct: (no fields)
+    );
+
+    // can place again
+    try anywhere.util.testing.snap(@src(), print.snapshotPrint(map.canPlaceBuilding(.{
+        .tag = .generator,
+        .center = .{ 30, 15 },
+    })),
+        \\struct:
+        \\ pos: .{ 31, 14 }
         \\ status: .warning_missing_tile
     );
 }
