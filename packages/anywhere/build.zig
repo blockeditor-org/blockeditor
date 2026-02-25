@@ -43,32 +43,35 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(snapshot_runner);
 
-    const run_block_tests = addRunTest(b, block_test, addUpdateSnapshotsOption(b, snapshot_runner));
+    const snapshot = addUpdateSnapshotsOption(b, snapshot_runner);
+    const run_block_tests = snapshot.addRunTest(b, block_test);
     run_block_tests.step.dependOn(b.getInstallStep());
 
     const test_step = b.step("test", "Test");
     test_step.dependOn(&run_block_tests.step);
 }
 
-pub fn addUpdateSnapshotsOption(b: *std.Build, update_snapshots: *std.Build.Step.Compile) ?*std.Build.Step.Compile {
-    if (b.option(bool, "update_snapshots", "updat snapshots?") orelse false) return update_snapshots;
-    return null;
-}
-pub fn addRunTest(b: *std.Build, exe: *std.Build.Step.Compile, update_snapshots: ?*std.Build.Step.Compile) *std.Build.Step.Run {
-    const step_name = if (exe.kind.isTest() and std.mem.eql(u8, exe.name, "test"))
-        b.fmt("run {s}", .{@tagName(exe.kind)})
-    else
-        b.fmt("run {s} {s}", .{ @tagName(exe.kind), exe.name });
+const UpdateSnapshotsOption = struct {
+    value: ?*std.Build.Step.Compile,
 
-    const run_step = std.Build.Step.Run.create(b, step_name);
-    run_step.producer = exe;
-    if (update_snapshots) |us| {
-        run_step.addArtifactArg(us);
-        run_step.addPrefixedFileArg(b.fmt("-M{s}=", .{"root"}), exe.root_module.root_source_file.?);
+    pub fn addRunTest(self: *const UpdateSnapshotsOption, b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step.Run {
+        const run_step = b.addRunArtifact(exe);
+
+        if (self.value) |us| {
+            const idx = run_step.argv.items.len;
+            run_step.addArtifactArg(us);
+            run_step.addPrefixedFileArg(b.fmt("-M{s}=", .{"root"}), exe.root_module.root_source_file.?);
+            const dup = b.allocator.dupe(std.Build.Step.Run.Arg, run_step.argv.items[idx..]) catch @panic("oom");
+            run_step.argv.items.len = idx;
+            run_step.argv.insertSlice(b.allocator, 0, dup) catch @panic("oom");
+        }
+
+        return run_step;
     }
-    run_step.addArtifactArg(exe);
-
-    return run_step;
+};
+pub fn addUpdateSnapshotsOption(b: *std.Build, update_snapshots: *std.Build.Step.Compile) UpdateSnapshotsOption {
+    if (b.option(bool, "update_snapshots", "update snapshots?") orelse false) return .{ .value = update_snapshots };
+    return .{ .value = null };
 }
 
 // TODO:

@@ -74,6 +74,7 @@ pub fn main() !u8 {
     };
     defer gpa.free(result);
 
+    if (result.len == 0) return 0; // no snapshots to update; skip
     std.log.info("got snapshot data: {s}", .{result});
 
     var iter = std.mem.splitScalar(u8, result, '\n');
