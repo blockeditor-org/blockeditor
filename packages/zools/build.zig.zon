@@ -1,0 +1,13 @@
+.{
+    .name = .zig3ds,
+    .fingerprint = 0xc718806ec1106b80,
+    .version = "0.0.0",
+
+    .dependencies = .{
+        .anywhere = .{ .path = "../anywhere" },
+    },
+
+    .paths = .{
+        "",
+    },
+}
