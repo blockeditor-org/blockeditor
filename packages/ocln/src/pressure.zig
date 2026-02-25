@@ -234,7 +234,7 @@ test "pressure" {
 
     for (0..10000) |_| update(gen.graph);
 
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(gen.graph),
+    try print.snapshotPrint(gen.graph).snap(@src(),
         \\*: Graph:
         \\ 0: .solid:
         \\  0[0]->4[1] received 0.00kN / sent 0.00kN / intrinsic 0.00

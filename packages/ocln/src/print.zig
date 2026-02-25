@@ -386,15 +386,12 @@ fn AutoPrintT(comptime T: type) type {
 pub fn autoPrint(obj: anytype) AutoPrintT(@TypeOf(obj)) {
     return .{ .val = obj };
 }
-pub fn snapshotPrint(obj: anytype) []const u8 {
-    const sw = struct {
-        threadlocal var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    };
-    const alloc = sw.arena.allocator();
+pub fn snapshotPrint(obj: anytype) @import("anywhere").util.testing.Snapshot {
+    const alloc = std.testing.allocator;
     var writer = std.Io.Writer.Allocating.init(alloc);
     defer writer.deinit();
     print(&writer.writer, obj, &.{ .tty = .no_color, .include_address = false, .include_type_names = false }) catch @panic("oom");
-    return writer.toOwnedSlice() catch @panic("oom");
+    return .from(alloc, writer.toOwnedSlice() catch @panic("oom"));
 }
 pub const Printer = struct {
     cfg: *const PrintCfg,

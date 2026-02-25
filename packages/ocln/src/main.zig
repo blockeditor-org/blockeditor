@@ -735,7 +735,7 @@ test Map {
     try map.generate(.{ 200, 300 });
 
     const path = calculatePathfindEdges(map, .{ @divTrunc(map.size_int[0], 2), 1 }, &.{});
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&path),
+    try print.snapshotPrint(&path).snap(@src(),
         \\*: struct:
         \\ bidi: [4]:
         \\  0: struct:
@@ -763,7 +763,7 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+    try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
     );
@@ -777,7 +777,7 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+    try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 20 }: struct: (no fields)
     );
@@ -791,7 +791,7 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+    try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
         \\ { 10, 15 } <--> { 30, 15 }: struct: (no fields)
@@ -808,7 +808,7 @@ test Map {
         .user = .{},
     });
 
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+    try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
         \\ { 10, 15 } <--> { 30, 15 }: struct: (no fields)
@@ -820,7 +820,7 @@ test Map {
     map.setFlag(.{ 30, 15 }, .has_power_port, false);
     try map.wires.syncSegments(.{ .map = map }, .{ 30, 15 });
 
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+    try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
         \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
@@ -834,7 +834,7 @@ test Map {
     });
 
     // add a wire that intersects the end point of the left-right wire. it should split in half.
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+    try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
         \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
@@ -844,10 +844,10 @@ test Map {
     );
 
     // can place but missing tile
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(map.canPlaceBuilding(.{
+    try print.snapshotPrint(map.canPlaceBuilding(.{
         .tag = .generator,
         .center = .{ 30, 15 },
-    })),
+    })).snap(@src(),
         \\struct:
         \\ pos: .{ 31, 14 }
         \\ status: .warning_missing_tile
@@ -859,17 +859,17 @@ test Map {
     });
 
     // can't place again, there's already a building there
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(map.canPlaceBuilding(.{
+    try print.snapshotPrint(map.canPlaceBuilding(.{
         .tag = .generator,
         .center = .{ 30, 15 },
-    })),
+    })).snap(@src(),
         \\struct:
         \\ pos: .{ 29, 15 }
         \\ status: .error_has_building
     );
 
     // placing the building should have split the layer in half
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+    try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
         \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
@@ -882,7 +882,7 @@ test Map {
     try map.removeBuilding(placed);
 
     // un-split
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(&map.wires),
+    try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
         \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
         \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
@@ -892,10 +892,10 @@ test Map {
     );
 
     // can place again
-    try anywhere.util.testing.snap(@src(), print.snapshotPrint(map.canPlaceBuilding(.{
+    try print.snapshotPrint(map.canPlaceBuilding(.{
         .tag = .generator,
         .center = .{ 30, 15 },
-    })),
+    })).snap(@src(),
         \\struct:
         \\ pos: .{ 31, 14 }
         \\ status: .warning_missing_tile

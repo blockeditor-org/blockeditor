@@ -58,21 +58,24 @@ pub const SnapshotMessage = struct {
     expected: ?[]const u8,
 };
 
-pub const SnapshotString = struct {
+// we should decide if we want snap(@src(), target).match(value())
+// vs value().snap(@src(), target)
+// vs snap(@src(), target, actual)
+pub const Snapshot = struct {
     gpa: ?std.mem.Allocator,
     actual: []const u8,
-    pub fn static(str: []const u8) SnapshotString {
+    pub fn static(str: []const u8) Snapshot {
         return .{ .gpa = null, .actual = str };
     }
-    pub fn from(gpa: std.mem.Allocator, str: []const u8) SnapshotString {
+    pub fn from(gpa: std.mem.Allocator, str: []const u8) Snapshot {
         return .{ .gpa = gpa, .actual = str };
     }
-    pub fn deinit(self: *const SnapshotString) void {
+    pub fn deinit(self: *const Snapshot) void {
         if (self.gpa) |gpa| gpa.free(self.actual);
     }
 
     /// the snapshot string is deinit-ed
-    pub fn snap(self: *const SnapshotString, src: ?std.builtin.SourceLocation, expected: ?[]const u8) !void {
+    pub fn snap(self: *const Snapshot, src: ?std.builtin.SourceLocation, expected: ?[]const u8) !void {
         defer self.deinit();
 
         if (src != null and State.shouldUpdate() and (expected == null or !std.mem.eql(u8, expected.?, self.actual))) {
@@ -90,17 +93,8 @@ pub const SnapshotString = struct {
     }
 };
 
-// TODO: actual must be moved before src. so snap(actual, @src(), null);
-pub fn snap(src: std.builtin.SourceLocation, actual: []const u8, expected: ?[]const u8) !void {
-    _ = src;
-    std.testing.expectEqualStrings(expected orelse "(needs update)", actual) catch |e| {
-        std.log.err("Use -Dupdate_snapshots to update snapshots", .{});
-        return e;
-    };
-}
-
-test snap {
-    try SnapshotString.static("hello").snap(@src(),
+test Snapshot {
+    try Snapshot.static("hello").snap(@src(),
         \\hello
     );
 }
@@ -317,7 +311,7 @@ const TestingPartialMessage = struct {
     expected: ?[]const u8,
     actual: []const u8,
 };
-fn testPerformReplacements(gpa: std.mem.Allocator, messages: []const TestingPartialMessage, from: []const u8) !SnapshotString {
+fn testPerformReplacements(gpa: std.mem.Allocator, messages: []const TestingPartialMessage, from: []const u8) !Snapshot {
     const res_messages = try gpa.alloc(SnapshotMessage, messages.len);
     defer gpa.free(res_messages);
     for (messages, res_messages) |*msg, *out| {

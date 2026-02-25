@@ -1020,10 +1020,10 @@ test "rv" {
     // ecall (.instr)
     // x10 = fakeuser x10 (.fakeuser)
     if (env.has_error) return error.HasError;
-    try anywhere.util.testing.snap(@src(),
+    try anywhere.util.testing.Snapshot.static(printed.items).snap(@src(),
         \\x11 = ADD x10 x12
         \\
-    , printed.items);
+    );
 }
 
 test "zig" {
@@ -1035,7 +1035,9 @@ test "zig" {
     if (tree.owner.has_errors) {
         var out = std.array_list.Managed(u8).init(gpa);
         defer out.deinit();
-        std.log.err("has errors: `{s}`", .{try parser.testParser(&out, .{}, src_in)});
+        const he = try parser.testParser(&out, .{}, src_in);
+        defer he.deinit();
+        std.log.err("has errors: `{s}`", .{he.actual});
     }
     try std.testing.expect(!tree.owner.has_errors);
 
@@ -1078,9 +1080,9 @@ test "zig" {
     _ = res;
 
     if (env.has_error) return error.HasError;
-    try anywhere.util.testing.snap(@src(),
+    try anywhere.util.testing.Snapshot.static(emit_block.out.items).snap(@src(),
         \\_ = std.log.info('hello, world!');
-    , emit_block.out.items);
+    );
 }
 
 // notes:

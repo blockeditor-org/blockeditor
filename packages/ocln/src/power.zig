@@ -177,7 +177,7 @@ test "power" {
     try network.calculate();
 
     _ = connection;
-    try anywhere.util.testing.snap(@src(), printer.snapshotPrint(&network),
+    try printer.snapshotPrint(&network).snap(@src(),
         \\*: struct:
         \\ nodes: struct:
         \\  items: slice:
