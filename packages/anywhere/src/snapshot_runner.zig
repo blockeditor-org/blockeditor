@@ -114,27 +114,66 @@ pub fn main() !u8 {
     }
 
     // now we loop over each module and update the file
+    var has_error: std.atomic.Value(bool) = .init(false);
     {
         var pool: std.Thread.Pool = undefined;
         try pool.init(.{ .allocator = gpa });
         defer pool.deinit();
         for (result_map.keys(), result_map.values()) |k, v| {
-            try pool.spawn(updateOneFile, .{ gpa, module_name_map.values()[k.module], k.file, v.items });
+            try pool.spawn(updateOneFile, .{ gpa, module_name_map.values()[k.module], k.file, v.items, &has_error });
         }
     }
+    if (has_error.raw) return 1;
 
     // - an 'update snapshot' script will read this file and:
     //   - for each file:
 
     // iterate over snapshot data lines
+    std.log.info("snapshot update success", .{});
 
     return 0;
 }
 
-fn updateOneFile(gpa: std.mem.Allocator, module_path: ?[]const u8, file_path: []const u8, messages: []snapshot.SnapshotMessage) void {
+fn updateOneFile(gpa: std.mem.Allocator, module_path: ?[]const u8, file_path: []const u8, messages: []snapshot.SnapshotMessage, has_error: *std.atomic.Value(bool)) void {
+    return updateOneFileInternal(gpa, module_path, file_path, messages) catch |e| {
+        switch (e) {
+            error.Posted => {},
+            else => |err| {
+                std.log.err("{s}/{s}: error applying snapshots: {s}", .{ module_path orelse "", file_path, @errorName(err) });
+            },
+        }
+        has_error.store(true, .unordered);
+    };
+}
+fn updateOneFileInternal(gpa: std.mem.Allocator, module_path: ?[]const u8, file_path: []const u8, messages: []snapshot.SnapshotMessage) !void {
     //     - sort so the earliest line & column numbers are first
     //     - error if the same line number appears multiple times (we can allow it if all the values are the same)
     //     - now we will re-output the whole file into an arraylist, replacing as needed. and we will validate.
-    _ = gpa;
-    std.log.info("TODO work: {s}/{s}: {d}", .{ module_path orelse "/", file_path, messages.len });
+
+    const whole_path = try std.fs.path.join(gpa, &.{ module_path orelse "", file_path });
+    defer gpa.free(whole_path);
+
+    var src_file = try std.fs.cwd().openFile(whole_path, .{});
+    defer src_file.close();
+    var reader_buf: [1024]u8 = undefined;
+    var src_file_reader = src_file.reader(&reader_buf);
+
+    var atomic_file_buffer: [1024]u8 = undefined;
+    var dst_file = try std.fs.cwd().atomicFile(whole_path, .{ .write_buffer = &atomic_file_buffer });
+    defer dst_file.deinit();
+
+    var fout = std.Io.Writer.Allocating.init(gpa);
+    defer fout.deinit();
+
+    var eater: snapshot.Eater = .{
+        .reader = &src_file_reader.interface,
+        .writer = &dst_file.file_writer.interface,
+        .filepath = whole_path,
+        .error_mode = .log,
+    };
+    try snapshot.performReplacements(gpa, messages, &eater);
+
+    try dst_file.finish();
+
+    std.log.info("updated {d} snapshots in {s}", .{ messages.len, file_path });
 }
