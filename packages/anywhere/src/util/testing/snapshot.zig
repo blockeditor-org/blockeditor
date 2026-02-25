@@ -8,53 +8,72 @@ const std = @import("std");
 // Snapshot.expect();
 // also I thought -u was implemented but I guess not
 
-var mutex = std.Thread.Mutex{};
-var _initialized: std.atomic.Value(bool) = .init(false);
-var _should_update: bool = undefined;
+const State = struct {
+    var mutex = std.Thread.Mutex{};
+    var _initialized: std.atomic.Value(bool) = .init(false);
+    var _update_writer: ?*std.Io.Writer = undefined;
+    fn initialize() void {
+        if (_initialized.load(.acquire)) return; // initialized already
+
+        mutex.lock();
+        defer mutex.unlock();
+        if (_initialized.raw) return; // initialized already
+        defer _initialized.raw = true;
+        initializeInternal() catch |e| {
+            std.debug.panic("failed to set up snapshot: {s}", .{@errorName(e)});
+        };
+    }
+    fn initializeInternal() !void {
+        _update_writer = null;
+
+        const env_val = std.process.getEnvVarOwned(std.testing.allocator, "ANYWHERE_SNAPSHOT_UPDATE") catch {
+            return;
+        };
+        defer std.testing.allocator.free(env_val);
+
+        const file = try std.heap.smp_allocator.create(std.fs.File);
+        file.* = try std.fs.cwd().openFile(env_val, .{ .mode = .write_only });
+        const buffer = try std.heap.smp_allocator.alloc(u8, 2048);
+        const writer = try std.heap.smp_allocator.create(std.fs.File.Writer);
+        writer.* = file.writer(buffer);
+        _update_writer = &writer.interface;
+    }
+
+    fn shouldUpdate() bool {
+        initialize();
+        return _update_writer != null;
+    }
+    fn post(msg: SnapshotMessage) void {
+        initialize();
+        mutex.lock();
+        defer mutex.unlock();
+        _update_writer.?.print("{f}\n", .{std.json.fmt(msg, .{})}) catch @panic("failed to write snapshot update");
+        _update_writer.?.flush() catch @panic("failed to write snapshot update");
+    }
+};
+
+pub const SnapshotMessage = struct {
+    src: std.builtin.SourceLocation,
+    actual: []const u8,
+    expected: ?[]const u8,
+};
+
 // TODO: actual must be moved before src. so snap(actual, @src(), null);
 pub fn snap(src: std.builtin.SourceLocation, actual: []const u8, expected: ?[]const u8) !void {
-    if (!_initialized.load(.acquire)) {
-        mutex.lock();
-        defer mutex.unlock();
-
-        // inside mutex so it's ok to view .raw
-        if (_initialized.raw == false) blk: {
-            const env_val = std.process.getEnvVarOwned(std.testing.allocator, "ZIG_UPDATE_SNAPSHOT") catch {
-                _should_update = false;
-                break :blk;
-            };
-            defer std.testing.allocator.free(env_val);
-            _should_update = true;
-        }
-        _initialized.raw = true;
-    }
-    if (_should_update and (expected == null or !std.mem.eql(u8, expected.?, actual))) {
-        mutex.lock();
-        defer mutex.unlock();
-
-        // needs update!
-        std.log.err("needs update:\n  module: \"{f}\"\n  file: \"{f}\"\n  pos: {d}:{d}", .{ std.zig.fmtString(src.module), std.zig.fmtString(src.file), src.line, src.column });
-
+    if (State.shouldUpdate() and (expected == null or !std.mem.eql(u8, expected.?, actual))) {
+        State.post(.{
+            .src = src,
+            .actual = actual,
+            .expected = expected,
+        });
         return;
     }
-    try std.testing.expectEqualStrings(expected orelse "(needs update)", actual);
+    std.testing.expectEqualStrings(expected orelse "(needs update)", actual) catch |e| {
+        std.log.err("Use -Dupdate_snapshots to update snapshots", .{});
+        return e;
+    };
+}
 
-    // TODO:
-    // - the env var will contain a file
-    // - we will append serialized update information to the file:
-    //   - what module, what file, what pos, what was the old value, what is the new value
-    // - an 'update snapshot' script will read this file and:
-    //   - for each file:
-    //     - convert all lyn:col to byte offset
-    //     - sort so the highest byte offsets are first
-    //     - deduplicate any values with the same byte offset
-    //       - if they are not identical, remove them entirely & error
-    //     - at the source location, validate that the expected string appears:
-    //       "@src(),\n", then count whitespace, then expect "\\\\"
-    //     - parse the existing string. if it is not equal to the old value, error
-    //     - replace it with the new string.
-    // - (alternatively) we can have the update happen in the snap mutex:
-    //   - will have to write every time anything changes
-    //   - we keep a cache of what the original was here, then for every update we generate out the new
-    //     and write it
+test snap {
+    try snap(@src(), "hello", null);
 }
