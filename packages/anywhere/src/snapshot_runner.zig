@@ -125,10 +125,6 @@ pub fn main() !u8 {
     }
     if (has_error.raw) return 1;
 
-    // - an 'update snapshot' script will read this file and:
-    //   - for each file:
-
-    // iterate over snapshot data lines
     std.log.info("snapshot update success", .{});
 
     return 0;

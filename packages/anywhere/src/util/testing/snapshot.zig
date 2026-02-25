@@ -106,7 +106,6 @@ test snap {
 }
 
 pub fn performReplacements(gpa: std.mem.Allocator, messages: []SnapshotMessage, eater: *Eater) !void {
-    _ = gpa;
     std.mem.sort(SnapshotMessage, messages, {}, lessThanSnapshotMessage);
     for (messages, 0..) |message, i| {
         if (i > 0) {
@@ -120,15 +119,45 @@ pub fn performReplacements(gpa: std.mem.Allocator, messages: []SnapshotMessage, 
         try eater.advanceTo(message.src.line, message.src.column, .copy);
         try eater.consumeExact("@src(),", .copy);
 
-        var indent: usize = undefined;
+        const indent: usize = eater.indent;
+        var commit: []const u8 = "";
+        defer gpa.free(commit);
         if (try eater.tryConsumeExact(" null", .skip)) {
             if (message.expected != null) {
                 return eater.postError("{s}:{d}:{d}: found 'null', but the report expected to find \"{f}\"", .{ eater.filepath, eater.lyn, eater.col, std.zig.fmtString(message.expected.?) });
             }
-            indent = eater.indent;
         } else {
-            // we can use the zig tokenizer
-            return eater.postError("TODO impl existing", .{});
+            var in_src = std.Io.Writer.Allocating.init(gpa);
+            defer in_src.deinit();
+            complete: while (true) {
+                const line = try eater.consumeFullLine(gpa);
+                defer gpa.free(line);
+                if (line.len == 0) break; // len 0 = does not include '\n'
+                var tkz = std.zig.Tokenizer.init(line);
+                while (true) {
+                    const tok = tkz.next();
+                    // arguably we can consume whatever until the final r_paren. this is just for validation.
+                    switch (tok.tag) {
+                        .eof => break,
+                        .multiline_string_literal_line => {
+                            const content = line[tok.loc.start + 2 .. tok.loc.end];
+                            if (in_src.written().len > 0) try in_src.writer.writeByte('\n');
+                            try in_src.writer.writeAll(content);
+                        },
+                        .r_paren => {
+                            // finished; commit the remainder of the line
+                            commit = try gpa.dupe(u8, line[tok.loc.start..]);
+                            break :complete;
+                        },
+                        else => {
+                            return eater.postError("{s}:{d}:{d}: unexpected token: .{s}", .{ eater.filepath, eater.lyn, eater.col, @tagName(tok.tag) });
+                        },
+                    }
+                }
+            }
+            if (message.expected == null or !std.mem.eql(u8, message.expected.?, in_src.written())) {
+                return eater.postError("{s}:{d}:{d}: found \"{f}\", but the report expected to find \"{f}\"", .{ eater.filepath, eater.lyn, eater.col, std.zig.fmtString(in_src.written()), std.zig.fmtString(message.expected.?) });
+            }
         }
 
         var split = std.mem.splitScalar(u8, message.actual, '\n');
@@ -142,6 +171,7 @@ pub fn performReplacements(gpa: std.mem.Allocator, messages: []SnapshotMessage, 
         }
         try eater.writer.writeByte('\n');
         try eater.writer.splatByteAll(' ', indent);
+        try eater.writer.writeAll(commit);
     }
 
     // finish
@@ -207,6 +237,17 @@ pub const Eater = struct {
         for (rem) |char| self.advanceLynColWithByte(char);
         try self.consumeN(rem.len, mode);
         return true;
+    }
+    pub fn consumeFullLine(self: *Eater, gpa: std.mem.Allocator) ![:0]const u8 {
+        var dst = std.Io.Writer.Allocating.init(gpa);
+        _ = try self.reader.streamDelimiterEnding(&dst.writer, '\n');
+        if (self.reader.peekByte() catch |e| switch (e) {
+            error.EndOfStream => '\x00',
+            else => |e2| return e2,
+        } == '\n') try self.reader.streamExact(&dst.writer, 1);
+
+        for (dst.written()) |byte| self.advanceLynColWithByte(byte);
+        return try dst.toOwnedSliceSentinel(0);
     }
 
     const WriteMode = enum { copy, skip };
@@ -336,5 +377,36 @@ test performReplacements {
     )).snap(@src(),
         \\    snap(@src(),<-
         \\error: root/test.zig:1:22: found 'null', but the report expected to find "hello"
+    );
+    try (try testPerformReplacements(gpa, &.{
+        .{
+            .lyn = 1,
+            .col = 10,
+            .expected = "hello",
+            .actual = "goodbye",
+        },
+    },
+        \\    snap(@src(),
+        \\        \\hello
+        \\    );
+    )).snap(@src(),
+        \\    snap(@src(),
+        \\        \\goodbye
+        \\    );
+    );
+    try (try testPerformReplacements(gpa, &.{
+        .{
+            .lyn = 1,
+            .col = 10,
+            .expected = "hello",
+            .actual = "goodbye",
+        },
+    },
+        \\    snap(@src(),
+        \\        \\what's this?
+        \\    );
+    )).snap(@src(),
+        \\    snap(@src(),<-
+        \\error: root/test.zig:3:7: found "what's this?", but the report expected to find "hello"
     );
 }
