@@ -91,6 +91,16 @@ pub const Snapshot = struct {
             return e;
         };
     }
+
+    /// TODO: implement this
+    /// it is a snapshot that prefers to render inline rather than using a multiline string
+    pub fn snapInline(self: *const Snapshot, src: ?std.builtin.SourceLocation, expected: ?[]const u8) !void {
+        _ = src;
+        std.testing.expectEqualStrings(expected orelse "(needs update)", self.actual) catch |e| {
+            std.log.err("Use -Dupdate_snapshots to update snapshots", .{});
+            return e;
+        };
+    }
 };
 
 test Snapshot {
