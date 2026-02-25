@@ -14,7 +14,7 @@ pub fn main() !u8 {
     const args = try std.process.argsAlloc(gpa);
     defer std.process.argsFree(gpa, args);
 
-    var module_name_map = std.StringArrayHashMapUnmanaged([]const u8).empty;
+    var module_name_map = std.StringArrayHashMapUnmanaged(?[]const u8).empty;
     defer module_name_map.deinit(gpa);
     var first_arg: usize = 0;
     for (args[1..]) |arg| {
@@ -22,8 +22,8 @@ pub fn main() !u8 {
             const full = arg["-M".len..];
             const eql = std.mem.indexOfScalar(u8, full, '=') orelse std.debug.panic("bad arg: {s}", .{full});
             const before, const after = .{ full[0..eql], full[eql + 1 ..] };
-            if (try module_name_map.fetchPut(gpa, before, after)) |prev_val| {
-                std.debug.panic("duplicate arg: {s}, previous value={s}", .{ full, prev_val.value });
+            if (try module_name_map.fetchPut(gpa, before, std.fs.path.dirname(after))) |prev_val| {
+                std.debug.panic("duplicate arg: {s}, previous value={s}", .{ full, prev_val.value orelse "/" });
             }
         } else {
             break;
@@ -131,10 +131,10 @@ pub fn main() !u8 {
     return 0;
 }
 
-fn updateOneFile(gpa: std.mem.Allocator, module_path: []const u8, file_path: []const u8, messages: []snapshot.SnapshotMessage) void {
+fn updateOneFile(gpa: std.mem.Allocator, module_path: ?[]const u8, file_path: []const u8, messages: []snapshot.SnapshotMessage) void {
     //     - sort so the earliest line & column numbers are first
     //     - error if the same line number appears multiple times (we can allow it if all the values are the same)
     //     - now we will re-output the whole file into an arraylist, replacing as needed. and we will validate.
     _ = gpa;
-    std.log.info("TODO work: {s}/{s}: {d}", .{ module_path, file_path, messages.len });
+    std.log.info("TODO work: {s}/{s}: {d}", .{ module_path orelse "/", file_path, messages.len });
 }
