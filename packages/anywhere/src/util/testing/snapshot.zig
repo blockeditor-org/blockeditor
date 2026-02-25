@@ -112,7 +112,7 @@ pub fn performReplacements(gpa: std.mem.Allocator, messages: []SnapshotMessage, 
         if (i > 0) {
             const prev_msg = &messages[i - 1];
             if (message.src.line == prev_msg.src.line) {
-                try validateSameLineMessages(eater.filepath, &message, prev_msg);
+                try validateSameLineMessages(eater, &message, prev_msg);
                 continue;
             }
         }
@@ -123,14 +123,12 @@ pub fn performReplacements(gpa: std.mem.Allocator, messages: []SnapshotMessage, 
         var indent: usize = undefined;
         if (try eater.tryConsumeExact(" null", .skip)) {
             if (message.expected != null) {
-                std.log.err("{s}:{d}:{d}: found 'null', but the report expected to find \"{f}\"", .{ eater.filepath, eater.lyn, eater.col, std.zig.fmtString(message.expected.?) });
-                return error.Posted;
+                return eater.postError("{s}:{d}:{d}: found 'null', but the report expected to find \"{f}\"", .{ eater.filepath, eater.lyn, eater.col, std.zig.fmtString(message.expected.?) });
             }
             indent = eater.indent;
         } else {
             // we can use the zig tokenizer
-            std.log.err("TODO impl existing", .{});
-            return error.Posted;
+            return eater.postError("TODO impl existing", .{});
         }
 
         var split = std.mem.splitScalar(u8, message.actual, '\n');
@@ -195,8 +193,7 @@ pub const Eater = struct {
     }
     pub fn consumeExact(self: *Eater, msg: []const u8, mode: WriteMode) !void {
         if (!try self.tryConsumeExact(msg, mode)) {
-            std.log.err("{s}:{d}:{d}: expected exactly \"{f}\"", .{ self.filepath, self.lyn, self.col, std.zig.fmtString(msg) });
-            return error.Posted;
+            return self.postError("{s}:{d}:{d}: expected exactly \"{f}\"", .{ self.filepath, self.lyn, self.col, std.zig.fmtString(msg) });
         }
     }
     pub fn tryConsumeExact(self: *Eater, msg: []const u8, mode: WriteMode) !bool {
@@ -234,36 +231,33 @@ pub const Eater = struct {
     }
 };
 
-fn validateSameLineMessages(whole_path: []const u8, message: *const SnapshotMessage, prev_msg: *const SnapshotMessage) !void {
+fn validateSameLineMessages(eater: *Eater, message: *const SnapshotMessage, prev_msg: *const SnapshotMessage) !void {
     if (message.src.column != prev_msg.src.column) {
-        std.log.err("{s}:{d}:{d}: multiple snapshots in the same line but on different columns (prev at {d}:{d})", .{
-            whole_path,
+        return eater.postError("{s}:{d}:{d}: multiple snapshots in the same line but on different columns (prev at {d}:{d})", .{
+            eater.filepath,
             message.src.line,
             message.src.column,
             prev_msg.src.line,
             prev_msg.src.column,
         });
-        return error.Posted;
     }
     if (!std.mem.eql(u8, message.actual, prev_msg.actual)) {
-        std.log.err("{s}:{d}:{d}: multiple snapshots in the same position but different values for 'actual'.\nthis snapshot:\n====\n{s}\n====\n\nprev snapshot:\n====\n{s}\n====\n", .{
-            whole_path,
+        return eater.postError("{s}:{d}:{d}: multiple snapshots in the same position but different values for 'actual'.\nthis snapshot:\n====\n{s}\n====\n\nprev snapshot:\n====\n{s}\n====\n", .{
+            eater.filepath,
             message.src.line,
             message.src.column,
             message.actual,
             prev_msg.actual,
         });
-        return error.Posted;
     }
     if (!std.mem.eql(u8, message.expected orelse "(needs update)", prev_msg.expected orelse "(needs update)")) {
-        std.log.err("{s}:{d}:{d}: multiple snapshots in the same position but different values for 'expected'.\nthis snapshot:\n====\n{s}\n====\n\nprev snapshot:\n====\n{s}\n====\n", .{
-            whole_path,
+        return eater.postError("{s}:{d}:{d}: multiple snapshots in the same position but different values for 'expected'.\nthis snapshot:\n====\n{s}\n====\n\nprev snapshot:\n====\n{s}\n====\n", .{
+            eater.filepath,
             message.src.line,
             message.src.column,
             message.expected orelse "(needs update)",
             prev_msg.expected orelse "(needs update)",
         });
-        return error.Posted;
     }
     // this message is in the same line as the previous message, but it's okay because they are identical
 }
@@ -329,5 +323,18 @@ test performReplacements {
         \\    snap(@src(),
         \\        \\hello
         \\    );
+    );
+    try (try testPerformReplacements(gpa, &.{
+        .{
+            .lyn = 1,
+            .col = 10,
+            .expected = "hello",
+            .actual = "goodbye",
+        },
+    },
+        \\    snap(@src(), null);
+    )).snap(@src(),
+        \\    snap(@src(),<-
+        \\error: root/test.zig:1:22: found 'null', but the report expected to find "hello"
     );
 }
