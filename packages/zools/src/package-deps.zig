@@ -109,6 +109,7 @@ pub fn main() !u8 {
 
     var zig_env_proc = std.process.Child.init(&.{ zig_arg, "env" }, gpa);
     zig_env_proc.stdout_behavior = .Pipe;
+    zig_env_proc.progress_node = progress;
     try zig_env_proc.spawn();
     const zig_env_output = try zig_env_proc.stdout.?.readToEndAllocOptions(gpa, std.math.maxInt(usize), null, .of(u8), 0);
     defer gpa.free(zig_env_output);
@@ -301,6 +302,7 @@ pub fn main() !u8 {
                 .multi_file => {
                     var hash_finder = std.process.Child.init(&.{ zig_arg, "fetch", "--global-cache-dir", tmp_global_cache_dir_name, tmp_name }, gpa);
                     hash_finder.stdout_behavior = .Pipe;
+                    hash_finder.progress_node = find_hash_node;
                     try hash_finder.spawn();
                     const hash_result = try hash_finder.stdout.?.readToEndAlloc(gpa, 256);
                     defer gpa.free(hash_result);
@@ -403,7 +405,7 @@ fn walkDir(abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHa
                 try walkDir(abs_root, new_sub, paths, gpa, arena);
             },
             else => |ekind| {
-                std.log.warn("skipping file type .{s}", .{@tagName(ekind)});
+                std.log.warn("skipping file type .{s} in {s} / {s}", .{ @tagName(ekind), abs_root, new_sub });
                 continue;
             },
         }
