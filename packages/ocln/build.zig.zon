@@ -1,6 +1,6 @@
 .{
     .name = .ocln,
-    .version = "0.0.1",
+    .version = "0.0.0",
     .dependencies = .{
         .anywhere = .{ .path = "../anywhere" },
         .beui = .{ .path = "../beui" },

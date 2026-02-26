@@ -1,6 +1,6 @@
 .{
     .name = .anywhere,
-    .version = "0.0.1",
+    .version = "0.0.0",
     .dependencies = .{
         .zpool = .{
             .url = "https://github.com/zig-gamedev/zpool/archive/7829cf02f78e8c39e19b802ccb47ed44037299c2.zip",

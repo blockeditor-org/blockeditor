@@ -1,7 +1,7 @@
 .{
     .name = .beui_impl_web,
     .fingerprint = 0xd58592ac7e0c3b75,
-    .version = "0.1.0",
+    .version = "0.0.0",
     .paths = .{
         "",
     },

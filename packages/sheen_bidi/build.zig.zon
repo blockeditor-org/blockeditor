@@ -1,7 +1,7 @@
 .{
     .name = .sheen_bidi,
     .fingerprint = 0x33a13684b47e1918,
-    .version = "0.1.0",
+    .version = "0.0.0",
     .paths = .{
         "",
     },

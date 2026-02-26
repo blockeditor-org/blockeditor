@@ -1,7 +1,7 @@
 .{
     .name = .sponge,
     .fingerprint = 0xf3ce57cbc5241f63,
-    .version = "0.1.0",
+    .version = "0.0.0",
     .paths = .{""},
     .dependencies = .{
         .loadimage = .{ .path = "../../loadimage" },

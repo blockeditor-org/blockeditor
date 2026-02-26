@@ -1,7 +1,7 @@
 .{
     .name = .beui_impl_glfw_wgpu,
     .fingerprint = 0x7a9b147b9bf3667b,
-    .version = "0.1.0",
+    .version = "0.0.0",
     .paths = .{
         "",
     },
