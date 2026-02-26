@@ -1,6 +1,6 @@
 .{
-    .name = .zig3ds,
-    .fingerprint = 0xc718806ec1106b80,
+    .name = .ztools,
+    .fingerprint = 0x37a3a66e32106579,
     .version = "0.0.0",
 
     .dependencies = .{
