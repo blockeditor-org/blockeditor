@@ -26,6 +26,104 @@ const DepQueue = struct {
 
 pub const options: std.Options = .{ .log_level = .debug };
 
+pub fn printError(comptime msg: []const u8, args: anytype) error{Errored} {
+    std.log.err(msg, args);
+    return error.Errored;
+}
+
+const Opts = struct {
+    src_pkgs: []const []const u8,
+    zig_bin: []const u8,
+    dst_dir: []const u8,
+    url_prefix: []const u8,
+    include_global_packages: bool,
+    override_global_packages_dir: ?[]const u8,
+    mode: Mode,
+
+    const Mode = enum { multi_file, single_file };
+
+    pub fn deinit(self: *Opts, gpa: std.mem.Allocator) void {
+        gpa.free(self.src_pkgs);
+    }
+    pub fn parse(gpa: std.mem.Allocator, args: []const []const u8) !Opts {
+        const usage =
+            \\Usage:
+            \\  zig run package-deps.zig -- ...args
+            \\
+            \\Example:
+            \\  zig run package-deps.zig -- --src-dir=. --zig-bin=zig --dst-dir=dst --url-prefix=https://github.com/org/repo/releases/tag/release-id/
+            \\
+            \\Flags:
+            \\  --src-pkg=[src_dir]  / specifies the source directory to search for packages.
+            \\                                 you may specify multiple by repeating this flag.
+            \\  --zig-bin=[zig_bin]  / specifies the path to the zig binary on the system
+            \\  --include-global-packages  / specifies that packages in the global package cache should be included
+            \\  --include-global-packages=[dir]  / manually specify global package dir
+            \\
+            \\For multi-file output:
+            \\  --dst-dir=[dst]  / specifies the output folder. will non-recursively create if it does not exist.
+            \\  --url-prefix=[url-prefix]  / specifies the 
+            \\
+            \\For single-file output:
+            \\  --dst-file=[file].tar  / specifies the output file
+        ;
+        var src_pkgs: std.ArrayList([]const u8) = .empty;
+        defer src_pkgs.deinit(gpa);
+        var zig_bin_opt: ?[]const u8 = null;
+        var dst_dir_opt: ?[]const u8 = null;
+        var url_prefix_opt: ?[]const u8 = null;
+        var include_global_packages = false;
+        var override_global_packages_dir: ?[]const u8 = null;
+        for (args[1..]) |arg| {
+            if (std.mem.startsWith(u8, arg, "--src-pkg=")) {
+                try src_pkgs.append(gpa, arg["--src-pkg=".len..]);
+            } else if (std.mem.startsWith(u8, arg, "--zig-bin=")) {
+                zig_bin_opt = arg["--zig-bin=".len..];
+            } else if (std.mem.startsWith(u8, arg, "--dst-dir=")) {
+                dst_dir_opt = arg["--dst-dir=".len..];
+            } else if (std.mem.startsWith(u8, arg, "--url-prefix=")) {
+                url_prefix_opt = arg["--url-prefix=".len..];
+            } else if (std.mem.startsWith(u8, arg, "--dst-file")) {
+                return printError("todo implement single-file output mode", .{});
+            } else if (std.mem.eql(u8, arg, "--include-global-packages")) {
+                include_global_packages = true;
+            } else if (std.mem.startsWith(u8, arg, "--include-global-packages=")) {
+                include_global_packages = true;
+                override_global_packages_dir = arg["--include-global-packages=".len..];
+            } else {
+                return printError("unexpected arg \"{f}\". usage:\n{s}", .{ std.zig.fmtString(arg), usage });
+            }
+        }
+
+        if (src_pkgs.items.len == 0) {
+            return printError("missing --src-pkg, usage:\n{s}", .{usage});
+        }
+        const zig_arg = zig_bin_opt orelse {
+            return printError("missing --zig-bin, usage:\n{s}", .{usage});
+        };
+        const dst_dir = dst_dir_opt orelse {
+            return printError("missing --dst-dir, usage:\n{s}", .{usage});
+        };
+        const url_prefix = url_prefix_opt orelse {
+            return printError("missing --url-prefix, usage:\n{s}", .{usage});
+        };
+        const mode: Mode = .multi_file;
+
+        const src_pkgs_owned = try src_pkgs.toOwnedSlice(gpa);
+        errdefer gpa.free(src_pkgs_owned);
+
+        return .{
+            .src_pkgs = src_pkgs_owned,
+            .zig_bin = zig_arg,
+            .dst_dir = dst_dir,
+            .url_prefix = url_prefix,
+            .include_global_packages = include_global_packages,
+            .override_global_packages_dir = override_global_packages_dir,
+            .mode = mode,
+        };
+    }
+};
+
 pub fn main() !u8 {
     var gpa_backing = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa_backing.deinit() == .ok);
@@ -37,79 +135,13 @@ pub fn main() !u8 {
     const args = try std.process.argsAlloc(gpa);
     defer std.process.argsFree(gpa, args);
 
-    const usage =
-        \\Usage:
-        \\  zig run package-deps.zig -- ...args
-        \\
-        \\Example:
-        \\  zig run package-deps.zig -- --src-dir=. --zig-bin=zig --dst-dir=dst --url-prefix=https://github.com/org/repo/releases/tag/release-id/
-        \\
-        \\Flags:
-        \\  --src-pkg=[src_dir]  / specifies the source directory to search for packages.
-        \\                                 you may specify multiple by repeating this flag.
-        \\  --zig-bin=[zig_bin]  / specifies the path to the zig binary on the system
-        \\  --include-global-packages  / specifies that packages in the global package cache should be included
-        \\  --include-global-packages=[dir]  / manually specify global package dir
-        \\
-        \\For multi-file output:
-        \\  --dst-dir=[dst]  / specifies the output folder. will non-recursively create if it does not exist.
-        \\  --url-prefix=[url-prefix]  / specifies the 
-        \\
-        \\For single-file output:
-        \\  --dst-file=[file].tar  / specifies the output file
-    ;
-    var src_pkgs: std.ArrayList([]const u8) = .empty;
-    defer src_pkgs.deinit(gpa);
-    var zig_bin_opt: ?[]const u8 = null;
-    var dst_dir_opt: ?[]const u8 = null;
-    var url_prefix_opt: ?[]const u8 = null;
-    var include_global_packages = false;
-    var override_global_packages_dir: ?[]const u8 = null;
-    for (args[1..]) |arg| {
-        if (std.mem.startsWith(u8, arg, "--src-pkg=")) {
-            try src_pkgs.append(gpa, arg["--src-pkg=".len..]);
-        } else if (std.mem.startsWith(u8, arg, "--zig-bin=")) {
-            zig_bin_opt = arg["--zig-bin=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--dst-dir=")) {
-            dst_dir_opt = arg["--dst-dir=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--url-prefix=")) {
-            url_prefix_opt = arg["--url-prefix=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--dst-file")) {
-            std.log.err("todo implement single-file output mode", .{});
-            return 1;
-        } else if (std.mem.eql(u8, arg, "--include-global-packages")) {
-            include_global_packages = true;
-        } else if (std.mem.startsWith(u8, arg, "--include-global-packages=")) {
-            include_global_packages = true;
-            override_global_packages_dir = arg["--include-global-packages=".len..];
-        } else {
-            std.log.err("unexpected arg \"{f}\". usage:\n{s}", .{ std.zig.fmtString(arg), usage });
-            return 1;
-        }
-    }
-
-    if (src_pkgs.items.len == 0) {
-        std.log.err("missing --src-pkg, usage:\n{s}", .{usage});
-        return 1;
-    }
-    const zig_arg = zig_bin_opt orelse {
-        std.log.err("missing --zig-bin, usage:\n{s}", .{usage});
-        return 1;
-    };
-    const dst_dir = dst_dir_opt orelse {
-        std.log.err("missing --dst-dir, usage:\n{s}", .{usage});
-        return 1;
-    };
-    const url_prefix = url_prefix_opt orelse {
-        std.log.err("missing --url-prefix, usage:\n{s}", .{usage});
-        return 1;
-    };
-    const mode: enum { multi_file, single_file } = .multi_file;
+    var opts = try Opts.parse(gpa, args);
+    defer opts.deinit(gpa);
 
     var progress = std.Progress.start(.{});
     defer progress.end();
 
-    var zig_env_proc = std.process.Child.init(&.{ zig_arg, "env" }, gpa);
+    var zig_env_proc = std.process.Child.init(&.{ opts.zig_bin, "env" }, gpa);
     zig_env_proc.stdout_behavior = .Pipe;
     zig_env_proc.progress_node = progress;
     try zig_env_proc.spawn();
@@ -132,10 +164,10 @@ pub fn main() !u8 {
     defer deps.deinit();
 
     {
-        const find_root = progress.start("find_root", src_pkgs.items.len);
+        const find_root = progress.start("find_root", opts.src_pkgs.len);
         defer find_root.end();
 
-        for (src_pkgs.items) |src_pkg| {
+        for (opts.src_pkgs) |src_pkg| {
             const find_one_root = find_root.start(src_pkg, 0);
             defer find_one_root.end();
 
@@ -160,7 +192,7 @@ pub fn main() !u8 {
             const idx = dependency_to_build_zig_zon.items.len;
             std.debug.assert(idx == queue_idx);
             try dependency_to_build_zig_zon.append(gpa, null);
-            dependency_to_build_zig_zon.items[idx] = parseBuildZigZon(gpa, arena, item, &deps, if (include_global_packages) override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
+            dependency_to_build_zig_zon.items[idx] = parseBuildZigZon(gpa, arena, item, &deps, if (opts.include_global_packages) opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
                 has_error = true;
                 std.log.err("{s}: error: {s}", .{ item, @errorName(e) });
                 continue;
@@ -186,7 +218,7 @@ pub fn main() !u8 {
     std.fs.cwd().makeDir(".zig-cache/tmp") catch {};
     const tmp_global_cache_dir_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(std.crypto.random.int(u64));
     std.fs.cwd().makeDir(tmp_global_cache_dir_name) catch {};
-    std.fs.cwd().makeDir(dst_dir) catch {};
+    std.fs.cwd().makeDir(opts.dst_dir) catch {};
 
     // now, we loop over each dependency
     // for each dependency we will generate a tar.gz file for it and we will rerender its build.zig.zon and then we will generate its hash and save that
@@ -283,10 +315,10 @@ pub fn main() !u8 {
 
             var result_package_info_writer: std.Io.Writer.Allocating = .init(dep_bzz.gpa);
             defer result_package_info_writer.deinit();
-            switch (mode) {
+            switch (opts.mode) {
                 .single_file => @panic("TODO for single file we need to decide a name and stuff. path=../name"),
                 .multi_file => {
-                    var hash_finder = std.process.Child.init(&.{ zig_arg, "fetch", "--global-cache-dir", tmp_global_cache_dir_name, tmp_name }, gpa);
+                    var hash_finder = std.process.Child.init(&.{ opts.zig_bin, "fetch", "--global-cache-dir", tmp_global_cache_dir_name, tmp_name }, gpa);
                     hash_finder.stdout_behavior = .Pipe;
                     hash_finder.progress_node = find_hash_node;
                     try hash_finder.spawn();
@@ -301,9 +333,9 @@ pub fn main() !u8 {
                     const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar", .{found_hash});
                     defer gpa.free(found_filename);
 
-                    const rendered_url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ url_prefix, found_filename });
+                    const rendered_url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.url_prefix, found_filename });
                     defer gpa.free(rendered_url);
-                    const rendered_path = try std.fs.path.join(gpa, &.{ dst_dir, found_filename });
+                    const rendered_path = try std.fs.path.join(gpa, &.{ opts.dst_dir, found_filename });
                     defer gpa.free(rendered_path);
 
                     // write to the package info
