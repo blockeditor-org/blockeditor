@@ -42,10 +42,11 @@ pub fn main() !u8 {
         \\  zig run package-deps.zig -- ...args
         \\
         \\Example:
-        \\  zig run package-deps.zig -- --zig-bin=zig --dst-dir=dst --url-prefix=https://github.com/org/repo/releases/tag/release-id/
+        \\  zig run package-deps.zig -- --src-dir=. --zig-bin=zig --dst-dir=dst --url-prefix=https://github.com/org/repo/releases/tag/release-id/
         \\
         \\Flags:
-        \\  --src-dir=[src_dir]  / specifies the source directory to search for packages
+        \\  --src-pkg=[src_dir]  / specifies the source directory to search for packages.
+        \\                                 you may specify multiple by repeating this flag.
         \\  --zig-bin=[zig_bin]  / specifies the path to the zig binary on the system
         \\  --include-global-packages  / specifies that packages in the global package cache should be included
         \\  --include-global-packages=[dir]  / manually specify global package dir
@@ -57,15 +58,16 @@ pub fn main() !u8 {
         \\For single-file output:
         \\  --dst-file=[file].tar  / specifies the output file
     ;
-    var src_dir_opt: ?[]const u8 = null;
+    var src_pkgs: std.ArrayList([]const u8) = .empty;
+    defer src_pkgs.deinit(gpa);
     var zig_bin_opt: ?[]const u8 = null;
     var dst_dir_opt: ?[]const u8 = null;
     var url_prefix_opt: ?[]const u8 = null;
     var include_global_packages = false;
     var override_global_packages_dir: ?[]const u8 = null;
     for (args[1..]) |arg| {
-        if (std.mem.startsWith(u8, arg, "--src-dir=")) {
-            src_dir_opt = arg["--src-dir=".len..];
+        if (std.mem.startsWith(u8, arg, "--src-pkg=")) {
+            try src_pkgs.append(gpa, arg["--src-pkg=".len..]);
         } else if (std.mem.startsWith(u8, arg, "--zig-bin=")) {
             zig_bin_opt = arg["--zig-bin=".len..];
         } else if (std.mem.startsWith(u8, arg, "--dst-dir=")) {
@@ -86,10 +88,10 @@ pub fn main() !u8 {
         }
     }
 
-    const src_dir = src_dir_opt orelse {
-        std.log.err("missing --src-dir, usage:\n{s}", .{usage});
+    if (src_pkgs.items.len == 0) {
+        std.log.err("missing --src-pkg, usage:\n{s}", .{usage});
         return 1;
-    };
+    }
     const zig_arg = zig_bin_opt orelse {
         std.log.err("missing --zig-bin, usage:\n{s}", .{usage});
         return 1;
@@ -129,32 +131,15 @@ pub fn main() !u8 {
     };
     defer deps.deinit();
 
-    var dir = try std.fs.cwd().openDir(src_dir, .{ .iterate = true });
-    var dir_iter = dir.iterate();
-    var has_error = false;
     {
-        const find_root = progress.start("find_root", dir_iter.end_index - dir_iter.index);
+        const find_root = progress.start("find_root", src_pkgs.items.len);
         defer find_root.end();
-        while (try dir_iter.next()) |entry| {
-            const itm = find_root.start(entry.name, 0);
-            defer itm.end();
-            const filepath = try std.fs.path.join(arena, &.{ "packages", entry.name });
-            const fullpath = try std.fs.cwd().realpathAlloc(arena, filepath);
-            const zonpath = try std.fs.path.join(arena, &.{ fullpath, "build.zig.zon" });
 
-            // we will only queue base packages that have a build.zig.zon
-            std.fs.cwd().access(zonpath, .{}) catch |e| switch (e) {
-                error.FileNotFound => {
-                    // skip
-                    continue;
-                },
-                else => |ee| {
-                    has_error = true;
-                    std.log.err("checking {s}: error: {s}", .{ zonpath, @errorName(ee) });
-                    continue;
-                },
-            };
+        for (src_pkgs.items) |src_pkg| {
+            const find_one_root = find_root.start(src_pkg, 0);
+            defer find_one_root.end();
 
+            const fullpath = try std.fs.cwd().realpathAlloc(arena, src_pkg);
             _ = try deps.addAbsolutePath(fullpath);
         }
     }
@@ -162,6 +147,7 @@ pub fn main() !u8 {
     var dependency_to_build_zig_zon: std.ArrayListUnmanaged(?BuildZigZonParseResult) = .empty;
     defer dependency_to_build_zig_zon.deinit(gpa);
     defer for (dependency_to_build_zig_zon.items) |*item| if (item.*) |*ite| ite.deinit();
+    var has_error = false;
 
     {
         const queue_node = progress.start("read_zons", deps.dependency_name_to_index.keys().len);
