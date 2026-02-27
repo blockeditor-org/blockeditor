@@ -442,7 +442,7 @@ fn emitFileInternal(
     // -> which will write to an xz writer (std.compress.flate)
     // -> which will write to the output file
 
-    if (opts.no_include_local or !dep_bzz.is_local) {
+    if (!opts.no_include_local or !dep_bzz.is_local) {
         const rand_int = std.crypto.random.int(u64);
         const tmp_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(rand_int) ++ ".tar";
         {
