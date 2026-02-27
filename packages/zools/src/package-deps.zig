@@ -508,8 +508,6 @@ fn emitFileInternal(
     const find_hash_node = render_dep_node.start("find hash", 0);
     defer find_hash_node.end();
 
-    const overwrite_local_dependency = opts.update_dependency_urls and dep_bzz.can_update_local and efo.context.global_cache_dir != null;
-
     var result_package_info_writer: std.Io.Writer.Allocating = .init(dep_bzz.gpa);
     defer result_package_info_writer.deinit();
     switch (opts.mode) {
@@ -519,7 +517,7 @@ fn emitFileInternal(
                 opts.zig_bin,
                 "fetch",
                 "--global-cache-dir",
-                switch (overwrite_local_dependency) {
+                switch (opts.update_dependency_urls and !dep_bzz.can_update_local and efo.context.global_cache_dir != null) {
                     true => efo.context.global_cache_dir.?,
                     false => efo.context.tmp_global_cache_dir_name,
                 },
@@ -547,7 +545,7 @@ fn emitFileInternal(
     }
     dep_bzz.generated_zon = try result_package_info_writer.toOwnedSlice();
 
-    if (overwrite_local_dependency) {
+    if (opts.update_dependency_urls) {
         const rendered = try renderBuildZigZon(gpa, dep_bzz, df, .source);
         defer gpa.free(rendered);
         const path = try std.fs.path.join(gpa, &.{ dep_abspath, "build.zig.zon" });
