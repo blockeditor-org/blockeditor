@@ -269,7 +269,7 @@ pub fn main() !u8 {
     var opts = try Opts.parse(gpa, args);
     defer opts.deinit(gpa);
 
-    var progress = std.Progress.start(.{});
+    var progress = std.Progress.start(.{ .estimated_total_items = 4 });
     defer progress.end();
 
     const zig_env_output = try exec(gpa, progress, &.{ opts.zig_bin, "env" });
@@ -327,6 +327,8 @@ pub fn main() !u8 {
     std.fs.cwd().makeDir(opts.dst_dir) catch {};
 
     defer {
+        const cleanup = progress.start("clean up", 1);
+        defer cleanup.end();
         std.fs.cwd().deleteTree(tmp_global_cache_dir_name) catch |e| {
             std.log.err("error while deleting global cache dir: {s}", .{@errorName(e)});
         };
