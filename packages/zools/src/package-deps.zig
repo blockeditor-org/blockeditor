@@ -4,23 +4,6 @@ const std = @import("std");
 
 const PackageID = enum(usize) { _ };
 
-// stages:
-// 1. explore and parse zon files:
-//     - abs_path -> exists?
-//     - dependency_id -> bzz
-// 2. sort in dependency order:
-//     - dependency_id[]
-//     - dependency_id -> bzz
-//     - dependency_id -> enum{no, cyclic, yes}
-//     + ideally we will produce an order that allows us to do as much concurrently as possible:
-//        - this means producing an array of just those dependencies with no dependencies themselves
-// 3. emit
-//     - dependency_order[]
-//     - dependency_id -> bzz
-//     + in a thread pool? dependency_id -> atomic(ready_count: u32)
-//     + dependency_id -> dependents[]
-//     + on completion, decrement ready counts of everything that depends on us and append the task
-
 const PackageQueue = struct {
     gpa: std.mem.Allocator,
     dependency_abspath_to_zon: std.StringArrayHashMapUnmanaged(PackageInfo) = .empty,
