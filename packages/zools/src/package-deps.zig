@@ -12,9 +12,8 @@ const PackageID = enum(usize) { _ };
 // --update-readmes: update README.md files in the root of local packages (not global cache packages) to include the
 //   command to fetch the package. eg a line ending with `#zools.install_command` will be replaced with `zig fetch --save=$name $url #zools.install_command`.
 //   warn for each readme that doesn't have the zools.install_command thing.
-// --update-build-zig-zons: update build.zig.zon files in local packages so global packages are installed from the output url rather
-//   than their current url. must be paired with --include-global-packages. leave a comment with the old url.
 // --missing:(remove|skip): if a dependency was not found, should it be removed or ignored? ignore = leave the existing url/hash. remove = unclear.
+// --no-emit-local-packages: if set, skip emitting the local packages and only emit the global ones. that way you can use --update-dependency-urls without also generating the local packages.
 
 const PackageQueue = struct {
     gpa: std.mem.Allocator,
@@ -148,6 +147,8 @@ const Opts = struct {
     url_prefix: []const u8,
     include_global_packages: bool,
     override_global_packages_dir: ?[]const u8,
+    update_dependency_urls: bool,
+    update_root: []const u8,
     mode: Mode,
 
     const Mode = enum { multi_file, single_file };
@@ -171,10 +172,12 @@ const Opts = struct {
             \\ binary on the system
             \\  --include-global-packages  / specifies that packages in the global package cache should be included
             \\  --include-global-packages=[dir]  / manually specify global package dir
+            \\  --update-root=[folder]
             \\
             \\For multi-file output:
             \\  --dst-dir=[dst]  / specifies the output folder. will non-recursively create if it does not exist.
             \\  --url-prefix=[url-prefix]  / specifies the 
+            \\  --update-dependency-urls  / if set, update build.zig.zon files to point to the new generated URLs & hashes
             \\
             \\For single-file output:
             \\  --dst-file=[file].tar  / specifies the output file
@@ -185,6 +188,8 @@ const Opts = struct {
         var dst_dir_opt: ?[]const u8 = null;
         var url_prefix_opt: ?[]const u8 = null;
         var include_global_packages = false;
+        var update_dependency_urls = false;
+        var update_root: []const u8 = ".";
         var override_global_packages_dir: ?[]const u8 = null;
         for (args[1..]) |arg| {
             if (std.mem.startsWith(u8, arg, "--src-pkg=")) {
@@ -202,6 +207,10 @@ const Opts = struct {
             } else if (std.mem.startsWith(u8, arg, "--include-global-packages=")) {
                 include_global_packages = true;
                 override_global_packages_dir = arg["--include-global-packages=".len..];
+            } else if (std.mem.eql(u8, arg, "--update-dependency-urls")) {
+                update_dependency_urls = true;
+            } else if (std.mem.startsWith(u8, arg, "--update-root=")) {
+                update_root = arg["--update-root=".len..];
             } else {
                 return printError("unexpected arg \"{f}\". usage:\n{s}", .{ std.zig.fmtString(arg), usage });
             }
@@ -224,6 +233,10 @@ const Opts = struct {
         const src_pkgs_owned = try src_pkgs.toOwnedSlice(gpa);
         errdefer gpa.free(src_pkgs_owned);
 
+        if (update_dependency_urls and override_global_packages_dir == null) {
+            return printError("missing --include-global-packages, required if using --update-depdendency-urls", .{});
+        }
+
         return .{
             .src_pkgs = src_pkgs_owned,
             .zig_bin = zig_arg,
@@ -231,6 +244,8 @@ const Opts = struct {
             .url_prefix = url_prefix,
             .include_global_packages = include_global_packages,
             .override_global_packages_dir = override_global_packages_dir,
+            .update_dependency_urls = update_dependency_urls,
+            .update_root = update_root,
             .mode = mode,
         };
     }
@@ -257,6 +272,8 @@ const Context = struct {
     global_cache_dir: ?[]const u8,
 
     has_error: bool,
+
+    update_root: []const u8,
 };
 
 pub fn main() !u8 {
@@ -287,6 +304,9 @@ pub fn main() !u8 {
         return printError("expected zig version {s}, got version {s}", .{ @import("builtin").zig_version_string, zig_env_parsed.version });
     }
 
+    const update_root = try std.fs.cwd().realpathAlloc(gpa, opts.update_root);
+    defer gpa.free(update_root);
+
     var context: Context = .{
         .tmp_global_cache_dir_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(std.crypto.random.int(u64)),
         .global_cache_dir = switch (opts.include_global_packages) {
@@ -294,6 +314,7 @@ pub fn main() !u8 {
             false => null,
         },
         .has_error = false,
+        .update_root = update_root,
     };
 
     var deps: PackageQueue = .{ .gpa = gpa };
@@ -321,7 +342,7 @@ pub fn main() !u8 {
             const queue_sub_node = queue_node.start(package_abs_path, 0);
             defer queue_sub_node.end();
 
-            fillDependency(gpa, arena, @enumFromInt(queue_idx), &deps, context.global_cache_dir) catch |e| {
+            fillDependency(gpa, arena, @enumFromInt(queue_idx), &deps, &context) catch |e| {
                 context.has_error = true;
                 std.log.err("{s}: error: {s}", .{ package_abs_path, @errorName(e) });
                 continue;
@@ -460,7 +481,7 @@ fn emitFileInternal(
 
             if (std.mem.eql(u8, file_path, "build.zig.zon")) {
                 // write build.zig.zon
-                const rendered = try renderBuildZigZon(gpa, dep_bzz, df);
+                const rendered = try renderBuildZigZon(gpa, dep_bzz, df, .output);
                 defer gpa.free(rendered);
                 try tar.writeFileBytes("build.zig.zon", rendered, .{});
             } else {
@@ -487,12 +508,23 @@ fn emitFileInternal(
     const find_hash_node = render_dep_node.start("find hash", 0);
     defer find_hash_node.end();
 
+    const overwrite_local_dependency = opts.update_dependency_urls and dep_bzz.can_update_local and efo.context.global_cache_dir != null;
+
     var result_package_info_writer: std.Io.Writer.Allocating = .init(dep_bzz.gpa);
     defer result_package_info_writer.deinit();
     switch (opts.mode) {
         .single_file => @panic("TODO for single file we need to decide a name and stuff. path=../name"),
         .multi_file => {
-            const hash_result = try exec(gpa, find_hash_node, &.{ opts.zig_bin, "fetch", "--global-cache-dir", efo.context.tmp_global_cache_dir_name, tmp_name });
+            const hash_result = try exec(gpa, find_hash_node, &.{
+                opts.zig_bin,
+                "fetch",
+                "--global-cache-dir",
+                switch (overwrite_local_dependency) {
+                    true => efo.context.global_cache_dir.?,
+                    false => efo.context.tmp_global_cache_dir_name,
+                },
+                tmp_name,
+            });
             defer gpa.free(hash_result);
             const found_hash = std.mem.trim(u8, hash_result, " \r\n\t");
             const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar", .{found_hash});
@@ -515,6 +547,14 @@ fn emitFileInternal(
     }
     dep_bzz.generated_zon = try result_package_info_writer.toOwnedSlice();
 
+    if (overwrite_local_dependency) {
+        const rendered = try renderBuildZigZon(gpa, dep_bzz, df, .source);
+        defer gpa.free(rendered);
+        const path = try std.fs.path.join(gpa, &.{ dep_abspath, "build.zig.zon" });
+        defer gpa.free(path);
+        try std.fs.cwd().writeFile(.{ .data = rendered, .sub_path = path });
+    }
+
     // enqueue dependents
     for (dep_bzz.dependents.view(&df.dependents)) |dependent| {
         const dec = df.dependencies_count.ptr(dependent).fetchSub(1, .acq_rel);
@@ -524,7 +564,7 @@ fn emitFileInternal(
     }
 }
 
-fn renderBuildZigZon(gpa: std.mem.Allocator, dep_bzz: *PackageInfo, df: *PackageList) ![]const u8 {
+fn renderBuildZigZon(gpa: std.mem.Allocator, dep_bzz: *PackageInfo, df: *PackageList, mode: enum { output, source }) ![]const u8 {
     if (dep_bzz.ast == null) {
         // uh oh! somehow there's no ast but there is a build.zig.zon file
         std.log.err("no ast but yes build.zig.zon file? how can this happen?", .{});
@@ -537,6 +577,7 @@ fn renderBuildZigZon(gpa: std.mem.Allocator, dep_bzz: *PackageInfo, df: *Package
     // iterate over dependencies, rerender
     for (dep_bzz.dependencies.keys(), dep_bzz.dependencies.values()) |dep_id, node_idx| {
         const other_bzz = df.bzzs.get(dep_id);
+        if (mode == .source and other_bzz.can_update_local) continue;
         if (other_bzz.generated_zon == null) {
             @panic("it should have been generated by now");
         }
@@ -632,6 +673,7 @@ const PackageInfo = struct {
     dependencies: std.AutoArrayHashMapUnmanaged(PackageID, std.zig.Ast.Node.Index),
     dependents: TypesafeSlice(DependentsListIndex, PackageID).Subslice = .{ .start = 0, .len = 0 },
 
+    can_update_local: bool,
     generated_zon: ?[]const u8 = null,
     defined: bool = true,
 
@@ -651,8 +693,9 @@ const exclude_paths = std.StaticStringMap(void).initComptime(.{
     .{ ".DS_Store", {} },
 });
 
-pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_id: PackageID, deps_queue: *PackageQueue, global_cache_path: ?[]const u8) !void {
+pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_id: PackageID, deps_queue: *PackageQueue, context: *const Context) !void {
     const fullpath = deps_queue.getAbsolutePath(package_id);
+    const can_update_local = std.mem.startsWith(u8, fullpath, context.update_root);
     const filepath = try std.fs.path.join(arena, &.{ fullpath, "build.zig.zon" });
     const file = std.fs.cwd().readFileAllocOptions(gpa, filepath, std.math.maxInt(usize), null, .of(u8), 0) catch |e| switch (e) {
         error.FileNotFound => {
@@ -663,6 +706,7 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
                 .zoir = null,
                 .paths = default_paths,
                 .dependencies = .empty,
+                .can_update_local = can_update_local,
             });
             return;
         },
@@ -717,8 +761,8 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
                 // local
                 res_path = try std.fs.path.join(arena, &.{ fullpath, path });
             } else if (dep_parsed.hash) |hash| {
-                if (global_cache_path == null) continue; // global packages excluded
-                res_path = try std.fs.path.join(arena, &.{ global_cache_path.?, "p", hash });
+                if (context.global_cache_dir == null) continue; // global packages excluded
+                res_path = try std.fs.path.join(arena, &.{ context.global_cache_dir.?, "p", hash });
             } else {
                 // error
                 std.log.err("package {s} has neither path nor hash", .{name.get(zoir)});
@@ -760,6 +804,7 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
         .zoir = zoir,
         .paths = parsed.paths orelse default_paths,
         .dependencies = dependencies,
+        .can_update_local = can_update_local,
     });
 }
 
