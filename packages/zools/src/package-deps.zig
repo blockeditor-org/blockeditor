@@ -55,10 +55,80 @@ const DepQueue = struct {
         self.dependency_abspath_to_zon.deinit(self.gpa);
     }
 
-    pub fn finalize(self: *DepQueue) void {
-        self.dependency_abspath_to_zon.entries.slice();
+    pub fn finalize(self: *DepQueue) !DepList {
+        // 1. ensure fully completed
+        for (self.dependency_abspath_to_zon.values()) |*bzz| {
+            if (bzz.* == null) {
+                return error.Errored;
+            }
+        }
+
+        var dependents_count: TypesafeSlice(DependencyId, std.atomic.Value(usize)) = try .alloc(self.gpa, self.len());
+        errdefer dependents_count.free(self.gpa);
+        dependents_count.memset(.init(0));
+
+        var root_dependencies: usize = 0;
+        var dependents_total: usize = 0;
+
+        for (self.dependency_abspath_to_zon.values()) |*bzz| {
+            for (bzz.*.?.dependencies.keys()) |dep| {
+                dependents_count.ptr(dep).raw += 1;
+                dependents_total += 1;
+            }
+            if (bzz.*.?.dependencies.count() == 0) {
+                root_dependencies += 1;
+                dependents_total += 1;
+            }
+        }
+
+        const dependents = try self.gpa.alloc(DependencyId, dependents_total);
+        errdefer self.gpa.free(dependents);
+
+        var running_total = root_dependencies;
+        for (self.dependency_abspath_to_zon.values(), 0..) |*bzz, i| {
+            const dep_id: DependencyId = @enumFromInt(i);
+            bzz.*.?.dependents.start = running_total;
+            running_total += dependents_count.ptr(dep_id).raw;
+        }
+
+        var root: TypesafeSlice(DependentsListIndex, DependencyId).Subslice = .{ .start = 0, .len = 0 };
+        for (self.dependency_abspath_to_zon.values(), 0..) |*bzz, i| {
+            const dependent_id: DependencyId = @enumFromInt(i);
+            if (bzz.*.?.dependencies.keys().len == 0) {
+                dependents[root.start + root.len] = dependent_id;
+                root.len += 1;
+            } else for (bzz.*.?.dependencies.keys()) |dependency_id| {
+                const zon = self.getZon(dependency_id).?;
+                dependents[zon.dependents.start + zon.dependents.len] = dependent_id;
+                zon.dependents.len += 1;
+            }
+        }
+
         std.debug.assert(!self.finalized);
         self.finalized = true;
+
+        return .{
+            .gpa = self.gpa,
+            .dependents = .wrap(dependents),
+            .dependents_count = dependents_count,
+            .root_dependencies = root,
+            .abspaths = .wrap(self.dependency_abspath_to_zon.keys()),
+            .bzzs = .wrap(self.dependency_abspath_to_zon.values()),
+        };
+    }
+};
+const DependentsListIndex = enum(u32) { _ };
+const DepList = struct {
+    gpa: std.mem.Allocator,
+    dependents: TypesafeSlice(DependentsListIndex, DependencyId),
+    dependents_count: TypesafeSlice(DependencyId, std.atomic.Value(usize)), // when you decrement this to 0, spawn a new task
+    root_dependencies: TypesafeSlice(DependentsListIndex, DependencyId).Subslice,
+    abspaths: TypesafeSlice(DependencyId, []const u8),
+    bzzs: TypesafeSlice(DependencyId, ?BuildZigZonParseResult), // interestingly, these are already known to not be null
+
+    pub fn deinit(self: *DepList) void {
+        self.dependents.free(self.gpa);
+        self.dependents_count.free(self.gpa);
     }
 };
 
@@ -257,7 +327,8 @@ pub fn main() !u8 {
         }
     }
 
-    packager.deps.finalize();
+    var df = try packager.deps.finalize();
+    defer df.deinit();
 
     packager.dependency_order = try std.ArrayListUnmanaged(DependencyId).initCapacity(gpa, packager.deps.len());
     packager.dependency_to_in_order = try gpa.alloc(DtioEnum, packager.deps.len());
@@ -357,6 +428,7 @@ pub fn main() !u8 {
                         var reader_buf: [1024]u8 = undefined;
                         var file_reader = file.reader(&reader_buf);
                         // note: not using writeFile so we don't copy mtime and such
+                        // TODO: save +x permission
                         try tar.writeFileStream(file_path, try file_reader.getSize(), &file_reader.interface, .{});
                     }
                 }
@@ -508,6 +580,7 @@ const BuildZigZonParseResult = struct {
     zoir: ?std.zig.Zoir,
     paths: []const []const u8,
     dependencies: std.AutoArrayHashMapUnmanaged(DependencyId, std.zig.Ast.Node.Index),
+    dependents: TypesafeSlice(DependentsListIndex, DependencyId).Subslice = .{ .start = 0, .len = 0 },
 
     generated_zon: ?[]const u8 = null,
 
@@ -664,4 +737,28 @@ fn structFields(zoir: std.zig.Zoir, node: std.zig.Zoir.Node.Index) !@FieldType(s
         else => return error.WrongType,
     };
     return fields;
+}
+
+pub fn TypesafeSlice(comptime Index: type, comptime Child: type) type {
+    return struct {
+        value: []Child,
+        pub const Subslice = struct { start: usize, len: usize };
+
+        pub fn alloc(gpa: std.mem.Allocator, len: usize) !@This() {
+            const value = try gpa.alloc(Child, len);
+            return .wrap(value);
+        }
+        pub fn wrap(value: []Child) @This() {
+            return .{ .value = value };
+        }
+        pub fn free(self: *@This(), gpa: std.mem.Allocator) void {
+            gpa.free(self.value);
+        }
+        pub fn memset(self: *@This(), value: Child) void {
+            @memset(self.value, value);
+        }
+        pub fn ptr(self: *@This(), index: Index) *Child {
+            return &self.value[@intFromEnum(index)];
+        }
+    };
 }
