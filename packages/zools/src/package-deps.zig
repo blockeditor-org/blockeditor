@@ -233,7 +233,7 @@ const Opts = struct {
         const src_pkgs_owned = try src_pkgs.toOwnedSlice(gpa);
         errdefer gpa.free(src_pkgs_owned);
 
-        if (update_dependency_urls and override_global_packages_dir == null) {
+        if (update_dependency_urls and !include_global_packages) {
             return printError("missing --include-global-packages, required if using --update-depdendency-urls", .{});
         }
 
