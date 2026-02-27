@@ -325,6 +325,7 @@ pub fn main() !u8 {
     const tmp_global_cache_dir_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(std.crypto.random.int(u64));
     std.fs.cwd().makeDir(tmp_global_cache_dir_name) catch {};
     std.fs.cwd().makeDir(opts.dst_dir) catch {};
+    // TODO: std.fs.cwd().deleteTree(tmp_global_cache_dir_name)
 
     // now, we loop over each dependency
     // for each dependency we will generate a tar.gz file for it and we will rerender its build.zig.zon and then we will generate its hash and save that
@@ -332,11 +333,9 @@ pub fn main() !u8 {
         const generate_output_node = progress.start("generate output", df.abspaths.len());
         defer generate_output_node.end();
 
-        var generate_queue: std.ArrayList(DependencyId) = try .initCapacity(gpa, df.bzzs.len());
-        defer generate_queue.deinit(gpa);
-        var generate_queue_index: usize = 0;
-
-        generate_queue.appendSliceAssumeCapacity(df.root_dependencies.view(&df.dependents));
+        var pool: std.Thread.Pool = undefined;
+        try pool.init(.{ .allocator = gpa });
+        defer pool.deinit();
 
         const efo: EmitFileOpts = .{
             .df = &df,
@@ -344,12 +343,11 @@ pub fn main() !u8 {
             .has_error = &has_error,
             .opts = &opts,
             .tmp_global_cache_dir_name = tmp_global_cache_dir_name,
-            .generate_queue = &generate_queue,
+            .pool = &pool,
         };
 
-        while (generate_queue_index < generate_queue.items.len) : (generate_queue_index += 1) {
-            const dep = generate_queue.items[generate_queue_index];
-            try emitFile(dep, &efo);
+        for (df.root_dependencies.view(&df.dependents)) |dependent| {
+            try pool.spawn(emitFile, .{ dependent, &efo });
         }
     }
 
@@ -363,9 +361,19 @@ const EmitFileOpts = struct {
     has_error: *bool,
     opts: *const Opts,
     tmp_global_cache_dir_name: []const u8,
-    generate_queue: *std.ArrayList(DependencyId),
+    pool: *std.Thread.Pool,
 };
 fn emitFile(
+    dep: DependencyId,
+    efo: *const EmitFileOpts,
+) void {
+    emitFileInternal(dep, efo) catch |e| {
+        std.log.err("emitFileInternal failed: {s}", .{@errorName(e)});
+        efo.has_error.* = true;
+        return;
+    };
+}
+fn emitFileInternal(
     dep: DependencyId,
     efo: *const EmitFileOpts,
 ) !void {
@@ -374,7 +382,7 @@ fn emitFile(
     const has_error = efo.has_error;
     const opts = efo.opts;
     const tmp_global_cache_dir_name = efo.tmp_global_cache_dir_name;
-    const generate_queue = efo.generate_queue;
+    const pool = efo.pool;
 
     const gpa = df.gpa;
     const dep_abspath = df.abspaths.get(dep);
@@ -497,7 +505,7 @@ fn emitFile(
     for (dep_bzz.dependents.view(&df.dependents)) |dependent| {
         const dec = df.dependencies_count.ptr(dependent).fetchSub(1, .acq_rel);
         if (dec == 1) { // 1 means we decremented to 0
-            generate_queue.appendAssumeCapacity(dependent);
+            try pool.spawn(emitFile, .{ dependent, efo });
         }
     }
 }
