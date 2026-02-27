@@ -244,7 +244,7 @@ const Opts = struct {
 pub fn exec(gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const []const u8) ![:0]const u8 {
     var zig_env_proc = std.process.Child.init(args, gpa);
     zig_env_proc.stdout_behavior = .Pipe;
-    zig_env_proc.progress_node = progress;
+    zig_env_proc.progress_node = progress; // TODO: looks like this doesn't work on windows in 0.15 but will in 0.16
     try zig_env_proc.spawn();
     const zig_env_output = try zig_env_proc.stdout.?.readToEndAllocOptions(gpa, std.math.maxInt(usize), null, .of(u8), 0);
     errdefer gpa.free(zig_env_output);
