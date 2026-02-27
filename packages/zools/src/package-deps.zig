@@ -255,6 +255,15 @@ pub fn exec(gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const [
     return zig_env_output;
 }
 
+const Context = struct {
+    tmp_global_cache_dir_name: []const u8,
+
+    /// null if global packages should not be included
+    global_cache_dir: ?[]const u8,
+
+    has_error: bool,
+};
+
 pub fn main() !u8 {
     var gpa_backing = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa_backing.deinit() == .ok);
@@ -283,6 +292,15 @@ pub fn main() !u8 {
         return printError("expected zig version {s}, got version {s}", .{ @import("builtin").zig_version_string, zig_env_parsed.version });
     }
 
+    var context: Context = .{
+        .tmp_global_cache_dir_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(std.crypto.random.int(u64)),
+        .global_cache_dir = switch (opts.include_global_packages) {
+            true => opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir,
+            false => null,
+        },
+        .has_error = false,
+    };
+
     var deps: PackageQueue = .{ .gpa = gpa };
     defer deps.deinit();
 
@@ -298,7 +316,6 @@ pub fn main() !u8 {
             _ = try deps.addAbsolutePath(fullpath);
         }
     }
-    var has_error = false;
 
     {
         const queue_node = progress.start("explore", deps.dependency_abspath_to_zon.keys().len);
@@ -309,8 +326,8 @@ pub fn main() !u8 {
             const queue_sub_node = queue_node.start(package_abs_path, 0);
             defer queue_sub_node.end();
 
-            parseBuildZigZon(gpa, arena, @enumFromInt(queue_idx), &deps, if (opts.include_global_packages) opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
-                has_error = true;
+            parseBuildZigZon(gpa, arena, @enumFromInt(queue_idx), &deps, context.global_cache_dir) catch |e| {
+                context.has_error = true;
                 std.log.err("{s}: error: {s}", .{ package_abs_path, @errorName(e) });
                 continue;
             };
@@ -322,14 +339,13 @@ pub fn main() !u8 {
 
     std.fs.cwd().makeDir(".zig-cache") catch {};
     std.fs.cwd().makeDir(".zig-cache/tmp") catch {};
-    const tmp_global_cache_dir_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(std.crypto.random.int(u64));
-    std.fs.cwd().makeDir(tmp_global_cache_dir_name) catch {};
+    std.fs.cwd().makeDir(context.tmp_global_cache_dir_name) catch {};
     std.fs.cwd().makeDir(opts.dst_dir) catch {};
 
     defer {
         const cleanup = progress.start("clean up", 1);
         defer cleanup.end();
-        std.fs.cwd().deleteTree(tmp_global_cache_dir_name) catch |e| {
+        std.fs.cwd().deleteTree(context.tmp_global_cache_dir_name) catch |e| {
             std.log.err("error while deleting global cache dir: {s}", .{@errorName(e)});
         };
     }
@@ -347,10 +363,9 @@ pub fn main() !u8 {
         const efo: EmitFileOpts = .{
             .df = &df,
             .generate_output_node = generate_output_node,
-            .has_error = &has_error,
             .opts = &opts,
-            .tmp_global_cache_dir_name = tmp_global_cache_dir_name,
             .pool = &pool,
+            .context = &context,
         };
 
         for (df.root_dependencies.view(&df.dependents)) |dependent| {
@@ -358,17 +373,16 @@ pub fn main() !u8 {
         }
     }
 
-    if (has_error) return 1;
+    if (context.has_error) return 1;
     return 0;
 }
 
 const EmitFileOpts = struct {
     df: *PackageList,
     generate_output_node: std.Progress.Node,
-    has_error: *bool,
     opts: *const Opts,
-    tmp_global_cache_dir_name: []const u8,
     pool: *std.Thread.Pool,
+    context: *Context,
 };
 fn emitFile(
     dep: PackageID,
@@ -376,7 +390,7 @@ fn emitFile(
 ) void {
     emitFileInternal(dep, efo) catch |e| {
         std.log.err("emitFileInternal failed: {s}", .{@errorName(e)});
-        efo.has_error.* = true;
+        efo.context.has_error = true;
         return;
     };
 }
@@ -386,9 +400,7 @@ fn emitFileInternal(
 ) !void {
     const df = efo.df;
     const generate_output_node = efo.generate_output_node;
-    const has_error = efo.has_error;
     const opts = efo.opts;
-    const tmp_global_cache_dir_name = efo.tmp_global_cache_dir_name;
     const pool = efo.pool;
 
     const gpa = df.gpa;
@@ -434,7 +446,7 @@ fn emitFileInternal(
                 walkDir(df.abspaths.get(dep), path, &seen_paths, gpa) catch |e| switch (e) {
                     else => |ee| {
                         std.log.err("failed to check path {s} / {s}", .{ path, @errorName(ee) });
-                        has_error.* = true;
+                        efo.context.has_error = true;
                         continue;
                     },
                 };
@@ -485,7 +497,7 @@ fn emitFileInternal(
     switch (opts.mode) {
         .single_file => @panic("TODO for single file we need to decide a name and stuff. path=../name"),
         .multi_file => {
-            const hash_result = try exec(gpa, find_hash_node, &.{ opts.zig_bin, "fetch", "--global-cache-dir", tmp_global_cache_dir_name, tmp_name });
+            const hash_result = try exec(gpa, find_hash_node, &.{ opts.zig_bin, "fetch", "--global-cache-dir", efo.context.tmp_global_cache_dir_name, tmp_name });
             defer gpa.free(hash_result);
             const found_hash = std.mem.trim(u8, hash_result, " \r\n\t");
             const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar", .{found_hash});
