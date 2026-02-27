@@ -17,6 +17,9 @@ const PackageID = enum(usize) { _ };
 // Usage modes:
 //   To gather all URL dependencies for uploading onto your own server, and update local packages to use the new URL:
 //     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix=$URL_PREFIX --include-global-packages --no-include-local --update-dependency-urls --update-root=.
+//     TODO: we should run this:
+//     - first, we need to fix `zig build --fetch=all` causing a build error
+//     - also, we need to make package-deps output compressed files. because the compression ratio is like 80%, huge waste of network to not compress.
 //   To gather all local packages into seperate tar files and update readmes to point to where to download them:
 //     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix-$URL_PREFIX --update-readmes --update-root=.
 //   To gather everything into one .tar file so you can build depending only on the zig compiler:
