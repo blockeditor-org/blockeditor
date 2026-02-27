@@ -340,9 +340,7 @@ pub fn main() !u8 {
 
         while (generate_queue_index < generate_queue.items.len) : (generate_queue_index += 1) {
             const dep = generate_queue.items[generate_queue_index];
-            try emitFile(dep, &df, generate_output_node, gpa, arena, &has_error, &opts, tmp_global_cache_dir_name, &generate_queue);
-            // TODO: to make thread-safe for use in std.Thread.Pool, we must remove the arena as they are not thread-safe
-            // also we shouldn't have so many arguments. we should really just have df and dep probably.
+            try emitFile(dep, &df, generate_output_node, gpa, &has_error, &opts, tmp_global_cache_dir_name, &generate_queue);
         }
     }
 
@@ -350,7 +348,7 @@ pub fn main() !u8 {
     return 0;
 }
 
-fn emitFile(dep: DependencyId, df: *DepList, generate_output_node: std.Progress.Node, gpa: std.mem.Allocator, arena: std.mem.Allocator, has_error: *bool, opts: *const Opts, tmp_global_cache_dir_name: []const u8, generate_queue: *std.ArrayList(DependencyId)) !void {
+fn emitFile(dep: DependencyId, df: *DepList, generate_output_node: std.Progress.Node, gpa: std.mem.Allocator, has_error: *bool, opts: *const Opts, tmp_global_cache_dir_name: []const u8, generate_queue: *std.ArrayList(DependencyId)) !void {
     const dep_abspath = df.abspaths.get(dep);
     const render_dep_node = generate_output_node.start(dep_abspath, 4);
     defer render_dep_node.end();
@@ -383,13 +381,14 @@ fn emitFile(dep: DependencyId, df: *DepList, generate_output_node: std.Progress.
 
         var seen_paths: std.StringArrayHashMapUnmanaged(void) = .empty;
         defer seen_paths.deinit(gpa);
+        defer for (seen_paths.keys()) |key| gpa.free(key);
         {
             const walk_dir_node = render_dep_node.start("walk dirs", dep_bzz.paths.len);
             defer walk_dir_node.end();
             for (dep_bzz.paths) |path| {
                 const walk_path_node = walk_dir_node.start(path, path.len);
                 defer walk_path_node.end();
-                walkDir(df.abspaths.get(dep), path, &seen_paths, gpa, arena) catch |e| switch (e) {
+                walkDir(df.abspaths.get(dep), path, &seen_paths, gpa) catch |e| switch (e) {
                     else => |ee| {
                         std.log.err("failed to check path {s} / {s}", .{ path, @errorName(ee) });
                         has_error.* = true;
@@ -411,7 +410,7 @@ fn emitFile(dep: DependencyId, df: *DepList, generate_output_node: std.Progress.
 
             if (std.mem.eql(u8, file_path, "build.zig.zon")) {
                 // write build.zig.zon
-                const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, df);
+                const rendered = try renderBuildZigZon(gpa, dep_bzz, df);
                 defer gpa.free(rendered);
                 try tar.writeFileBytes("build.zig.zon", rendered, .{});
             } else {
@@ -475,8 +474,7 @@ fn emitFile(dep: DependencyId, df: *DepList, generate_output_node: std.Progress.
     }
 }
 
-fn renderBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, dep_bzz: *BuildZigZonParseResult, df: *DepList) ![]const u8 {
-    _ = arena;
+fn renderBuildZigZon(gpa: std.mem.Allocator, dep_bzz: *BuildZigZonParseResult, df: *DepList) ![]const u8 {
     if (dep_bzz.ast == null) {
         // uh oh! somehow there's no ast but there is a build.zig.zon file
         std.log.err("no ast but yes build.zig.zon file? how can this happen?", .{});
@@ -507,14 +505,18 @@ fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
 
-fn walkDir(abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHashMapUnmanaged(void), gpa: std.mem.Allocator, arena: std.mem.Allocator) !void {
+fn walkDir(abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHashMapUnmanaged(void), gpa: std.mem.Allocator) !void {
     const fullpath = try std.fs.path.join(gpa, &.{ abs_root, sub_path });
     defer gpa.free(fullpath);
 
     var pathdir = std.fs.openDirAbsolute(fullpath, .{ .iterate = true }) catch |e| switch (e) {
         error.FileNotFound => return,
         error.NotDir => {
-            try paths.put(gpa, try arena.dupe(u8, sub_path), {});
+            const gpres = try paths.getOrPut(gpa, sub_path);
+            if (!gpres.found_existing) {
+                gpres.key_ptr.* = try gpa.dupe(u8, sub_path);
+                gpres.value_ptr.* = {};
+            }
             return;
         },
         else => |ee| {
@@ -529,14 +531,19 @@ fn walkDir(abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHa
         if (exclude_paths.get(entry.name) != null) {
             continue; // skip dir
         }
-        const new_sub = try std.fs.path.join(arena, &.{ sub_path, entry.name });
+        const new_sub = try std.fs.path.join(gpa, &.{ sub_path, entry.name });
+        defer gpa.free(new_sub);
         switch (entry.kind) {
             .file => {
-                try paths.put(gpa, new_sub, {});
+                const gpres = try paths.getOrPut(gpa, new_sub);
+                if (!gpres.found_existing) {
+                    gpres.key_ptr.* = try gpa.dupe(u8, new_sub);
+                    gpres.value_ptr.* = {};
+                }
             },
             .directory => {
                 // iterate
-                try walkDir(abs_root, new_sub, paths, gpa, arena);
+                try walkDir(abs_root, new_sub, paths, gpa);
             },
             else => |ekind| {
                 std.log.warn("skipping file type .{s} in {s} / {s}", .{ @tagName(ekind), abs_root, new_sub });
