@@ -338,9 +338,18 @@ pub fn main() !u8 {
 
         generate_queue.appendSliceAssumeCapacity(df.root_dependencies.view(&df.dependents));
 
+        const efo: EmitFileOpts = .{
+            .df = &df,
+            .generate_output_node = generate_output_node,
+            .has_error = &has_error,
+            .opts = &opts,
+            .tmp_global_cache_dir_name = tmp_global_cache_dir_name,
+            .generate_queue = &generate_queue,
+        };
+
         while (generate_queue_index < generate_queue.items.len) : (generate_queue_index += 1) {
             const dep = generate_queue.items[generate_queue_index];
-            try emitFile(dep, &df, generate_output_node, gpa, &has_error, &opts, tmp_global_cache_dir_name, &generate_queue);
+            try emitFile(dep, &efo);
         }
     }
 
@@ -348,7 +357,26 @@ pub fn main() !u8 {
     return 0;
 }
 
-fn emitFile(dep: DependencyId, df: *DepList, generate_output_node: std.Progress.Node, gpa: std.mem.Allocator, has_error: *bool, opts: *const Opts, tmp_global_cache_dir_name: []const u8, generate_queue: *std.ArrayList(DependencyId)) !void {
+const EmitFileOpts = struct {
+    df: *DepList,
+    generate_output_node: std.Progress.Node,
+    has_error: *bool,
+    opts: *const Opts,
+    tmp_global_cache_dir_name: []const u8,
+    generate_queue: *std.ArrayList(DependencyId),
+};
+fn emitFile(
+    dep: DependencyId,
+    efo: *const EmitFileOpts,
+) !void {
+    const df = efo.df;
+    const generate_output_node = efo.generate_output_node;
+    const has_error = efo.has_error;
+    const opts = efo.opts;
+    const tmp_global_cache_dir_name = efo.tmp_global_cache_dir_name;
+    const generate_queue = efo.generate_queue;
+
+    const gpa = df.gpa;
     const dep_abspath = df.abspaths.get(dep);
     const render_dep_node = generate_output_node.start(dep_abspath, 4);
     defer render_dep_node.end();
