@@ -7,7 +7,14 @@ const PackageID = enum(usize) { _ };
 // stages:
 // 1. explore dependency tree, parse build.zig.zon files
 // 2. output named .tar.gz files
-// 3. TODO: update README.md files in repo (if --update-readme is passed) (not for global cache dependencies)
+
+// TODO:
+// --update-readmes: update README.md files in the root of local packages (not global cache packages) to include the
+//   command to fetch the package. eg a line ending with `#zools.install_command` will be replaced with `zig fetch --save=$name $url #zools.install_command`.
+//   warn for each readme that doesn't have the zools.install_command thing.
+// --update-build-zig-zons: update build.zig.zon files in local packages so global packages are installed from the output url rather
+//   than their current url. must be paired with --include-global-packages. leave a comment with the old url.
+// --missing:(remove|skip): if a dependency was not found, should it be removed or ignored? ignore = leave the existing url/hash. remove = unclear.
 
 const PackageQueue = struct {
     gpa: std.mem.Allocator,
@@ -719,7 +726,7 @@ pub fn parseBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, packag
             }
             const res_real = std.fs.cwd().realpathAlloc(arena, res_path.?) catch |e| switch (e) {
                 error.FileNotFound => {
-                    std.log.warn("missing path .{s} = {s}", .{ name.get(zoir), res_path.? });
+                    std.log.warn("missing path .{s} = {s} / maybe you need to run `zig build --fetch=all`?", .{ name.get(zoir), res_path.? });
                     continue; // skip this one ig?
                 },
                 else => |ee| {
