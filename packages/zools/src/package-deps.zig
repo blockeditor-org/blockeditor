@@ -273,9 +273,12 @@ pub fn main() !u8 {
                 var out_file_buf: [1024]u8 = undefined;
                 var out_file_writer = out_file.writer(&out_file_buf);
 
-                // TODO: enable compression. it looks like it will be in 0.16.0:
-                // https://codeberg.org/ziglang/zig/src/commit/56253d9e31c0576f024d95929a8fe26428b35176/lib/std/compress/flate/Compress.zig
-                // in 0.15.0, it doesn't work: https://github.com/ziglang/zig/issues/24973
+                if (comptime !std.mem.eql(u8, @import("builtin").zig_version_string, "0.15.2")) {
+                    // TODO: enable compression. it looks like it will be in 0.16.0:
+                    // https://codeberg.org/ziglang/zig/src/commit/56253d9e31c0576f024d95929a8fe26428b35176/lib/std/compress/flate/Compress.zig
+                    // in 0.15.0, it doesn't work: https://github.com/ziglang/zig/issues/24973
+                    @compileError("TODO: enable compression");
+                }
 
                 var tar: std.tar.Writer = .{ .underlying_writer = &out_file_writer.interface };
 
