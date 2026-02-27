@@ -321,7 +321,7 @@ pub fn main() !u8 {
             const queue_sub_node = queue_node.start(package_abs_path, 0);
             defer queue_sub_node.end();
 
-            parseBuildZigZon(gpa, arena, @enumFromInt(queue_idx), &deps, context.global_cache_dir) catch |e| {
+            fillDependency(gpa, arena, @enumFromInt(queue_idx), &deps, context.global_cache_dir) catch |e| {
                 context.has_error = true;
                 std.log.err("{s}: error: {s}", .{ package_abs_path, @errorName(e) });
                 continue;
@@ -651,7 +651,7 @@ const exclude_paths = std.StaticStringMap(void).initComptime(.{
     .{ ".DS_Store", {} },
 });
 
-pub fn parseBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_id: PackageID, deps_queue: *PackageQueue, global_cache_path: ?[]const u8) !void {
+pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_id: PackageID, deps_queue: *PackageQueue, global_cache_path: ?[]const u8) !void {
     const fullpath = deps_queue.getAbsolutePath(package_id);
     const filepath = try std.fs.path.join(arena, &.{ fullpath, "build.zig.zon" });
     const file = std.fs.cwd().readFileAllocOptions(gpa, filepath, std.math.maxInt(usize), null, .of(u8), 0) catch |e| switch (e) {
