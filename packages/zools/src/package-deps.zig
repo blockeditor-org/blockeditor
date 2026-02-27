@@ -23,27 +23,28 @@ const DependencyId = enum(usize) { _ };
 
 const DepQueue = struct {
     gpa: std.mem.Allocator,
-    dependency_abspath_to_zon: std.StringArrayHashMapUnmanaged(?BuildZigZonParseResult) = .empty,
+    dependency_abspath_to_zon: std.StringArrayHashMapUnmanaged(BuildZigZonParseResult) = .empty,
     finalized: bool = false,
 
     pub fn addAbsolutePath(self: *DepQueue, path: []const u8) !DependencyId {
         std.debug.assert(!self.finalized);
         const gpres = try self.dependency_abspath_to_zon.getOrPut(self.gpa, path);
         if (!gpres.found_existing) {
-            gpres.value_ptr.* = null;
+            gpres.value_ptr.* = undefined;
+            gpres.value_ptr.defined = false;
         }
         return @enumFromInt(gpres.index);
     }
     pub fn getAbsolutePath(self: *DepQueue, id: DependencyId) []const u8 {
         return self.dependency_abspath_to_zon.keys()[@intFromEnum(id)];
     }
-    pub fn getZon(self: *DepQueue, id: DependencyId) ?*BuildZigZonParseResult {
-        if (self.dependency_abspath_to_zon.values()[@intFromEnum(id)]) |*value| return value;
-        return null;
+    pub fn getZon(self: *DepQueue, id: DependencyId) *BuildZigZonParseResult {
+        return &self.dependency_abspath_to_zon.values()[@intFromEnum(id)];
     }
     pub fn setZon(self: *DepQueue, id: DependencyId, value: BuildZigZonParseResult) void {
         const ptr = &self.dependency_abspath_to_zon.values()[@intFromEnum(id)];
-        std.debug.assert(ptr.* == null); // tried to overwrite package zon
+        std.debug.assert(!ptr.defined); // tried to overwrite package zon
+        std.debug.assert(value.defined);
         ptr.* = value;
     }
     pub fn len(self: *DepQueue) usize {
@@ -51,31 +52,31 @@ const DepQueue = struct {
     }
 
     pub fn deinit(self: *DepQueue) void {
-        for (self.dependency_abspath_to_zon.values()) |*item| if (item.*) |*ite| ite.deinit();
+        for (self.dependency_abspath_to_zon.values()) |*item| if (item.defined) item.deinit();
         self.dependency_abspath_to_zon.deinit(self.gpa);
     }
 
     pub fn finalize(self: *DepQueue) !DepList {
         // 1. ensure fully completed
         for (self.dependency_abspath_to_zon.values()) |*bzz| {
-            if (bzz.* == null) {
+            if (!bzz.defined) {
                 return error.Errored;
             }
         }
 
-        var dependents_count: TypesafeSlice(DependencyId, std.atomic.Value(usize)) = try .alloc(self.gpa, self.len());
-        errdefer dependents_count.free(self.gpa);
-        dependents_count.memset(.init(0));
+        var dependents_count: TypesafeSlice(DependencyId, usize) = try .alloc(self.gpa, self.len());
+        defer dependents_count.free(self.gpa);
+        dependents_count.memset(0);
 
         var root_dependencies: usize = 0;
         var dependents_total: usize = 0;
 
         for (self.dependency_abspath_to_zon.values()) |*bzz| {
-            for (bzz.*.?.dependencies.keys()) |dep| {
-                dependents_count.ptr(dep).raw += 1;
+            for (bzz.dependencies.keys()) |dep| {
+                dependents_count.ptr(dep).* += 1;
                 dependents_total += 1;
             }
-            if (bzz.*.?.dependencies.count() == 0) {
+            if (bzz.dependencies.count() == 0) {
                 root_dependencies += 1;
                 dependents_total += 1;
             }
@@ -87,21 +88,27 @@ const DepQueue = struct {
         var running_total = root_dependencies;
         for (self.dependency_abspath_to_zon.values(), 0..) |*bzz, i| {
             const dep_id: DependencyId = @enumFromInt(i);
-            bzz.*.?.dependents.start = running_total;
-            running_total += dependents_count.ptr(dep_id).raw;
+            bzz.dependents.start = running_total;
+            running_total += dependents_count.get(dep_id);
         }
 
         var root: TypesafeSlice(DependentsListIndex, DependencyId).Subslice = .{ .start = 0, .len = 0 };
         for (self.dependency_abspath_to_zon.values(), 0..) |*bzz, i| {
             const dependent_id: DependencyId = @enumFromInt(i);
-            if (bzz.*.?.dependencies.keys().len == 0) {
+            if (bzz.dependencies.keys().len == 0) {
                 dependents[root.start + root.len] = dependent_id;
                 root.len += 1;
-            } else for (bzz.*.?.dependencies.keys()) |dependency_id| {
-                const zon = self.getZon(dependency_id).?;
+            } else for (bzz.dependencies.keys()) |dependency_id| {
+                const zon = self.getZon(dependency_id);
                 dependents[zon.dependents.start + zon.dependents.len] = dependent_id;
                 zon.dependents.len += 1;
             }
+        }
+
+        var dependencies_count: TypesafeSlice(DependencyId, std.atomic.Value(usize)) = try .alloc(self.gpa, self.len());
+        errdefer dependencies_count.free(self.gpa);
+        for (self.dependency_abspath_to_zon.values(), dependencies_count.value) |*bzz, *dc| {
+            dc.* = .init(bzz.dependencies.count());
         }
 
         std.debug.assert(!self.finalized);
@@ -110,7 +117,7 @@ const DepQueue = struct {
         return .{
             .gpa = self.gpa,
             .dependents = .wrap(dependents),
-            .dependents_count = dependents_count,
+            .dependencies_count = dependencies_count,
             .root_dependencies = root,
             .abspaths = .wrap(self.dependency_abspath_to_zon.keys()),
             .bzzs = .wrap(self.dependency_abspath_to_zon.values()),
@@ -121,14 +128,14 @@ const DependentsListIndex = enum(u32) { _ };
 const DepList = struct {
     gpa: std.mem.Allocator,
     dependents: TypesafeSlice(DependentsListIndex, DependencyId),
-    dependents_count: TypesafeSlice(DependencyId, std.atomic.Value(usize)), // when you decrement this to 0, spawn a new task
+    dependencies_count: TypesafeSlice(DependencyId, std.atomic.Value(usize)), // when you decrement this to 0, spawn a new task
     root_dependencies: TypesafeSlice(DependentsListIndex, DependencyId).Subslice,
     abspaths: TypesafeSlice(DependencyId, []const u8),
-    bzzs: TypesafeSlice(DependencyId, ?BuildZigZonParseResult), // interestingly, these are already known to not be null
+    bzzs: TypesafeSlice(DependencyId, BuildZigZonParseResult), // interestingly, these are already known to not be null
 
     pub fn deinit(self: *DepList) void {
         self.dependents.free(self.gpa);
-        self.dependents_count.free(self.gpa);
+        self.dependencies_count.free(self.gpa);
     }
 };
 
@@ -248,18 +255,6 @@ pub fn exec(gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const [
     return zig_env_output;
 }
 
-const Packager = struct {
-    deps: DepQueue,
-    dependency_order: std.ArrayListUnmanaged(DependencyId) = .empty,
-    dependency_to_in_order: []DtioEnum = &.{},
-
-    pub fn deinit(self: *Packager) void {
-        self.deps.gpa.free(self.dependency_to_in_order);
-        self.dependency_order.deinit(self.deps.gpa);
-        self.deps.deinit();
-    }
-};
-
 pub fn main() !u8 {
     var gpa_backing = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa_backing.deinit() == .ok);
@@ -288,13 +283,8 @@ pub fn main() !u8 {
         return printError("expected zig version {s}, got version {s}", .{ @import("builtin").zig_version_string, zig_env_parsed.version });
     }
 
-    var packager: Packager = .{
-        .deps = .{
-            .gpa = gpa,
-            .dependency_abspath_to_zon = .empty,
-        },
-    };
-    defer packager.deinit();
+    var deps: DepQueue = .{ .gpa = gpa };
+    defer deps.deinit();
 
     {
         const find_root = progress.start("find_root", opts.src_pkgs.len);
@@ -305,21 +295,21 @@ pub fn main() !u8 {
             defer find_one_root.end();
 
             const fullpath = try std.fs.cwd().realpathAlloc(arena, src_pkg);
-            _ = try packager.deps.addAbsolutePath(fullpath);
+            _ = try deps.addAbsolutePath(fullpath);
         }
     }
     var has_error = false;
 
     {
-        const queue_node = progress.start("explore", packager.deps.dependency_abspath_to_zon.keys().len);
+        const queue_node = progress.start("explore", deps.dependency_abspath_to_zon.keys().len);
         defer queue_node.end();
         var queue_idx: usize = 0;
-        while (queue_idx < packager.deps.len()) : (queue_idx += 1) {
-            const package_abs_path = packager.deps.getAbsolutePath(@enumFromInt(queue_idx));
+        while (queue_idx < deps.len()) : (queue_idx += 1) {
+            const package_abs_path = deps.getAbsolutePath(@enumFromInt(queue_idx));
             const queue_sub_node = queue_node.start(package_abs_path, 0);
             defer queue_sub_node.end();
 
-            parseBuildZigZon(gpa, arena, @enumFromInt(queue_idx), &packager.deps, if (opts.include_global_packages) opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
+            parseBuildZigZon(gpa, arena, @enumFromInt(queue_idx), &deps, if (opts.include_global_packages) opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
                 has_error = true;
                 std.log.err("{s}: error: {s}", .{ package_abs_path, @errorName(e) });
                 continue;
@@ -327,20 +317,8 @@ pub fn main() !u8 {
         }
     }
 
-    var df = try packager.deps.finalize();
+    var df = try deps.finalize();
     defer df.deinit();
-
-    packager.dependency_order = try std.ArrayListUnmanaged(DependencyId).initCapacity(gpa, packager.deps.len());
-    packager.dependency_to_in_order = try gpa.alloc(DtioEnum, packager.deps.len());
-    @memset(packager.dependency_to_in_order, .no);
-    {
-        const dep_order_node = progress.start("dependency order", packager.deps.dependency_abspath_to_zon.keys().len);
-        defer dep_order_node.end();
-        for (0..packager.deps.dependency_abspath_to_zon.keys().len) |index| {
-            defer dep_order_node.completeOne();
-            try genDependencyOrder(@enumFromInt(index), &packager.deps, packager.dependency_to_in_order, &packager.dependency_order);
-        }
-    }
 
     std.fs.cwd().makeDir(".zig-cache") catch {};
     std.fs.cwd().makeDir(".zig-cache/tmp") catch {};
@@ -351,18 +329,22 @@ pub fn main() !u8 {
     // now, we loop over each dependency
     // for each dependency we will generate a tar.gz file for it and we will rerender its build.zig.zon and then we will generate its hash and save that
     {
-        const generate_output_node = progress.start("generate output", packager.dependency_order.items.len);
+        const generate_output_node = progress.start("generate output", df.abspaths.len());
         defer generate_output_node.end();
 
-        for (packager.dependency_order.items) |dep| {
-            const dep_abspath = packager.deps.getAbsolutePath(dep);
+        var generate_queue: std.ArrayList(DependencyId) = try .initCapacity(gpa, df.bzzs.len());
+        defer generate_queue.deinit(gpa);
+        var generate_queue_index: usize = 0;
+
+        generate_queue.appendSliceAssumeCapacity(df.root_dependencies.view(&df.dependents));
+
+        while (generate_queue_index < generate_queue.items.len) : (generate_queue_index += 1) {
+            const dep = generate_queue.items[generate_queue_index];
+            const dep_abspath = df.abspaths.get(dep);
             const render_dep_node = generate_output_node.start(dep_abspath, 4);
             defer render_dep_node.end();
 
-            const dep_bzz = packager.deps.getZon(dep) orelse {
-                // skip this dependency; no bzz;
-                continue;
-            };
+            const dep_bzz = df.bzzs.ptr(dep);
 
             // so we will iterate over all the files in the paths
             // exluding exclude_paths
@@ -396,7 +378,7 @@ pub fn main() !u8 {
                     for (dep_bzz.paths) |path| {
                         const walk_path_node = walk_dir_node.start(path, path.len);
                         defer walk_path_node.end();
-                        walkDir(packager.deps.getAbsolutePath(dep), path, &seen_paths, gpa, arena) catch |e| switch (e) {
+                        walkDir(df.abspaths.get(dep), path, &seen_paths, gpa, arena) catch |e| switch (e) {
                             else => |ee| {
                                 std.log.err("failed to check path {s} / {s}", .{ path, @errorName(ee) });
                                 has_error = true;
@@ -413,12 +395,12 @@ pub fn main() !u8 {
                     const sub_tar_node = write_tar_node.start(file_path, 0);
                     defer sub_tar_node.end();
 
-                    const fullpath = try std.fs.path.join(gpa, &.{ packager.deps.getAbsolutePath(dep), file_path });
+                    const fullpath = try std.fs.path.join(gpa, &.{ df.abspaths.get(dep), file_path });
                     defer gpa.free(fullpath);
 
                     if (std.mem.eql(u8, file_path, "build.zig.zon")) {
                         // write build.zig.zon
-                        const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, &packager.deps);
+                        const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, &df);
                         defer gpa.free(rendered);
                         try tar.writeFileBytes("build.zig.zon", rendered, .{});
                     } else {
@@ -472,6 +454,14 @@ pub fn main() !u8 {
                 },
             }
             dep_bzz.generated_zon = try result_package_info_writer.toOwnedSlice();
+
+            // enqueue dependents
+            for (dep_bzz.dependents.view(&df.dependents)) |dependent| {
+                const dec = df.dependencies_count.ptr(dependent).fetchSub(1, .acq_rel);
+                if (dec == 1) { // 1 means we decremented to 0
+                    generate_queue.appendAssumeCapacity(dependent);
+                }
+            }
         }
     }
 
@@ -479,7 +469,7 @@ pub fn main() !u8 {
     return 0;
 }
 
-fn renderBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, dep_bzz: *BuildZigZonParseResult, deps: *DepQueue) ![]const u8 {
+fn renderBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, dep_bzz: *BuildZigZonParseResult, df: *DepList) ![]const u8 {
     _ = arena;
     if (dep_bzz.ast == null) {
         // uh oh! somehow there's no ast but there is a build.zig.zon file
@@ -492,14 +482,11 @@ fn renderBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, dep_bzz: 
 
     // iterate over dependencies, rerender
     for (dep_bzz.dependencies.keys(), dep_bzz.dependencies.values()) |dep_id, node_idx| {
-        if (deps.getZon(dep_id)) |other_bzz| {
-            if (other_bzz.generated_zon == null) {
-                @panic("it should have been generated by now");
-            }
-            try replace_nodes_with_string.putNoClobber(gpa, node_idx, other_bzz.generated_zon.?);
-        } else {
-            // it is null, oops
+        const other_bzz = df.bzzs.get(dep_id);
+        if (other_bzz.generated_zon == null) {
+            @panic("it should have been generated by now");
         }
+        try replace_nodes_with_string.putNoClobber(gpa, node_idx, other_bzz.generated_zon.?);
     }
 
     var out: std.Io.Writer.Allocating = .init(gpa);
@@ -583,6 +570,7 @@ const BuildZigZonParseResult = struct {
     dependents: TypesafeSlice(DependentsListIndex, DependencyId).Subslice = .{ .start = 0, .len = 0 },
 
     generated_zon: ?[]const u8 = null,
+    defined: bool = true,
 
     pub fn deinit(self: *BuildZigZonParseResult) void {
         if (self.file) |file| self.gpa.free(file);
@@ -742,10 +730,17 @@ fn structFields(zoir: std.zig.Zoir, node: std.zig.Zoir.Node.Index) !@FieldType(s
 pub fn TypesafeSlice(comptime Index: type, comptime Child: type) type {
     return struct {
         value: []Child,
-        pub const Subslice = struct { start: usize, len: usize };
+        pub const Subslice = struct {
+            start: usize,
+            len: usize,
+            pub fn view(self: @This(), owner: *ThisTypesafeSlice) []Child {
+                return owner.value[self.start..][0..self.len];
+            }
+        };
+        const ThisTypesafeSlice = @This();
 
-        pub fn alloc(gpa: std.mem.Allocator, len: usize) !@This() {
-            const value = try gpa.alloc(Child, len);
+        pub fn alloc(gpa: std.mem.Allocator, alen: usize) !@This() {
+            const value = try gpa.alloc(Child, alen);
             return .wrap(value);
         }
         pub fn wrap(value: []Child) @This() {
@@ -759,6 +754,12 @@ pub fn TypesafeSlice(comptime Index: type, comptime Child: type) type {
         }
         pub fn ptr(self: *@This(), index: Index) *Child {
             return &self.value[@intFromEnum(index)];
+        }
+        pub fn get(self: *@This(), index: Index) Child {
+            return self.ptr(index).*;
+        }
+        pub fn len(self: *@This()) usize {
+            return self.value.len;
         }
     };
 }
