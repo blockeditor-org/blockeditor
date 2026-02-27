@@ -325,7 +325,12 @@ pub fn main() !u8 {
     const tmp_global_cache_dir_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(std.crypto.random.int(u64));
     std.fs.cwd().makeDir(tmp_global_cache_dir_name) catch {};
     std.fs.cwd().makeDir(opts.dst_dir) catch {};
-    // TODO: std.fs.cwd().deleteTree(tmp_global_cache_dir_name)
+
+    defer {
+        std.fs.cwd().deleteTree(tmp_global_cache_dir_name) catch |e| {
+            std.log.err("error while deleting global cache dir: {s}", .{@errorName(e)});
+        };
+    }
 
     // now, we loop over each dependency
     // for each dependency we will generate a tar.gz file for it and we will rerender its build.zig.zon and then we will generate its hash and save that
