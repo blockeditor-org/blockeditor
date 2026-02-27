@@ -6,21 +6,41 @@ const DependencyId = enum(usize) { _ };
 
 const DepQueue = struct {
     gpa: std.mem.Allocator,
-    dependency_name_to_index: std.StringArrayHashMapUnmanaged(void),
+    dependency_name_to_zon: std.StringArrayHashMapUnmanaged(?BuildZigZonParseResult) = .empty,
+    finalized: bool = false,
 
     pub fn addAbsolutePath(self: *DepQueue, path: []const u8) !DependencyId {
-        const gpres = try self.dependency_name_to_index.getOrPut(self.gpa, path);
+        std.debug.assert(!self.finalized);
+        const gpres = try self.dependency_name_to_zon.getOrPut(self.gpa, path);
         if (!gpres.found_existing) {
-            gpres.value_ptr.* = {};
+            gpres.value_ptr.* = null;
         }
         return @enumFromInt(gpres.index);
     }
     pub fn getAbsolutePath(self: *DepQueue, id: DependencyId) []const u8 {
-        return self.dependency_name_to_index.keys()[@intFromEnum(id)];
+        return self.dependency_name_to_zon.keys()[@intFromEnum(id)];
+    }
+    pub fn getZon(self: *DepQueue, id: DependencyId) ?*BuildZigZonParseResult {
+        if (self.dependency_name_to_zon.values()[@intFromEnum(id)]) |*value| return value;
+        return null;
+    }
+    pub fn setZon(self: *DepQueue, id: DependencyId, value: BuildZigZonParseResult) void {
+        const ptr = &self.dependency_name_to_zon.values()[@intFromEnum(id)];
+        std.debug.assert(ptr.* == null); // tried to overwrite package zon
+        ptr.* = value;
+    }
+    pub fn len(self: *DepQueue) usize {
+        return self.dependency_name_to_zon.keys().len;
     }
 
     pub fn deinit(self: *DepQueue) void {
-        self.dependency_name_to_index.deinit(self.gpa);
+        for (self.dependency_name_to_zon.values()) |*item| if (item.*) |*ite| ite.deinit();
+        self.dependency_name_to_zon.deinit(self.gpa);
+    }
+
+    pub fn finalize(self: *DepQueue) void {
+        std.debug.assert(!self.finalized);
+        self.finalized = true;
     }
 };
 
@@ -142,15 +162,12 @@ pub fn exec(gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const [
 
 const Packager = struct {
     deps: DepQueue,
-    dependency_to_build_zig_zon: std.ArrayListUnmanaged(?BuildZigZonParseResult) = .empty,
     dependency_order: std.ArrayListUnmanaged(DependencyId) = .empty,
     dependency_to_in_order: []DtioEnum = &.{},
 
     pub fn deinit(self: *Packager) void {
         self.deps.gpa.free(self.dependency_to_in_order);
         self.dependency_order.deinit(self.deps.gpa);
-        for (self.dependency_to_build_zig_zon.items) |*item| if (item.*) |*ite| ite.deinit();
-        self.dependency_to_build_zig_zon.deinit(self.deps.gpa);
         self.deps.deinit();
     }
 };
@@ -186,7 +203,7 @@ pub fn main() !u8 {
     var packager: Packager = .{
         .deps = .{
             .gpa = gpa,
-            .dependency_name_to_index = .empty,
+            .dependency_name_to_zon = .empty,
         },
     };
     defer packager.deinit();
@@ -206,33 +223,33 @@ pub fn main() !u8 {
     var has_error = false;
 
     {
-        const queue_node = progress.start("explore", packager.deps.dependency_name_to_index.keys().len);
+        const queue_node = progress.start("explore", packager.deps.dependency_name_to_zon.keys().len);
         defer queue_node.end();
         var queue_idx: usize = 0;
-        while (queue_idx < packager.deps.dependency_name_to_index.keys().len) : (queue_idx += 1) {
-            const item = packager.deps.dependency_name_to_index.keys()[queue_idx];
-            const queue_sub_node = queue_node.start(item, 0);
+        while (queue_idx < packager.deps.len()) : (queue_idx += 1) {
+            const package_abs_path = packager.deps.getAbsolutePath(@enumFromInt(queue_idx));
+            const queue_sub_node = queue_node.start(package_abs_path, 0);
             defer queue_sub_node.end();
-            const idx = packager.dependency_to_build_zig_zon.items.len;
-            std.debug.assert(idx == queue_idx);
-            try packager.dependency_to_build_zig_zon.append(gpa, null);
-            packager.dependency_to_build_zig_zon.items[idx] = parseBuildZigZon(gpa, arena, item, &packager.deps, if (opts.include_global_packages) opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
+
+            parseBuildZigZon(gpa, arena, @enumFromInt(queue_idx), &packager.deps, if (opts.include_global_packages) opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
                 has_error = true;
-                std.log.err("{s}: error: {s}", .{ item, @errorName(e) });
+                std.log.err("{s}: error: {s}", .{ package_abs_path, @errorName(e) });
                 continue;
             };
         }
     }
 
-    packager.dependency_order = try std.ArrayListUnmanaged(DependencyId).initCapacity(gpa, packager.dependency_to_build_zig_zon.items.len);
-    packager.dependency_to_in_order = try gpa.alloc(DtioEnum, packager.dependency_to_build_zig_zon.items.len);
+    packager.deps.finalize();
+
+    packager.dependency_order = try std.ArrayListUnmanaged(DependencyId).initCapacity(gpa, packager.deps.len());
+    packager.dependency_to_in_order = try gpa.alloc(DtioEnum, packager.deps.len());
     @memset(packager.dependency_to_in_order, .no);
     {
-        const dep_order_node = progress.start("dependency order", packager.deps.dependency_name_to_index.keys().len);
+        const dep_order_node = progress.start("dependency order", packager.deps.dependency_name_to_zon.keys().len);
         defer dep_order_node.end();
-        for (0..packager.deps.dependency_name_to_index.keys().len) |index| {
+        for (0..packager.deps.dependency_name_to_zon.keys().len) |index| {
             defer dep_order_node.completeOne();
-            try genDependencyOrder(@enumFromInt(index), packager.dependency_to_build_zig_zon.items, packager.dependency_to_in_order, &packager.dependency_order);
+            try genDependencyOrder(@enumFromInt(index), &packager.deps, packager.dependency_to_in_order, &packager.dependency_order);
         }
     }
 
@@ -253,7 +270,7 @@ pub fn main() !u8 {
             const render_dep_node = generate_output_node.start(dep_abspath, 4);
             defer render_dep_node.end();
 
-            const dep_bzz = if (packager.dependency_to_build_zig_zon.items[@intFromEnum(dep)]) |*it| it else {
+            const dep_bzz = packager.deps.getZon(dep) orelse {
                 // skip this dependency; no bzz;
                 continue;
             };
@@ -312,7 +329,7 @@ pub fn main() !u8 {
 
                     if (std.mem.eql(u8, file_path, "build.zig.zon")) {
                         // write build.zig.zon
-                        const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, packager.dependency_to_build_zig_zon.items);
+                        const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, &packager.deps);
                         defer gpa.free(rendered);
                         try tar.writeFileBytes("build.zig.zon", rendered, .{});
                     } else {
@@ -372,7 +389,7 @@ pub fn main() !u8 {
     return 0;
 }
 
-fn renderBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, dep_bzz: *BuildZigZonParseResult, all_bzz: []?BuildZigZonParseResult) ![]const u8 {
+fn renderBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, dep_bzz: *BuildZigZonParseResult, deps: *DepQueue) ![]const u8 {
     _ = arena;
     if (dep_bzz.ast == null) {
         // uh oh! somehow there's no ast but there is a build.zig.zon file
@@ -385,7 +402,7 @@ fn renderBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, dep_bzz: 
 
     // iterate over dependencies, rerender
     for (dep_bzz.dependencies.keys(), dep_bzz.dependencies.values()) |dep_id, node_idx| {
-        if (all_bzz[@intFromEnum(dep_id)]) |*other_bzz| {
+        if (deps.getZon(dep_id)) |other_bzz| {
             if (other_bzz.generated_zon == null) {
                 @panic("it should have been generated by now");
             }
@@ -447,7 +464,7 @@ fn walkDir(abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHa
 }
 
 const DtioEnum = enum { no, cyclic, yes };
-fn genDependencyOrder(dep: DependencyId, bzz: []?BuildZigZonParseResult, dtio: []DtioEnum, out: *std.ArrayListUnmanaged(DependencyId)) !void {
+fn genDependencyOrder(dep: DependencyId, deps: *DepQueue, dtio: []DtioEnum, out: *std.ArrayListUnmanaged(DependencyId)) !void {
     switch (dtio[@intFromEnum(dep)]) {
         .no => {}, // add
         .cyclic => {
@@ -457,9 +474,9 @@ fn genDependencyOrder(dep: DependencyId, bzz: []?BuildZigZonParseResult, dtio: [
         .yes => return, // already in the list
     }
     dtio[@intFromEnum(dep)] = .cyclic;
-    if (bzz[@intFromEnum(dep)]) |*zon| {
+    if (deps.getZon(dep)) |zon| {
         for (zon.dependencies.keys()) |dep_id| {
-            try genDependencyOrder(dep_id, bzz, dtio, out);
+            try genDependencyOrder(dep_id, deps, dtio, out);
         }
     }
     out.appendAssumeCapacity(dep);
@@ -492,18 +509,20 @@ const exclude_paths = std.StaticStringMap(void).initComptime(.{
     .{ ".DS_Store", {} },
 });
 
-pub fn parseBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, fullpath: []const u8, deps_queue: *DepQueue, global_cache_path: ?[]const u8) !BuildZigZonParseResult {
+pub fn parseBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_id: DependencyId, deps_queue: *DepQueue, global_cache_path: ?[]const u8) !void {
+    const fullpath = deps_queue.getAbsolutePath(package_id);
     const filepath = try std.fs.path.join(arena, &.{ fullpath, "build.zig.zon" });
     const file = std.fs.cwd().readFileAllocOptions(gpa, filepath, std.math.maxInt(usize), null, .of(u8), 0) catch |e| switch (e) {
         error.FileNotFound => {
-            return .{
+            deps_queue.setZon(package_id, .{
                 .gpa = gpa,
                 .file = null,
                 .ast = null,
                 .zoir = null,
                 .paths = default_paths,
                 .dependencies = .empty,
-            };
+            });
+            return;
         },
         else => |ee| return ee,
     };
@@ -592,14 +611,14 @@ pub fn parseBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, fullpa
     // arguably we should use replace_nodes_with_string along with std.zon.stringify
     // ast.render(gpa: Allocator, w: *Writer, fixups: Fixups)
 
-    return .{
+    deps_queue.setZon(package_id, .{
         .gpa = gpa,
         .file = file,
         .ast = ast,
         .zoir = zoir,
         .paths = parsed.paths orelse default_paths,
         .dependencies = dependencies,
-    };
+    });
 }
 
 fn parseStruct(gpa: std.mem.Allocator, arena: std.mem.Allocator, ast: std.zig.Ast, node: std.zig.Ast.Node.Index, out: *std.StringArrayHashMapUnmanaged(std.zig.Ast.Node.Index)) !void {
