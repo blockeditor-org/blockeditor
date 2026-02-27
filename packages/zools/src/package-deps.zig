@@ -340,133 +340,139 @@ pub fn main() !u8 {
 
         while (generate_queue_index < generate_queue.items.len) : (generate_queue_index += 1) {
             const dep = generate_queue.items[generate_queue_index];
-            const dep_abspath = df.abspaths.get(dep);
-            const render_dep_node = generate_output_node.start(dep_abspath, 4);
-            defer render_dep_node.end();
-
-            const dep_bzz = df.bzzs.ptr(dep);
-
-            // so we will iterate over all the files in the paths
-            // exluding exclude_paths
-            // modifying the root build.zig.zon to update urls
-            // and at each file we will write it to the tar writer
-            // -> which will write to an xz writer (std.compress.flate)
-            // -> which will write to the output file
-
-            const rand_int = std.crypto.random.int(u64);
-            const tmp_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(rand_int) ++ ".tar";
-            {
-                var out_file = try std.fs.cwd().createFile(tmp_name, .{});
-                defer out_file.close();
-                var out_file_buf: [1024]u8 = undefined;
-                var out_file_writer = out_file.writer(&out_file_buf);
-
-                if (comptime !std.mem.eql(u8, @import("builtin").zig_version_string, "0.15.2")) {
-                    // TODO: enable compression. it looks like it will be in 0.16.0:
-                    // https://codeberg.org/ziglang/zig/src/commit/56253d9e31c0576f024d95929a8fe26428b35176/lib/std/compress/flate/Compress.zig
-                    // in 0.15.0, it doesn't work: https://github.com/ziglang/zig/issues/24973
-                    @compileError("TODO: enable compression");
-                }
-
-                var tar: std.tar.Writer = .{ .underlying_writer = &out_file_writer.interface };
-
-                var seen_paths: std.StringArrayHashMapUnmanaged(void) = .empty;
-                defer seen_paths.deinit(gpa);
-                {
-                    const walk_dir_node = render_dep_node.start("walk dirs", dep_bzz.paths.len);
-                    defer walk_dir_node.end();
-                    for (dep_bzz.paths) |path| {
-                        const walk_path_node = walk_dir_node.start(path, path.len);
-                        defer walk_path_node.end();
-                        walkDir(df.abspaths.get(dep), path, &seen_paths, gpa, arena) catch |e| switch (e) {
-                            else => |ee| {
-                                std.log.err("failed to check path {s} / {s}", .{ path, @errorName(ee) });
-                                has_error = true;
-                                continue;
-                            },
-                        };
-                    }
-                }
-                std.mem.sort([]const u8, seen_paths.keys(), {}, lessThanString);
-
-                const write_tar_node = render_dep_node.start("write tar", seen_paths.keys().len);
-                defer write_tar_node.end();
-                for (seen_paths.keys()) |file_path| {
-                    const sub_tar_node = write_tar_node.start(file_path, 0);
-                    defer sub_tar_node.end();
-
-                    const fullpath = try std.fs.path.join(gpa, &.{ df.abspaths.get(dep), file_path });
-                    defer gpa.free(fullpath);
-
-                    if (std.mem.eql(u8, file_path, "build.zig.zon")) {
-                        // write build.zig.zon
-                        const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, &df);
-                        defer gpa.free(rendered);
-                        try tar.writeFileBytes("build.zig.zon", rendered, .{});
-                    } else {
-                        // now we will write the file
-                        var file = try std.fs.openFileAbsolute(fullpath, .{ .mode = .read_only });
-                        defer file.close();
-                        var reader_buf: [1024]u8 = undefined;
-                        var file_reader = file.reader(&reader_buf);
-                        // note: not using writeFile so we don't copy mtime and such
-                        // TODO: save +x permission
-                        try tar.writeFileStream(file_path, try file_reader.getSize(), &file_reader.interface, .{});
-                    }
-                }
-
-                // finally, write build.zig.zon
-
-                try tar.finishPedantically();
-                try out_file_writer.interface.flush();
-            }
-
-            // now that we have written the file, use the zig compiler to determine the hash of the package
-            // (maybe using --debug-hash? maybe not)
-
-            const find_hash_node = render_dep_node.start("find hash", 0);
-            defer find_hash_node.end();
-
-            var result_package_info_writer: std.Io.Writer.Allocating = .init(dep_bzz.gpa);
-            defer result_package_info_writer.deinit();
-            switch (opts.mode) {
-                .single_file => @panic("TODO for single file we need to decide a name and stuff. path=../name"),
-                .multi_file => {
-                    const hash_result = try exec(gpa, find_hash_node, &.{ opts.zig_bin, "fetch", "--global-cache-dir", tmp_global_cache_dir_name, tmp_name });
-                    defer gpa.free(hash_result);
-                    const found_hash = std.mem.trim(u8, hash_result, " \r\n\t");
-                    const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar", .{found_hash});
-                    defer gpa.free(found_filename);
-
-                    const rendered_url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.url_prefix, found_filename });
-                    defer gpa.free(rendered_url);
-                    const rendered_path = try std.fs.path.join(gpa, &.{ opts.dst_dir, found_filename });
-                    defer gpa.free(rendered_path);
-
-                    // write to the package info
-                    try std.zon.stringify.serialize(.{
-                        .url = rendered_url,
-                        .hash = found_hash,
-                    }, .{}, &result_package_info_writer.writer);
-
-                    // move the file
-                    try std.fs.cwd().rename(tmp_name, rendered_path);
-                },
-            }
-            dep_bzz.generated_zon = try result_package_info_writer.toOwnedSlice();
-
-            // enqueue dependents
-            for (dep_bzz.dependents.view(&df.dependents)) |dependent| {
-                const dec = df.dependencies_count.ptr(dependent).fetchSub(1, .acq_rel);
-                if (dec == 1) { // 1 means we decremented to 0
-                    generate_queue.appendAssumeCapacity(dependent);
-                }
-            }
+            try emitFile(dep, &df, generate_output_node, gpa, arena, &has_error, &opts, tmp_global_cache_dir_name, &generate_queue);
+            // TODO: to make thread-safe for use in std.Thread.Pool, we must remove the arena as they are not thread-safe
+            // also we shouldn't have so many arguments. we should really just have df and dep probably.
         }
     }
 
     if (has_error) return 1;
     return 0;
+}
+
+fn emitFile(dep: DependencyId, df: *DepList, generate_output_node: std.Progress.Node, gpa: std.mem.Allocator, arena: std.mem.Allocator, has_error: *bool, opts: *const Opts, tmp_global_cache_dir_name: []const u8, generate_queue: *std.ArrayList(DependencyId)) !void {
+    const dep_abspath = df.abspaths.get(dep);
+    const render_dep_node = generate_output_node.start(dep_abspath, 4);
+    defer render_dep_node.end();
+
+    const dep_bzz = df.bzzs.ptr(dep);
+
+    // so we will iterate over all the files in the paths
+    // exluding exclude_paths
+    // modifying the root build.zig.zon to update urls
+    // and at each file we will write it to the tar writer
+    // -> which will write to an xz writer (std.compress.flate)
+    // -> which will write to the output file
+
+    const rand_int = std.crypto.random.int(u64);
+    const tmp_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(rand_int) ++ ".tar";
+    {
+        var out_file = try std.fs.cwd().createFile(tmp_name, .{});
+        defer out_file.close();
+        var out_file_buf: [1024]u8 = undefined;
+        var out_file_writer = out_file.writer(&out_file_buf);
+
+        if (comptime !std.mem.eql(u8, @import("builtin").zig_version_string, "0.15.2")) {
+            // TODO: enable compression. it looks like it will be in 0.16.0:
+            // https://codeberg.org/ziglang/zig/src/commit/56253d9e31c0576f024d95929a8fe26428b35176/lib/std/compress/flate/Compress.zig
+            // in 0.15.0, it doesn't work: https://github.com/ziglang/zig/issues/24973
+            @compileError("TODO: enable compression");
+        }
+
+        var tar: std.tar.Writer = .{ .underlying_writer = &out_file_writer.interface };
+
+        var seen_paths: std.StringArrayHashMapUnmanaged(void) = .empty;
+        defer seen_paths.deinit(gpa);
+        {
+            const walk_dir_node = render_dep_node.start("walk dirs", dep_bzz.paths.len);
+            defer walk_dir_node.end();
+            for (dep_bzz.paths) |path| {
+                const walk_path_node = walk_dir_node.start(path, path.len);
+                defer walk_path_node.end();
+                walkDir(df.abspaths.get(dep), path, &seen_paths, gpa, arena) catch |e| switch (e) {
+                    else => |ee| {
+                        std.log.err("failed to check path {s} / {s}", .{ path, @errorName(ee) });
+                        has_error.* = true;
+                        continue;
+                    },
+                };
+            }
+        }
+        std.mem.sort([]const u8, seen_paths.keys(), {}, lessThanString);
+
+        const write_tar_node = render_dep_node.start("write tar", seen_paths.keys().len);
+        defer write_tar_node.end();
+        for (seen_paths.keys()) |file_path| {
+            const sub_tar_node = write_tar_node.start(file_path, 0);
+            defer sub_tar_node.end();
+
+            const fullpath = try std.fs.path.join(gpa, &.{ df.abspaths.get(dep), file_path });
+            defer gpa.free(fullpath);
+
+            if (std.mem.eql(u8, file_path, "build.zig.zon")) {
+                // write build.zig.zon
+                const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, df);
+                defer gpa.free(rendered);
+                try tar.writeFileBytes("build.zig.zon", rendered, .{});
+            } else {
+                // now we will write the file
+                var file = try std.fs.openFileAbsolute(fullpath, .{ .mode = .read_only });
+                defer file.close();
+                var reader_buf: [1024]u8 = undefined;
+                var file_reader = file.reader(&reader_buf);
+                // note: not using writeFile so we don't copy mtime and such
+                // TODO: save +x permission
+                try tar.writeFileStream(file_path, try file_reader.getSize(), &file_reader.interface, .{});
+            }
+        }
+
+        // finally, write build.zig.zon
+
+        try tar.finishPedantically();
+        try out_file_writer.interface.flush();
+    }
+
+    // now that we have written the file, use the zig compiler to determine the hash of the package
+    // (maybe using --debug-hash? maybe not)
+
+    const find_hash_node = render_dep_node.start("find hash", 0);
+    defer find_hash_node.end();
+
+    var result_package_info_writer: std.Io.Writer.Allocating = .init(dep_bzz.gpa);
+    defer result_package_info_writer.deinit();
+    switch (opts.mode) {
+        .single_file => @panic("TODO for single file we need to decide a name and stuff. path=../name"),
+        .multi_file => {
+            const hash_result = try exec(gpa, find_hash_node, &.{ opts.zig_bin, "fetch", "--global-cache-dir", tmp_global_cache_dir_name, tmp_name });
+            defer gpa.free(hash_result);
+            const found_hash = std.mem.trim(u8, hash_result, " \r\n\t");
+            const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar", .{found_hash});
+            defer gpa.free(found_filename);
+
+            const rendered_url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.url_prefix, found_filename });
+            defer gpa.free(rendered_url);
+            const rendered_path = try std.fs.path.join(gpa, &.{ opts.dst_dir, found_filename });
+            defer gpa.free(rendered_path);
+
+            // write to the package info
+            try std.zon.stringify.serialize(.{
+                .url = rendered_url,
+                .hash = found_hash,
+            }, .{}, &result_package_info_writer.writer);
+
+            // move the file
+            try std.fs.cwd().rename(tmp_name, rendered_path);
+        },
+    }
+    dep_bzz.generated_zon = try result_package_info_writer.toOwnedSlice();
+
+    // enqueue dependents
+    for (dep_bzz.dependents.view(&df.dependents)) |dependent| {
+        const dec = df.dependencies_count.ptr(dependent).fetchSub(1, .acq_rel);
+        if (dec == 1) { // 1 means we decremented to 0
+            generate_queue.appendAssumeCapacity(dependent);
+        }
+    }
 }
 
 fn renderBuildZigZon(gpa: std.mem.Allocator, arena: std.mem.Allocator, dep_bzz: *BuildZigZonParseResult, df: *DepList) ![]const u8 {
