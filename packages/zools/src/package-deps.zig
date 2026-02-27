@@ -140,6 +140,21 @@ pub fn exec(gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const [
     return zig_env_output;
 }
 
+const Packager = struct {
+    deps: DepQueue,
+    dependency_to_build_zig_zon: std.ArrayListUnmanaged(?BuildZigZonParseResult) = .empty,
+    dependency_order: std.ArrayListUnmanaged(DependencyId) = .empty,
+    dependency_to_in_order: []DtioEnum = &.{},
+
+    pub fn deinit(self: *Packager) void {
+        self.deps.gpa.free(self.dependency_to_in_order);
+        self.dependency_order.deinit(self.deps.gpa);
+        for (self.dependency_to_build_zig_zon.items) |*item| if (item.*) |*ite| ite.deinit();
+        self.dependency_to_build_zig_zon.deinit(self.deps.gpa);
+        self.deps.deinit();
+    }
+};
+
 pub fn main() !u8 {
     var gpa_backing = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa_backing.deinit() == .ok);
@@ -168,11 +183,13 @@ pub fn main() !u8 {
         return printError("expected zig version {s}, got version {s}", .{ @import("builtin").zig_version_string, zig_env_parsed.version });
     }
 
-    var deps: DepQueue = .{
-        .gpa = gpa,
-        .dependency_name_to_index = .empty,
+    var packager: Packager = .{
+        .deps = .{
+            .gpa = gpa,
+            .dependency_name_to_index = .empty,
+        },
     };
-    defer deps.deinit();
+    defer packager.deinit();
 
     {
         const find_root = progress.start("find_root", opts.src_pkgs.len);
@@ -183,27 +200,23 @@ pub fn main() !u8 {
             defer find_one_root.end();
 
             const fullpath = try std.fs.cwd().realpathAlloc(arena, src_pkg);
-            _ = try deps.addAbsolutePath(fullpath);
+            _ = try packager.deps.addAbsolutePath(fullpath);
         }
     }
-
-    var dependency_to_build_zig_zon: std.ArrayListUnmanaged(?BuildZigZonParseResult) = .empty;
-    defer dependency_to_build_zig_zon.deinit(gpa);
-    defer for (dependency_to_build_zig_zon.items) |*item| if (item.*) |*ite| ite.deinit();
     var has_error = false;
 
     {
-        const queue_node = progress.start("explore", deps.dependency_name_to_index.keys().len);
+        const queue_node = progress.start("explore", packager.deps.dependency_name_to_index.keys().len);
         defer queue_node.end();
         var queue_idx: usize = 0;
-        while (queue_idx < deps.dependency_name_to_index.keys().len) : (queue_idx += 1) {
-            const item = deps.dependency_name_to_index.keys()[queue_idx];
+        while (queue_idx < packager.deps.dependency_name_to_index.keys().len) : (queue_idx += 1) {
+            const item = packager.deps.dependency_name_to_index.keys()[queue_idx];
             const queue_sub_node = queue_node.start(item, 0);
             defer queue_sub_node.end();
-            const idx = dependency_to_build_zig_zon.items.len;
+            const idx = packager.dependency_to_build_zig_zon.items.len;
             std.debug.assert(idx == queue_idx);
-            try dependency_to_build_zig_zon.append(gpa, null);
-            dependency_to_build_zig_zon.items[idx] = parseBuildZigZon(gpa, arena, item, &deps, if (opts.include_global_packages) opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
+            try packager.dependency_to_build_zig_zon.append(gpa, null);
+            packager.dependency_to_build_zig_zon.items[idx] = parseBuildZigZon(gpa, arena, item, &packager.deps, if (opts.include_global_packages) opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir else null) catch |e| {
                 has_error = true;
                 std.log.err("{s}: error: {s}", .{ item, @errorName(e) });
                 continue;
@@ -211,17 +224,15 @@ pub fn main() !u8 {
         }
     }
 
-    var dependency_order = try std.ArrayListUnmanaged(DependencyId).initCapacity(gpa, dependency_to_build_zig_zon.items.len);
-    defer dependency_order.deinit(gpa);
-    const dependency_to_in_order = try gpa.alloc(DtioEnum, dependency_to_build_zig_zon.items.len);
-    defer gpa.free(dependency_to_in_order);
-    @memset(dependency_to_in_order, .no);
+    packager.dependency_order = try std.ArrayListUnmanaged(DependencyId).initCapacity(gpa, packager.dependency_to_build_zig_zon.items.len);
+    packager.dependency_to_in_order = try gpa.alloc(DtioEnum, packager.dependency_to_build_zig_zon.items.len);
+    @memset(packager.dependency_to_in_order, .no);
     {
-        const dep_order_node = progress.start("dependency order", deps.dependency_name_to_index.keys().len);
+        const dep_order_node = progress.start("dependency order", packager.deps.dependency_name_to_index.keys().len);
         defer dep_order_node.end();
-        for (0..deps.dependency_name_to_index.keys().len) |index| {
+        for (0..packager.deps.dependency_name_to_index.keys().len) |index| {
             defer dep_order_node.completeOne();
-            try genDependencyOrder(@enumFromInt(index), dependency_to_build_zig_zon.items, dependency_to_in_order, &dependency_order);
+            try genDependencyOrder(@enumFromInt(index), packager.dependency_to_build_zig_zon.items, packager.dependency_to_in_order, &packager.dependency_order);
         }
     }
 
@@ -234,15 +245,15 @@ pub fn main() !u8 {
     // now, we loop over each dependency
     // for each dependency we will generate a tar.gz file for it and we will rerender its build.zig.zon and then we will generate its hash and save that
     {
-        const generate_output_node = progress.start("generate output", dependency_order.items.len);
+        const generate_output_node = progress.start("generate output", packager.dependency_order.items.len);
         defer generate_output_node.end();
 
-        for (dependency_order.items) |dep| {
-            const dep_abspath = deps.getAbsolutePath(dep);
+        for (packager.dependency_order.items) |dep| {
+            const dep_abspath = packager.deps.getAbsolutePath(dep);
             const render_dep_node = generate_output_node.start(dep_abspath, 4);
             defer render_dep_node.end();
 
-            const dep_bzz = if (dependency_to_build_zig_zon.items[@intFromEnum(dep)]) |*it| it else {
+            const dep_bzz = if (packager.dependency_to_build_zig_zon.items[@intFromEnum(dep)]) |*it| it else {
                 // skip this dependency; no bzz;
                 continue;
             };
@@ -276,7 +287,7 @@ pub fn main() !u8 {
                     for (dep_bzz.paths) |path| {
                         const walk_path_node = walk_dir_node.start(path, path.len);
                         defer walk_path_node.end();
-                        walkDir(deps.getAbsolutePath(dep), path, &seen_paths, gpa, arena) catch |e| switch (e) {
+                        walkDir(packager.deps.getAbsolutePath(dep), path, &seen_paths, gpa, arena) catch |e| switch (e) {
                             else => |ee| {
                                 std.log.err("failed to check path {s} / {s}", .{ path, @errorName(ee) });
                                 has_error = true;
@@ -293,12 +304,12 @@ pub fn main() !u8 {
                     const sub_tar_node = write_tar_node.start(file_path, 0);
                     defer sub_tar_node.end();
 
-                    const fullpath = try std.fs.path.join(gpa, &.{ deps.getAbsolutePath(dep), file_path });
+                    const fullpath = try std.fs.path.join(gpa, &.{ packager.deps.getAbsolutePath(dep), file_path });
                     defer gpa.free(fullpath);
 
                     if (std.mem.eql(u8, file_path, "build.zig.zon")) {
                         // write build.zig.zon
-                        const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, dependency_to_build_zig_zon.items);
+                        const rendered = try renderBuildZigZon(gpa, arena, dep_bzz, packager.dependency_to_build_zig_zon.items);
                         defer gpa.free(rendered);
                         try tar.writeFileBytes("build.zig.zon", rendered, .{});
                     } else {
