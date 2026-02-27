@@ -14,6 +14,15 @@ const PackageID = enum(usize) { _ };
 //   warn for each readme that doesn't have the zools.install_command thing.
 // --missing:(remove|skip): if a dependency was not found, should it be removed or ignored? ignore = leave the existing url/hash. remove = unclear.
 
+// Usage modes:
+//   To gather all URL dependencies for uploading onto your own server, and update local packages to use the new URL:
+//     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix=$URL_PREFIX --include-global-packages --no-include-local --update-dependency-urls --update-root=.
+//   To gather all local packages into seperate tar files and update readmes to point to where to download them:
+//     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix-$URL_PREFIX --update-readmes --update-root=.
+//   To gather everything into one .tar file so you can build depending only on the zig compiler:
+//     --src-pkg=. --zig-bin=zig --dst-file=build/app.tar --include-global-packages
+// it would be nice to simplify these to not need so many arguments
+
 const PackageQueue = struct {
     gpa: std.mem.Allocator,
     dependency_abspath_to_zon: std.StringArrayHashMapUnmanaged(PackageInfo) = .empty,
