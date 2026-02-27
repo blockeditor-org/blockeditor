@@ -4,6 +4,11 @@ const std = @import("std");
 
 const PackageID = enum(usize) { _ };
 
+// stages:
+// 1. explore dependency tree, parse build.zig.zon files
+// 2. output named .tar.gz files
+// 3. TODO: update README.md files in repo (if --update-readme is passed) (not for global cache dependencies)
+
 const PackageQueue = struct {
     gpa: std.mem.Allocator,
     dependency_abspath_to_zon: std.StringArrayHashMapUnmanaged(PackageInfo) = .empty,
