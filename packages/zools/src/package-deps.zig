@@ -56,7 +56,9 @@ const Opts = struct {
             \\Flags:
             \\  --src-pkg=[src_dir]  / specifies the source directory to search for packages.
             \\                                 you may specify multiple by repeating this flag.
-            \\  --zig-bin=[zig_bin]  / specifies the path to the zig binary on the system
+            \\  --zig-bin=[zig_bin]  / specifies the path to the zig 
+        ++ @import("builtin").zig_version_string ++
+            \\ binary on the system
             \\  --include-global-packages  / specifies that packages in the global package cache should be included
             \\  --include-global-packages=[dir]  / manually specify global package dir
             \\
@@ -124,6 +126,20 @@ const Opts = struct {
     }
 };
 
+pub fn exec(gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const []const u8) ![:0]const u8 {
+    var zig_env_proc = std.process.Child.init(args, gpa);
+    zig_env_proc.stdout_behavior = .Pipe;
+    zig_env_proc.progress_node = progress;
+    try zig_env_proc.spawn();
+    const zig_env_output = try zig_env_proc.stdout.?.readToEndAllocOptions(gpa, std.math.maxInt(usize), null, .of(u8), 0);
+    errdefer gpa.free(zig_env_output);
+    const zig_env_proc_term = try zig_env_proc.wait();
+    if (zig_env_proc_term != .Exited or zig_env_proc_term.Exited != 0) {
+        return printError("zig_env_proc_term {any}", .{zig_env_proc_term});
+    }
+    return zig_env_output;
+}
+
 pub fn main() !u8 {
     var gpa_backing = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa_backing.deinit() == .ok);
@@ -141,21 +157,16 @@ pub fn main() !u8 {
     var progress = std.Progress.start(.{});
     defer progress.end();
 
-    var zig_env_proc = std.process.Child.init(&.{ opts.zig_bin, "env" }, gpa);
-    zig_env_proc.stdout_behavior = .Pipe;
-    zig_env_proc.progress_node = progress;
-    try zig_env_proc.spawn();
-    const zig_env_output = try zig_env_proc.stdout.?.readToEndAllocOptions(gpa, std.math.maxInt(usize), null, .of(u8), 0);
+    const zig_env_output = try exec(gpa, progress, &.{ opts.zig_bin, "env" });
     defer gpa.free(zig_env_output);
-    const zig_env_proc_term = try zig_env_proc.wait();
-    if (zig_env_proc_term != .Exited or zig_env_proc_term.Exited != 0) {
-        std.log.err("zig_env_proc_term {any}", .{zig_env_proc_term});
-        return 1;
-    }
+
     const zig_env_parsed = try std.zon.parse.fromSlice(struct {
         global_cache_dir: []const u8,
         version: []const u8,
     }, arena, zig_env_output, null, .{ .free_on_error = false, .ignore_unknown_fields = true });
+    if (!std.mem.eql(u8, zig_env_parsed.version, @import("builtin").zig_version_string)) {
+        return printError("expected zig version {s}, got version {s}", .{ @import("builtin").zig_version_string, zig_env_parsed.version });
+    }
 
     var deps: DepQueue = .{
         .gpa = gpa,
@@ -182,7 +193,7 @@ pub fn main() !u8 {
     var has_error = false;
 
     {
-        const queue_node = progress.start("read_zons", deps.dependency_name_to_index.keys().len);
+        const queue_node = progress.start("explore", deps.dependency_name_to_index.keys().len);
         defer queue_node.end();
         var queue_idx: usize = 0;
         while (queue_idx < deps.dependency_name_to_index.keys().len) : (queue_idx += 1) {
@@ -318,17 +329,8 @@ pub fn main() !u8 {
             switch (opts.mode) {
                 .single_file => @panic("TODO for single file we need to decide a name and stuff. path=../name"),
                 .multi_file => {
-                    var hash_finder = std.process.Child.init(&.{ opts.zig_bin, "fetch", "--global-cache-dir", tmp_global_cache_dir_name, tmp_name }, gpa);
-                    hash_finder.stdout_behavior = .Pipe;
-                    hash_finder.progress_node = find_hash_node;
-                    try hash_finder.spawn();
-                    const hash_result = try hash_finder.stdout.?.readToEndAlloc(gpa, 256);
+                    const hash_result = try exec(gpa, find_hash_node, &.{ opts.zig_bin, "fetch", "--global-cache-dir", tmp_global_cache_dir_name, tmp_name });
                     defer gpa.free(hash_result);
-                    const term = try hash_finder.wait();
-                    if (term != .Exited or term.Exited != 0) {
-                        std.log.err("bad term: {any} / stdout: {s}", .{ term, hash_result });
-                        return error.BadTerm;
-                    }
                     const found_hash = std.mem.trim(u8, hash_result, " \r\n\t");
                     const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar", .{found_hash});
                     defer gpa.free(found_filename);
