@@ -6,36 +6,36 @@ const DependencyId = enum(usize) { _ };
 
 const DepQueue = struct {
     gpa: std.mem.Allocator,
-    dependency_name_to_zon: std.StringArrayHashMapUnmanaged(?BuildZigZonParseResult) = .empty,
+    dependency_abspath_to_zon: std.StringArrayHashMapUnmanaged(?BuildZigZonParseResult) = .empty,
     finalized: bool = false,
 
     pub fn addAbsolutePath(self: *DepQueue, path: []const u8) !DependencyId {
         std.debug.assert(!self.finalized);
-        const gpres = try self.dependency_name_to_zon.getOrPut(self.gpa, path);
+        const gpres = try self.dependency_abspath_to_zon.getOrPut(self.gpa, path);
         if (!gpres.found_existing) {
             gpres.value_ptr.* = null;
         }
         return @enumFromInt(gpres.index);
     }
     pub fn getAbsolutePath(self: *DepQueue, id: DependencyId) []const u8 {
-        return self.dependency_name_to_zon.keys()[@intFromEnum(id)];
+        return self.dependency_abspath_to_zon.keys()[@intFromEnum(id)];
     }
     pub fn getZon(self: *DepQueue, id: DependencyId) ?*BuildZigZonParseResult {
-        if (self.dependency_name_to_zon.values()[@intFromEnum(id)]) |*value| return value;
+        if (self.dependency_abspath_to_zon.values()[@intFromEnum(id)]) |*value| return value;
         return null;
     }
     pub fn setZon(self: *DepQueue, id: DependencyId, value: BuildZigZonParseResult) void {
-        const ptr = &self.dependency_name_to_zon.values()[@intFromEnum(id)];
+        const ptr = &self.dependency_abspath_to_zon.values()[@intFromEnum(id)];
         std.debug.assert(ptr.* == null); // tried to overwrite package zon
         ptr.* = value;
     }
     pub fn len(self: *DepQueue) usize {
-        return self.dependency_name_to_zon.keys().len;
+        return self.dependency_abspath_to_zon.keys().len;
     }
 
     pub fn deinit(self: *DepQueue) void {
-        for (self.dependency_name_to_zon.values()) |*item| if (item.*) |*ite| ite.deinit();
-        self.dependency_name_to_zon.deinit(self.gpa);
+        for (self.dependency_abspath_to_zon.values()) |*item| if (item.*) |*ite| ite.deinit();
+        self.dependency_abspath_to_zon.deinit(self.gpa);
     }
 
     pub fn finalize(self: *DepQueue) void {
@@ -203,7 +203,7 @@ pub fn main() !u8 {
     var packager: Packager = .{
         .deps = .{
             .gpa = gpa,
-            .dependency_name_to_zon = .empty,
+            .dependency_abspath_to_zon = .empty,
         },
     };
     defer packager.deinit();
@@ -223,7 +223,7 @@ pub fn main() !u8 {
     var has_error = false;
 
     {
-        const queue_node = progress.start("explore", packager.deps.dependency_name_to_zon.keys().len);
+        const queue_node = progress.start("explore", packager.deps.dependency_abspath_to_zon.keys().len);
         defer queue_node.end();
         var queue_idx: usize = 0;
         while (queue_idx < packager.deps.len()) : (queue_idx += 1) {
@@ -245,9 +245,9 @@ pub fn main() !u8 {
     packager.dependency_to_in_order = try gpa.alloc(DtioEnum, packager.deps.len());
     @memset(packager.dependency_to_in_order, .no);
     {
-        const dep_order_node = progress.start("dependency order", packager.deps.dependency_name_to_zon.keys().len);
+        const dep_order_node = progress.start("dependency order", packager.deps.dependency_abspath_to_zon.keys().len);
         defer dep_order_node.end();
-        for (0..packager.deps.dependency_name_to_zon.keys().len) |index| {
+        for (0..packager.deps.dependency_abspath_to_zon.keys().len) |index| {
             defer dep_order_node.completeOne();
             try genDependencyOrder(@enumFromInt(index), &packager.deps, packager.dependency_to_in_order, &packager.dependency_order);
         }
