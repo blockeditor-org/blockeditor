@@ -20,6 +20,7 @@ const PackageID = enum(usize) { _ };
 //     TODO: we should run this:
 //     - first, we need to fix `zig build --fetch=all` causing a build error
 //     - also, we need to make package-deps output compressed files. because the compression ratio is like 80%, huge waste of network to not compress.
+//       - we can backport the 0.16 compression for now
 //   To gather all local packages into seperate tar files and update readmes to point to where to download them:
 //     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix-$URL_PREFIX --update-readmes --update-root=.
 //   To gather everything into one .tar file so you can build depending only on the zig compiler:
