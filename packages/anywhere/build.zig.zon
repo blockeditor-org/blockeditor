@@ -3,7 +3,8 @@
     .version = "0.0.0",
     .dependencies = .{
         .zpool = .{
-            .url = "https://github.com/zig-gamedev/zpool/archive/7829cf02f78e8c39e19b802ccb47ed44037299c2.zip",
+            // .url = "https://github.com/zig-gamedev/zpool/archive/7829cf02f78e8c39e19b802ccb47ed44037299c2.zip",
+            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/zpool-0.11.0-dev-bG692QtEAQCyqBnzSBJbJlY0-a_3v1YcjFTGmg0VBjOc.tar.gz",
             .hash = "zpool-0.11.0-dev-bG692QtEAQCyqBnzSBJbJlY0-a_3v1YcjFTGmg0VBjOc",
         },
     },
