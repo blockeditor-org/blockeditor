@@ -23,8 +23,8 @@ const PackageID = enum(usize) { _ };
 //       - we can backport the 0.16 compression for now
 //   To gather all local packages into seperate tar files and update readmes to point to where to download them:
 //     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix-$URL_PREFIX --update-readmes --update-root=.
-//   To gather everything into one .tar file so you can build depending only on the zig compiler:
-//     --src-pkg=. --zig-bin=zig --dst-file=build/app.tar --include-global-packages
+//   To gather everything into one .tar.gz file so you can build depending only on the zig compiler:
+//     --src-pkg=. --zig-bin=zig --dst-file=build/app.tar.gz --include-global-packages
 //   To see why a package is installed
 //     --why=path/to/package --include-global-packages
 // it would be nice to simplify these to not need so many arguments
@@ -198,7 +198,7 @@ const Opts = struct {
             \\  --no-include-local  / if set, skip emitting local packages. local packages are packages inside the update root.
             \\
             \\For single-file output:
-            \\  --dst-file=[file].tar  / specifies the output file
+            \\  --dst-file=[file].tar.gz  / specifies the output file
             \\
         ;
         var src_pkgs: std.ArrayList([]const u8) = .empty;
@@ -521,12 +521,17 @@ fn emitFileInternal(
 
     if (!opts.no_include_local or !dep_bzz.is_local) {
         const rand_int = std.crypto.random.int(u64);
-        const tmp_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(rand_int) ++ ".tar";
+        const tmp_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(rand_int) ++ ".tar.gz";
         {
             var out_file = try std.fs.cwd().createFile(tmp_name, .{});
             defer out_file.close();
             var out_file_buf: [1024]u8 = undefined;
             var out_file_writer = out_file.writer(&out_file_buf);
+
+            const Compress = @import("./vendor/Compress.zig");
+            const flate = @import("./vendor/flate.zig");
+            var compressor_buf: [flate.max_window_len * 2]u8 = undefined;
+            var compressor: Compress = try .init(&out_file_writer.interface, &compressor_buf, .gzip, .level_5);
 
             if (comptime !std.mem.eql(u8, @import("builtin").zig_version_string, "0.15.2")) {
                 // TODO: enable compression. it looks like it will be in 0.16.0:
@@ -535,7 +540,7 @@ fn emitFileInternal(
                 @compileError("TODO: enable compression");
             }
 
-            var tar: std.tar.Writer = .{ .underlying_writer = &out_file_writer.interface };
+            var tar: std.tar.Writer = .{ .underlying_writer = &compressor.writer };
 
             var seen_paths: std.StringArrayHashMapUnmanaged(void) = .empty;
             defer seen_paths.deinit(gpa);
@@ -586,6 +591,7 @@ fn emitFileInternal(
             // finally, write build.zig.zon
 
             try tar.finishPedantically();
+            try compressor.writer.flush();
             try out_file_writer.interface.flush();
         }
 
@@ -610,7 +616,7 @@ fn emitFileInternal(
                 });
                 defer gpa.free(hash_result);
                 const found_hash = std.mem.trim(u8, hash_result, " \r\n\t");
-                const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar", .{found_hash});
+                const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar.gz", .{found_hash});
                 defer gpa.free(found_filename);
 
                 const rendered_url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.url_prefix, found_filename });
