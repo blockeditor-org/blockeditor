@@ -7,61 +7,51 @@
         .anywhere = .{ .path = "../anywhere" },
 
         .@"3dstools" = .{
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAHxWBQATmp-BLdBzM-riYNvHJQGVWoqBczBFKWTF.tar.gz",
+            .url = "https://github.com/devkitPro/3dstools/archive/718d6f2330dbef9dd5726573392425dcbd451677.tar.gz",
             .hash = "N-V-__8AAHxWBQATmp-BLdBzM-riYNvHJQGVWoqBczBFKWTF",
         },
         .@"3dstools-cxitool" = .{
-            // .url = "https://github.com/devkitPro/3dstools/archive/26a73b75d37db9c5be2e6ea172ddfc0c6f278bea.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAIBVEQDZjKAaT8fit53sA4IYOyrMKVC4VFQaJWHP.tar.gz",
+            .url = "https://github.com/devkitPro/3dstools/archive/26a73b75d37db9c5be2e6ea172ddfc0c6f278bea.tar.gz",
             .hash = "N-V-__8AAIBVEQDZjKAaT8fit53sA4IYOyrMKVC4VFQaJWHP",
         },
         .libctru = .{
             // patched to disable threadlocal path vars
-            // .url = "https://github.com/pfgithub/libctru/archive/13e35d7f19c51c334bf575fcf80b653edc0a0abe.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAHlqFwCtEk1v9qzecg3ZH_gCjNmZLy8_U0v9nEez.tar.gz",
+            .url = "https://github.com/pfgithub/libctru/archive/13e35d7f19c51c334bf575fcf80b653edc0a0abe.tar.gz",
             .hash = "N-V-__8AAHlqFwCtEk1v9qzecg3ZH_gCjNmZLy8_U0v9nEez",
         },
         .citro2d = .{
-            // .url = "https://github.com/devkitPro/citro2d/archive/4e415d7707fe31c2caa3bb5153da81870956b65c.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AANwKAwBkI_C_b1h1LDfzhNATqcvYasjwPiAub2oM.tar.gz",
+            .url = "https://github.com/devkitPro/citro2d/archive/4e415d7707fe31c2caa3bb5153da81870956b65c.tar.gz",
             .hash = "N-V-__8AANwKAwBkI_C_b1h1LDfzhNATqcvYasjwPiAub2oM",
         },
         .citro3d = .{
-            // .url = "https://github.com/devkitPro/citro3d/archive/9f21cf7b380ce6f9e01a0420f19f0763e5443ca7.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAJwVBACzGgNn7bn02bqGTj-gimeMUDdZfloI3_uH.tar.gz",
+            .url = "https://github.com/devkitPro/citro3d/archive/9f21cf7b380ce6f9e01a0420f19f0763e5443ca7.tar.gz",
             .hash = "N-V-__8AAJwVBACzGgNn7bn02bqGTj-gimeMUDdZfloI3_uH",
         },
         .@"devkitarm-crtls" = .{
-            // .url = "https://github.com/devkitPro/devkitarm-crtls/archive/refs/tags/v1.2.3.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAHu9AQBf4E0c9OUbxvSw3klIz7QY2kqpAjPJZrZ0.tar.gz",
+            .url = "https://github.com/devkitPro/devkitarm-crtls/archive/refs/tags/v1.2.3.tar.gz",
             .hash = "N-V-__8AAHu9AQBf4E0c9OUbxvSw3klIz7QY2kqpAjPJZrZ0",
         },
         .newlib = .{
             // uses the devkitPro branch
-            // .url = "https://github.com/devkitPro/newlib/archive/216460be06ac8d594623b427f4b2fbd89ea109fa.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AACf-BATvhkv0338y_fj-Qswbj2lN6gqPhuRMjkxq.tar.gz",
+            .url = "https://github.com/devkitPro/newlib/archive/216460be06ac8d594623b427f4b2fbd89ea109fa.tar.gz",
             .hash = "N-V-__8AACf-BATvhkv0338y_fj-Qswbj2lN6gqPhuRMjkxq",
         },
         .@"general-tools" = .{
             // uses the 'bin2s/name' branch because they've been working around it missing that functionality with sed
             // despite having had a branch to do it for years?
-            // .url = "https://github.com/devkitPro/general-tools/archive/5d2e0a3dc58fa3043ce5003871e7234ce181a1cd.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAPseAQD3dw4mtKHevx6jfARBeQU3wLslp7j3kz2j.tar.gz",
+            .url = "https://github.com/devkitPro/general-tools/archive/5d2e0a3dc58fa3043ce5003871e7234ce181a1cd.tar.gz",
             .hash = "N-V-__8AAPseAQD3dw4mtKHevx6jfARBeQU3wLslp7j3kz2j",
         },
         .@"3ds-examples" = .{
-            // .url = "https://github.com/devkitPro/3ds-examples/archive/979ab794de89f1ce30a2e307a8dc17fc4fe1d684.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AACC0VADmjYf5fR1i3NvrZIdI1bP9APxEu3mS6IDv.tar.gz",
+            .url = "https://github.com/devkitPro/3ds-examples/archive/979ab794de89f1ce30a2e307a8dc17fc4fe1d684.tar.gz",
             .hash = "N-V-__8AACC0VADmjYf5fR1i3NvrZIdI1bP9APxEu3mS6IDv",
         },
         .picasso = .{
-            // .url = "https://github.com/devkitPro/picasso/archive/d522455ea59cd5cb9219c699b93eb7750039233c.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAN15AQCZnR6yzPeu38OdEEIsBwG0viilwv_JWQn3.tar.gz",
+            .url = "https://github.com/devkitPro/picasso/archive/d522455ea59cd5cb9219c699b93eb7750039233c.tar.gz",
             .hash = "N-V-__8AAN15AQCZnR6yzPeu38OdEEIsBwG0viilwv_JWQn3",
         },
         .tex3ds = .{
-            // .url = "https://github.com/devkitPro/tex3ds/archive/37220c696e873812df41af62d1db0b20c66661fe.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAN6sBQA5G75AWeUNWalhB3Clcw9B4xn7PSgVtNQh.tar.gz",
+            .url = "https://github.com/devkitPro/tex3ds/archive/37220c696e873812df41af62d1db0b20c66661fe.tar.gz",
             .hash = "N-V-__8AAN6sBQA5G75AWeUNWalhB3Clcw9B4xn7PSgVtNQh",
         },
     },

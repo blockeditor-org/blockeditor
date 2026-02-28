@@ -7,8 +7,7 @@
     },
     .dependencies = .{
         .sheen_bidi = .{
-            // .url = "https://github.com/Tehreer/SheenBidi/archive/refs/tags/v2.7.tar.gz",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAIgnFAH4A8CDdoeJ2eLxI9jTSWYriwHJ22IfrwBv.tar.gz",
+            .url = "https://github.com/Tehreer/SheenBidi/archive/refs/tags/v2.7.tar.gz",
             .hash = "N-V-__8AAIgnFAH4A8CDdoeJ2eLxI9jTSWYriwHJ22IfrwBv",
         },
     },

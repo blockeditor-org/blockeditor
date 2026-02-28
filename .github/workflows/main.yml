@@ -13,7 +13,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - run: zig build --fetch
+      - name: Download packages
+        run: |
+          mkdir -p ~/.cache/zig &&
+          echo "Download..." &&
+          wget -q -O blockeditor-packages-1.tar.xz https://lfs.pfg.pw/by-name/blockeditor-packages-1.tar.xz &&
+          echo "Shasum..." &&
+          echo "92cd044287b6b79f48c48ddde9a5458af444a5b90ac73e9eab95347753665aae *blockeditor-packages-1.tar.xz" | shasum -a 256 --check --status &&
+          echo "Extract..." &&
+          tar -xJf blockeditor-packages-1.tar.xz -C ~/.cache/zig/ &&
+          echo "Done"
       - run: zig build -Dci
       - run: zig build test -Dci
       - run: zig build -Dci -Dtarget=x86_64-windows -p build/windows

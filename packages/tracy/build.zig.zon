@@ -5,9 +5,8 @@
     .paths = .{""},
     .dependencies = .{
         .tracy = .{
-            // .url = "https://github.com/allyourcodebase/tracy/archive/2eb14e9a93a51e8478d95279e4174ab3561ba416.zip",
-            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/tracy-0.13.1-zvQnzeQ9AQHs5jDue7xpGtipm9oe_bWl5r64T-0gTnAd.tar.gz",
-            .hash = "tracy-0.13.1-zvQnzeQ9AQHs5jDue7xpGtipm9oe_bWl5r64T-0gTnAd",
+            .url = "https://github.com/allyourcodebase/tracy/archive/2eb14e9a93a51e8478d95279e4174ab3561ba416.zip",
+            .hash = "tracy-0.13.1-zvQnzWVHAQGAPNv8DPEUMHMJCBCGKqb1xMylrJ1hfNb-",
         },
     },
 }
