@@ -7,8 +7,10 @@
     },
     .dependencies = .{
         .wuffs = .{
-            .url = "https://github.com/allyourcodebase/wuffs/archive/12b39d1dd9daeea4163aec467a3b5eb8b0a53cca.zip",
-            .hash = "wuffs-0.4.0-alpha.9+3837.20240914-3CHJgWMGAAD3hteyqU_fxXYYsWQ44J49nv2lUDNPipPI",
+            // .url = "https://github.com/allyourcodebase/wuffs/archive/12b39d1dd9daeea4163aec467a3b5eb8b0a53cca.zip",
+            // .hash = "wuffs-0.4.0-alpha.9+3837.20240914-3CHJgWMGAAD3hteyqU_fxXYYsWQ44J49nv2lUDNPipPI",
+            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/wuffs-0.4.0-alpha.9+3837.20240914-3CHJgTQGAACieq5ABEWGgxlXYD29SldSQpzl0Z_eoqrQ.tar.gz",
+            .hash = "wuffs-0.4.0-alpha.9+3837.20240914-3CHJgTQGAACieq5ABEWGgxlXYD29SldSQpzl0Z_eoqrQ",
         },
     },
 }
