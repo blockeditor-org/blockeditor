@@ -17,7 +17,7 @@ jobs:
         run: |
           mkdir -p ~/.cache/zig &&
           echo "Download..." &&
-          wget -q -O blockeditor-packages-1.tar.xz https://unalfs.b-cdn.net/by-name/blockeditor-packages-1.tar.xz &&
+          wget -q -O blockeditor-packages-1.tar.xz https://lfs.pfg.pw/by-name/blockeditor-packages-1.tar.xz &&
           echo "Shasum..." &&
           echo "92cd044287b6b79f48c48ddde9a5458af444a5b90ac73e9eab95347753665aae *blockeditor-packages-1.tar.xz" | shasum -a 256 --check --status &&
           echo "Extract..." &&
@@ -30,7 +30,7 @@ jobs:
       - run: unset ZIG_LOCAL_CACHE_DIR; ./gradlew assembleDebug
         working-directory: packages/android/Aztest
       - run: mkdir -p build/android && cp packages/android/Aztest/app/build/outputs/apk/debug/app-debug.apk build/android
-      - run: zig run packages/zools/src/package-deps.zig -- --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix=https://unalfs.b-cdn.net/by-name/
+      - run: zig run packages/zools/src/package-deps.zig -- bundle build/packages https://lfs.pfg.pw/by-hash/zig-pkg/
       - uses: actions/upload-artifact@v4
         with:
           path: build

@@ -16,17 +16,14 @@ const PackageID = enum(usize) { _ };
 
 // Usage modes:
 //   To gather all URL dependencies for uploading onto your own server, and update local packages to use the new URL:
-//     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix=$URL_PREFIX --include-global-packages --no-include-local --update-dependency-urls --update-root=.
-//     TODO: we should run this:
-//     - first, we need to fix `zig build --fetch=all` causing a build error
-//     - also, we need to make package-deps output compressed files. because the compression ratio is like 80%, huge waste of network to not compress.
-//       - we can backport the 0.16 compression for now
+//     bundle build/packages $URL_PREFIX --exclude-local-packages --update-dependency-urls --compression-level=best
+//       TODO: we should run this: we need to fix `zig build --fetch=all` causing a build error
 //   To gather all local packages into seperate tar files and update readmes to point to where to download them:
-//     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix-$URL_PREFIX --update-readmes --update-root=.
+//     bundle build/packages $URL_PREFIX --exclude-global-packages --update-readmes
 //   To gather everything into one .tar.gz file so you can build depending only on the zig compiler:
-//     --src-pkg=. --zig-bin=zig --dst-file=build/app.tar.gz --include-global-packages
+//     bundle-onefile build/app.tar.gz
 //   To see why a package is installed
-//     --why=path/to/package --include-global-packages
+//     why path/to/package
 // it would be nice to simplify these to not need so many arguments
 
 const PackageQueue = struct {
@@ -155,52 +152,58 @@ pub fn printError(comptime msg: []const u8, args: anytype) error{Errored} {
 }
 
 const Opts = struct {
+    command_type: CommandType,
     src_pkgs: []const []const u8,
     zig_bin: []const u8,
-    dst_dir: []const u8,
-    url_prefix: []const u8,
     include_global_packages: bool,
     override_global_packages_dir: ?[]const u8,
-    update_dependency_urls: bool,
+    update: struct {
+        dependency_urls: bool,
+    },
     update_root: []const u8,
-    no_include_local: bool,
-    mode: Mode,
-    why_pkg: ?[]const u8,
+    exclude_local_packages: bool,
     compression_level: CompressionLevel,
     verbose_compression: bool,
 
-    const Mode = enum { multi_file, single_file };
     const CompressionLevel = std.meta.DeclEnum(@import("vendor/Compress.zig").Options);
+    const CommandType = union(enum) {
+        bundle: struct {
+            dst_dir: []const u8,
+            url_prefix: []const u8,
+        },
+        why: struct {
+            pkg: []const u8,
+        },
+    };
 
     pub fn deinit(self: *Opts, gpa: std.mem.Allocator) void {
         gpa.free(self.src_pkgs);
     }
     pub fn parse(gpa: std.mem.Allocator, args: []const []const u8) !Opts {
+        var iter = ArgsIter.init(args[1..]);
         const usage =
             \\Usage:
-            \\  zig run package-deps.zig -- ...args
-            \\
-            \\Example:
-            \\  zig run package-deps.zig -- --src-pkg=. --zig-bin=zig --dst-dir=dst --url-prefix=https://github.com/org/repo/releases/tag/release-id/
+            \\  zig run package-deps.zig -- bundle [./dst/dir] [https://url_prefix/]
+            \\  zig run package-deps.zig -- why [./path/to/package]
             \\
             \\Flags:
             \\  --src-pkg=[src_dir]  / specifies the source directory to search for packages.
             \\                                 you may specify multiple by repeating this flag.
-            \\  --zig-bin=[zig_bin]  / specifies the path to the zig 
+            \\                                 default is '.' if no src-pkgs are specified
+            \\  --zig-bin=[zig_bin]  / specifies the path to the zig, default `zig`
         ++ @import("builtin").zig_version_string ++
             \\ binary on the system
-            \\  --include-global-packages  / specifies that packages in the global package cache should be included
-            \\  --include-global-packages=[dir]  / manually specify global package dir
-            \\  --update-root=[folder]
+            \\  --exclude-global-packages  / specifies that packages in the global package cache should not be walked
+            \\  --global-packages-dir=[dir]  / manually specify global package dir, default `$(zig env).global_cache_dir`
+            \\  --update-root=[folder]  / don't update anything outside of this root, default `.`
             \\  --why=[path]  / prints the chain of dependents leading to this package and exits
             \\  --compression-level=[level_1...level_9/fastest/default/best]  / sets gzip compression level. default 'default'
             \\  --verbose-compression  / output file sizes and compression levels
+            \\  --help  / show this
             \\
             \\For multi-file output:
-            \\  --dst-dir=[dst]  / specifies the output folder. will non-recursively create if it does not exist.
-            \\  --url-prefix=[url-prefix]  / specifies the 
             \\  --update-dependency-urls  / if set, update build.zig.zon files to point to the new generated URLs & hashes
-            \\  --no-include-local  / if set, skip emitting local packages. local packages are packages inside the update root.
+            \\  --exclude-local-packages  / if set, skip emitting local packages. local packages are packages inside the update root.
             \\
             \\For single-file output:
             \\  --dst-file=[file].tar.gz  / specifies the output file
@@ -208,67 +211,72 @@ const Opts = struct {
         ;
         var src_pkgs: std.ArrayList([]const u8) = .empty;
         defer src_pkgs.deinit(gpa);
-        var zig_bin_opt: ?[]const u8 = null;
-        var dst_dir_opt: ?[]const u8 = null;
-        var url_prefix_opt: ?[]const u8 = null;
-        var include_global_packages = false;
+        var zig_bin: []const u8 = "zig";
+        var include_global_packages = true;
         var update_dependency_urls = false;
         var update_root: []const u8 = ".";
         var override_global_packages_dir: ?[]const u8 = null;
-        var no_include_local = false;
-        var why_pkg: ?[]const u8 = null;
+        var exclude_local_packages = false;
         var compression_level: CompressionLevel = .default;
         var verbose_compression: bool = false;
+        var opts_done = false;
+        var positionals: std.ArrayList([]const u8) = .empty;
+        defer positionals.deinit(gpa);
 
-        for (args[1..]) |arg| {
-            if (tryEat(arg, "--src-pkg=")) |sub| {
+        while (iter.take()) |arg| {
+            if (opts_done or !std.mem.startsWith(u8, arg, "-")) {
+                try positionals.append(gpa, arg);
+                continue;
+            }
+            if (std.mem.eql(u8, arg, "--")) {
+                opts_done = true;
+            } else if (tryEat(arg, "--src-pkg=")) |sub| {
                 try src_pkgs.append(gpa, sub);
             } else if (tryEat(arg, "--zig-bin=")) |sub| {
-                zig_bin_opt = sub;
-            } else if (tryEat(arg, "--dst-dir=")) |sub| {
-                dst_dir_opt = sub;
-            } else if (tryEat(arg, "--url-prefix=")) |sub| {
-                url_prefix_opt = sub;
+                zig_bin = sub;
             } else if (tryEat(arg, "--dst-file=")) |sub| {
                 _ = sub;
                 return printError("todo implement single-file output mode", .{});
-            } else if (std.mem.eql(u8, arg, "--include-global-packages")) {
-                include_global_packages = true;
-            } else if (tryEat(arg, "--include-global-packages=")) |sub| {
-                include_global_packages = true;
+            } else if (std.mem.eql(u8, arg, "--exclude-global-packages")) {
+                include_global_packages = false;
+            } else if (tryEat(arg, "--global-packages-dir=")) |sub| {
                 override_global_packages_dir = sub;
             } else if (std.mem.eql(u8, arg, "--update-dependency-urls")) {
                 update_dependency_urls = true;
             } else if (tryEat(arg, "--update-root=")) |sub| {
                 update_root = sub;
-            } else if (std.mem.eql(u8, arg, "--no-include-local")) {
-                no_include_local = true;
-            } else if (tryEat(arg, "--why=")) |sub| {
-                why_pkg = sub;
+            } else if (std.mem.eql(u8, arg, "--exclude-local-packages")) {
+                exclude_local_packages = true;
             } else if (tryEat(arg, "--compression-level=")) |sub| {
                 compression_level = std.meta.stringToEnum(CompressionLevel, sub) orelse {
                     return printError("invalid comrpession level: '{s}', expected: level_1/.../level_9/fastest/default/best", .{sub});
                 };
             } else if (std.mem.eql(u8, arg, "--verbose-compression")) {
                 verbose_compression = true;
+            } else if (std.mem.eql(u8, arg, "--help")) {
+                return printError("help:\n{s}", .{usage}); // this should go to stdout and return exit code 0
             } else {
                 return printError("unexpected arg \"{f}\". usage:\n{s}", .{ std.zig.fmtString(arg), usage });
             }
         }
 
+        const cmdstr = std.meta.stringToEnum(enum { bundle, why }, if (positionals.items.len == 0) "" else positionals.items[0]) orelse {
+            return printError("missing command 'bundle' or 'why'\n{s}", .{usage});
+        };
+        const command_type: CommandType = command_type: switch (cmdstr) {
+            .bundle => {
+                if (positionals.items.len != 3) return printError("missing dst_dir or url_prefix or extra args\n{s}", .{usage});
+                break :command_type .{ .bundle = .{ .dst_dir = positionals.items[1], .url_prefix = positionals.items[2] } };
+            },
+            .why => {
+                if (positionals.items.len != 2) return printError("missing path_to_package or extra args\n{s}", .{usage});
+                break :command_type .{ .why = .{ .pkg = positionals.items[1] } };
+            },
+        };
+
         if (src_pkgs.items.len == 0) {
-            return printError("missing --src-pkg, usage:\n{s}", .{usage});
+            try src_pkgs.append(gpa, ".");
         }
-        const zig_arg = zig_bin_opt orelse {
-            return printError("missing --zig-bin, usage:\n{s}", .{usage});
-        };
-        const dst_dir = dst_dir_opt orelse {
-            return printError("missing --dst-dir, usage:\n{s}", .{usage});
-        };
-        const url_prefix = url_prefix_opt orelse {
-            return printError("missing --url-prefix, usage:\n{s}", .{usage});
-        };
-        const mode: Mode = .multi_file;
 
         const src_pkgs_owned = try src_pkgs.toOwnedSlice(gpa);
         errdefer gpa.free(src_pkgs_owned);
@@ -277,25 +285,39 @@ const Opts = struct {
             return printError("missing --include-global-packages, required if using --update-depdendency-urls", .{});
         }
 
-        if (no_include_local and !include_global_packages) {
-            return printError("missing --include-global-packages, required if using --no-include-local", .{});
+        if (exclude_local_packages and !include_global_packages) {
+            return printError("missing --include-global-packages, required if using --exclude-local-packages", .{});
         }
 
         return .{
+            .command_type = command_type,
             .src_pkgs = src_pkgs_owned,
-            .zig_bin = zig_arg,
-            .dst_dir = dst_dir,
-            .url_prefix = url_prefix,
+            .zig_bin = zig_bin,
             .include_global_packages = include_global_packages,
             .override_global_packages_dir = override_global_packages_dir,
-            .update_dependency_urls = update_dependency_urls,
+            .update = .{ .dependency_urls = update_dependency_urls },
             .update_root = update_root,
-            .no_include_local = no_include_local,
-            .why_pkg = why_pkg,
+            .exclude_local_packages = exclude_local_packages,
             .compression_level = compression_level,
             .verbose_compression = verbose_compression,
-            .mode = mode,
         };
+    }
+};
+
+const ArgsIter = struct {
+    args: []const []const u8,
+    index: usize,
+    fn init(args: []const []const u8) ArgsIter {
+        return .{ .args = args, .index = 0 };
+    }
+    fn peek(self: *ArgsIter) ?[]const u8 {
+        if (self.index >= self.args.len) return null;
+        return self.args[self.index];
+    }
+    fn take(self: *ArgsIter) ?[]const u8 {
+        const res = self.peek() orelse return null;
+        self.index += 1;
+        return res;
     }
 };
 
@@ -330,6 +352,12 @@ const Context = struct {
 };
 
 pub fn main() !u8 {
+    return main2() catch |e| switch (e) {
+        error.Errored => return 1,
+        else => return e,
+    };
+}
+pub fn main2() !u8 {
     var gpa_backing = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa_backing.deinit() == .ok);
     const gpa = gpa_backing.allocator();
@@ -406,37 +434,39 @@ pub fn main() !u8 {
     var df = try deps.finalize();
     defer df.deinit();
 
-    // --- ADDED START ---
-    if (opts.why_pkg) |why_raw| {
-        const why_path = std.fs.cwd().realpathAlloc(gpa, why_raw) catch |e| {
-            return printError("could not resolve path '{s}': {s}", .{ why_raw, @errorName(e) });
-        };
-        defer gpa.free(why_path);
+    const bundle = switch (opts.command_type) {
+        .why => |*why| {
+            const why_path = std.fs.cwd().realpathAlloc(gpa, why.pkg) catch |e| {
+                return printError("could not resolve path '{s}': {s}", .{ why.pkg, @errorName(e) });
+            };
+            defer gpa.free(why_path);
 
-        var target_id: ?PackageID = null;
-        var i: usize = 0;
-        while (i < df.abspaths.len()) : (i += 1) {
-            const pkg_path = df.abspaths.get(@enumFromInt(i));
-            if (std.mem.eql(u8, pkg_path, why_path)) {
-                target_id = @enumFromInt(i);
-                break;
+            var target_id: ?PackageID = null;
+            var i: usize = 0;
+            while (i < df.abspaths.len()) : (i += 1) {
+                const pkg_path = df.abspaths.get(@enumFromInt(i));
+                if (std.mem.eql(u8, pkg_path, why_path)) {
+                    target_id = @enumFromInt(i);
+                    break;
+                }
             }
-        }
 
-        if (target_id) |tid| {
-            try printWhyChain(tid, &df, 0);
-        } else {
-            std.log.err("package not found in dependency tree: {s}", .{why_path});
-            return 1;
-        }
+            if (target_id) |tid| {
+                try printWhyChain(tid, &df, 0);
+            } else {
+                std.log.err("package not found in dependency tree: {s}", .{why_path});
+                return 1;
+            }
 
-        return 0;
-    }
+            return 0;
+        },
+        .bundle => |*bundle| bundle,
+    };
 
     std.fs.cwd().makeDir(".zig-cache") catch {};
     std.fs.cwd().makeDir(".zig-cache/tmp") catch {};
     std.fs.cwd().makeDir(context.tmp_global_cache_dir_name) catch {};
-    std.fs.cwd().makeDir(opts.dst_dir) catch {};
+    std.fs.cwd().makeDir(bundle.dst_dir) catch {};
 
     defer {
         const cleanup = progress.start("clean up", 1);
@@ -540,7 +570,7 @@ fn emitFileInternal(
     // -> which will write to an xz writer (std.compress.flate)
     // -> which will write to the output file
 
-    if (!opts.no_include_local or !dep_bzz.is_local) {
+    if (!opts.exclude_local_packages or !dep_bzz.is_local) {
         const rand_int = std.crypto.random.int(u64);
         const tmp_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(rand_int) ++ ".tar.gz";
         {
@@ -639,44 +669,39 @@ fn emitFileInternal(
         const find_hash_node = render_dep_node.start("find hash", 0);
         defer find_hash_node.end();
 
-        switch (opts.mode) {
-            .single_file => @panic("TODO for single file we need to decide a name and stuff. path=../name"),
-            .multi_file => {
-                const hash_result = try exec(gpa, find_hash_node, &.{
-                    opts.zig_bin,
-                    "fetch",
-                    "--global-cache-dir",
-                    switch (opts.update_dependency_urls and !dep_bzz.is_local and efo.context.global_cache_dir != null) {
-                        true => efo.context.global_cache_dir.?,
-                        false => efo.context.tmp_global_cache_dir_name,
-                    },
-                    tmp_name,
-                });
-                defer gpa.free(hash_result);
-                const found_hash = std.mem.trim(u8, hash_result, " \r\n\t");
-                const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar.gz", .{found_hash});
-                defer gpa.free(found_filename);
-
-                const rendered_url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.url_prefix, found_filename });
-                errdefer gpa.free(rendered_url);
-                const rendered_path = try std.fs.path.join(gpa, &.{ opts.dst_dir, found_filename });
-                defer gpa.free(rendered_path);
-                const rendered_hash = try gpa.dupe(u8, found_hash);
-                errdefer gpa.free(rendered_hash);
-
-                // move the file
-                try std.fs.cwd().rename(tmp_name, rendered_path);
-
-                // finally, set generated zon. this takes ownership of rendered_url,rendered_hash
-                dep_bzz.generated_zon = .{
-                    .url = rendered_url,
-                    .hash = rendered_hash,
-                };
+        const hash_result = try exec(gpa, find_hash_node, &.{
+            opts.zig_bin,
+            "fetch",
+            "--global-cache-dir",
+            switch (opts.update.dependency_urls and !dep_bzz.is_local and efo.context.global_cache_dir != null) {
+                true => efo.context.global_cache_dir.?,
+                false => efo.context.tmp_global_cache_dir_name,
             },
-        }
+            tmp_name,
+        });
+        defer gpa.free(hash_result);
+        const found_hash = std.mem.trim(u8, hash_result, " \r\n\t");
+        const found_filename = try std.fmt.allocPrint(gpa, "{s}.tar.gz", .{found_hash});
+        defer gpa.free(found_filename);
+
+        const rendered_url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.command_type.bundle.url_prefix, found_filename });
+        errdefer gpa.free(rendered_url);
+        const rendered_path = try std.fs.path.join(gpa, &.{ opts.command_type.bundle.dst_dir, found_filename });
+        defer gpa.free(rendered_path);
+        const rendered_hash = try gpa.dupe(u8, found_hash);
+        errdefer gpa.free(rendered_hash);
+
+        // move the file
+        try std.fs.cwd().rename(tmp_name, rendered_path);
+
+        // finally, set generated zon. this takes ownership of rendered_url,rendered_hash
+        dep_bzz.generated_zon = .{
+            .url = rendered_url,
+            .hash = rendered_hash,
+        };
     }
 
-    if (opts.update_dependency_urls and dep_bzz.is_local and dep_bzz.ast != null) {
+    if (opts.update.dependency_urls and dep_bzz.is_local and dep_bzz.ast != null) {
         const rendered = try renderBuildZigZon(gpa, dep_bzz, df, .source);
         defer gpa.free(rendered);
         const path = try std.fs.path.join(gpa, &.{ dep_abspath, "build.zig.zon" });
@@ -712,7 +737,7 @@ fn renderBuildZigZon(gpa: std.mem.Allocator, dep_bzz: *PackageInfo, df: *Package
         const other_bzz = df.bzzs.get(dep_id);
         if (mode == .source and other_bzz.is_local) continue;
         const generated_zon = other_bzz.generated_zon orelse {
-            return printError("it should have been generated by now // this error could occur when --no-include-local is passed but a nonlocal package depends on a local one. TODO, it should be gracefully handled in that case", .{});
+            return printError("it should have been generated by now // this error could occur when --exclude-local-packages is passed but a nonlocal package depends on a local one. TODO, it should be gracefully handled in that case", .{});
         };
 
         var result_package_info_writer: std.Io.Writer.Allocating = .init(gpa);
