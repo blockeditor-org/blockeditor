@@ -625,6 +625,10 @@ fn emitFileInternal(
                 const fullpath = try std.fs.path.join(gpa, &.{ df.abspaths.get(dep), file_path });
                 defer gpa.free(fullpath);
 
+                if (std.mem.indexOfScalar(u8, file_path, "\\")) {
+                    return printError("TODO: convert windows to posix path");
+                }
+
                 if (std.mem.eql(u8, file_path, "build.zig.zon")) {
                     // write build.zig.zon
                     const rendered = try renderBuildZigZon(gpa, dep_bzz, df, .output);
