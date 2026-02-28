@@ -28,6 +28,7 @@ const PackageID = enum(usize) { _ };
 
 const PackageQueue = struct {
     gpa: std.mem.Allocator,
+    /// TODO: store packages by (name/fingerprint@version) and only fall back to abspath for packages without a name and fingerprint
     dependency_abspath_to_zon: std.StringArrayHashMapUnmanaged(PackageInfo) = .empty,
     finalized: bool = false,
 
@@ -436,29 +437,13 @@ pub fn main2() !u8 {
 
     const bundle = switch (opts.command_type) {
         .why => |*why| {
-            const why_path = std.fs.cwd().realpathAlloc(gpa, why.pkg) catch |e| {
+            const cwd = std.fs.cwd();
+            const why_path = cwd.realpathAlloc(gpa, why.pkg) catch |e| {
                 return printError("could not resolve path '{s}': {s}", .{ why.pkg, @errorName(e) });
             };
             defer gpa.free(why_path);
 
-            var target_id: ?PackageID = null;
-            var i: usize = 0;
-            while (i < df.abspaths.len()) : (i += 1) {
-                const pkg_path = df.abspaths.get(@enumFromInt(i));
-                if (std.mem.eql(u8, pkg_path, why_path)) {
-                    target_id = @enumFromInt(i);
-                    break;
-                }
-            }
-
-            if (target_id) |tid| {
-                try printWhyChain(tid, &df, 0);
-            } else {
-                std.log.err("package not found in dependency tree: {s}", .{why_path});
-                return 1;
-            }
-
-            return 0;
+            return printError("TODO: print why tree", .{});
         },
         .bundle => |*bundle| bundle,
     };
@@ -501,33 +486,6 @@ pub fn main2() !u8 {
 
     if (context.has_error) return 1;
     return 0;
-}
-
-fn printWhyChain(id: PackageID, df: *PackageList, depth: usize) !void {
-    const path = df.abspaths.get(id);
-    const zon = df.bzzs.get(id);
-    const dependents = zon.dependents.view(&df.dependents);
-
-    // Indentation
-    var i: usize = 0;
-    while (i < depth) : (i += 1) std.debug.print("  ", .{});
-
-    if (depth == 0) {
-        std.debug.print("{s}\n", .{path});
-    } else {
-        std.debug.print("needed by {s}\n", .{path});
-    }
-
-    if (dependents.len == 0 and depth > 0) {
-        var j: usize = 0;
-        while (j < depth + 1) : (j += 1) std.debug.print("  ", .{});
-        std.debug.print("(root)\n", .{});
-        return;
-    }
-
-    for (dependents) |dep_id| {
-        try printWhyChain(dep_id, df, depth + 1);
-    }
 }
 
 const EmitFileOpts = struct {
@@ -853,6 +811,7 @@ const PackageInfo = struct {
     paths: []const []const u8,
     dependencies: std.AutoArrayHashMapUnmanaged(PackageID, DependencyInfo),
     dependents: TypesafeSlice(DependentsListIndex, PackageID).Subslice = .{ .start = 0, .len = 0 },
+    name: ?[]const u8 = null,
 
     is_local: bool,
     generated_zon: ?struct {
@@ -932,6 +891,7 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
     const parsed = try std.zon.parse.fromZoirNode(struct {
         paths: ?[]const []const u8 = null,
         dependencies: ?std.zig.Zoir.Node.Index = null,
+        name: ?std.zig.Zoir.Node.Index = null,
     }, arena, ast, zoir, .root, null, .{
         .ignore_unknown_fields = true,
         .free_on_error = false,
@@ -985,6 +945,14 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
         }
     }
 
+    var name: ?[]const u8 = null;
+    if (parsed.name) |name_id| {
+        const node = name_id.get(zoir);
+        if (node == .enum_literal) {
+            name = node.enum_literal.get(zoir);
+        }
+    }
+
     // now, parse dependencies (we could use std.zon to make this easy maybe?)
     // then, parse paths
     // then, save the ast along with the dependencies token index so we can replace it for rendering
@@ -1002,10 +970,12 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
         .paths = parsed.paths orelse default_paths,
         .dependencies = dependencies,
         .is_local = is_local,
+        .name = name,
     });
 }
 
 fn parseStruct(gpa: std.mem.Allocator, arena: std.mem.Allocator, ast: std.zig.Ast, node: std.zig.Ast.Node.Index, out: *std.StringArrayHashMapUnmanaged(std.zig.Ast.Node.Index)) !void {
+    // TODO: we can remove this because zoir nodes offer a .getAstNode() function, so we have no need to parse an ast struct directly
     var buf: [2]std.zig.Ast.Node.Index = undefined;
     const struct_init = ast.fullStructInit(&buf, node) orelse return error.MissingRoot;
 
