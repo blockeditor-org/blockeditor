@@ -221,32 +221,33 @@ const Opts = struct {
         var verbose_compression: bool = false;
 
         for (args[1..]) |arg| {
-            if (std.mem.startsWith(u8, arg, "--src-pkg=")) {
-                try src_pkgs.append(gpa, arg["--src-pkg=".len..]);
-            } else if (std.mem.startsWith(u8, arg, "--zig-bin=")) {
-                zig_bin_opt = arg["--zig-bin=".len..];
-            } else if (std.mem.startsWith(u8, arg, "--dst-dir=")) {
-                dst_dir_opt = arg["--dst-dir=".len..];
-            } else if (std.mem.startsWith(u8, arg, "--url-prefix=")) {
-                url_prefix_opt = arg["--url-prefix=".len..];
-            } else if (std.mem.startsWith(u8, arg, "--dst-file")) {
+            if (tryEat(arg, "--src-pkg=")) |sub| {
+                try src_pkgs.append(gpa, sub);
+            } else if (tryEat(arg, "--zig-bin=")) |sub| {
+                zig_bin_opt = sub;
+            } else if (tryEat(arg, "--dst-dir=")) |sub| {
+                dst_dir_opt = sub;
+            } else if (tryEat(arg, "--url-prefix=")) |sub| {
+                url_prefix_opt = sub;
+            } else if (tryEat(arg, "--dst-file=")) |sub| {
+                _ = sub;
                 return printError("todo implement single-file output mode", .{});
             } else if (std.mem.eql(u8, arg, "--include-global-packages")) {
                 include_global_packages = true;
-            } else if (std.mem.startsWith(u8, arg, "--include-global-packages=")) {
+            } else if (tryEat(arg, "--include-global-packages=")) |sub| {
                 include_global_packages = true;
-                override_global_packages_dir = arg["--include-global-packages=".len..];
+                override_global_packages_dir = sub;
             } else if (std.mem.eql(u8, arg, "--update-dependency-urls")) {
                 update_dependency_urls = true;
-            } else if (std.mem.startsWith(u8, arg, "--update-root=")) {
-                update_root = arg["--update-root=".len..];
+            } else if (tryEat(arg, "--update-root=")) |sub| {
+                update_root = sub;
             } else if (std.mem.eql(u8, arg, "--no-include-local")) {
                 no_include_local = true;
-            } else if (std.mem.startsWith(u8, arg, "--why=")) {
-                why_pkg = arg["--why=".len..];
-            } else if (std.mem.startsWith(u8, arg, "--compression-level=")) {
-                compression_level = std.meta.stringToEnum(CompressionLevel, arg["--compression-level=".len..]) orelse {
-                    return printError("invalid comrpession level: '{s}', expected: level_1/.../level_9/fastest/default/best", .{arg["--compression-level=".len..]});
+            } else if (tryEat(arg, "--why=")) |sub| {
+                why_pkg = sub;
+            } else if (tryEat(arg, "--compression-level=")) |sub| {
+                compression_level = std.meta.stringToEnum(CompressionLevel, sub) orelse {
+                    return printError("invalid comrpession level: '{s}', expected: level_1/.../level_9/fastest/default/best", .{sub});
                 };
             } else if (std.mem.eql(u8, arg, "--verbose-compression")) {
                 verbose_compression = true;
