@@ -166,8 +166,11 @@ const Opts = struct {
     no_include_local: bool,
     mode: Mode,
     why_pkg: ?[]const u8,
+    compression_level: CompressionLevel,
+    verbose_compression: bool,
 
     const Mode = enum { multi_file, single_file };
+    const CompressionLevel = std.meta.DeclEnum(@import("vendor/Compress.zig").Options);
 
     pub fn deinit(self: *Opts, gpa: std.mem.Allocator) void {
         gpa.free(self.src_pkgs);
@@ -190,6 +193,8 @@ const Opts = struct {
             \\  --include-global-packages=[dir]  / manually specify global package dir
             \\  --update-root=[folder]
             \\  --why=[path]  / prints the chain of dependents leading to this package and exits
+            \\  --compression-level=[level_1...level_9/fastest/default/best]  / sets gzip compression level. default 'default'
+            \\  --verbose-compression  / output file sizes and compression levels
             \\
             \\For multi-file output:
             \\  --dst-dir=[dst]  / specifies the output folder. will non-recursively create if it does not exist.
@@ -212,6 +217,8 @@ const Opts = struct {
         var override_global_packages_dir: ?[]const u8 = null;
         var no_include_local = false;
         var why_pkg: ?[]const u8 = null;
+        var compression_level: CompressionLevel = .default;
+        var verbose_compression: bool = false;
 
         for (args[1..]) |arg| {
             if (std.mem.startsWith(u8, arg, "--src-pkg=")) {
@@ -237,6 +244,12 @@ const Opts = struct {
                 no_include_local = true;
             } else if (std.mem.startsWith(u8, arg, "--why=")) {
                 why_pkg = arg["--why=".len..];
+            } else if (std.mem.startsWith(u8, arg, "--compression-level=")) {
+                compression_level = std.meta.stringToEnum(CompressionLevel, arg["--compression-level=".len..]) orelse {
+                    return printError("invalid comrpession level: '{s}', expected: level_1/.../level_9/fastest/default/best", .{arg["--compression-level=".len..]});
+                };
+            } else if (std.mem.eql(u8, arg, "--verbose-compression")) {
+                verbose_compression = true;
             } else {
                 return printError("unexpected arg \"{f}\". usage:\n{s}", .{ std.zig.fmtString(arg), usage });
             }
@@ -278,10 +291,17 @@ const Opts = struct {
             .update_root = update_root,
             .no_include_local = no_include_local,
             .why_pkg = why_pkg,
+            .compression_level = compression_level,
+            .verbose_compression = verbose_compression,
             .mode = mode,
         };
     }
 };
+
+fn tryEat(str: []const u8, takeoff: []const u8) ?[]const u8 {
+    if (std.mem.startsWith(u8, str, takeoff)) return str[takeoff.len..];
+    return null;
+}
 
 pub fn exec(gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const []const u8) ![:0]const u8 {
     var zig_env_proc = std.process.Child.init(args, gpa);
@@ -527,11 +547,14 @@ fn emitFileInternal(
             defer out_file.close();
             var out_file_buf: [1024]u8 = undefined;
             var out_file_writer = out_file.writer(&out_file_buf);
+            var src_bytes_est: u64 = 0;
 
             const Compress = @import("./vendor/Compress.zig");
             const flate = @import("./vendor/flate.zig");
             var compressor_buf: [flate.max_window_len * 2]u8 = undefined;
-            var compressor: Compress = try .init(&out_file_writer.interface, &compressor_buf, .gzip, .level_5);
+            var compressor: Compress = try .init(&out_file_writer.interface, &compressor_buf, .gzip, switch (opts.compression_level) {
+                inline else => |level| @field(Compress.Options, @tagName(level)),
+            });
 
             if (comptime !std.mem.eql(u8, @import("builtin").zig_version_string, "0.15.2")) {
                 // TODO: enable compression. it looks like it will be in 0.16.0:
@@ -565,6 +588,7 @@ fn emitFileInternal(
             const write_tar_node = render_dep_node.start("write tar", seen_paths.keys().len);
             defer write_tar_node.end();
             for (seen_paths.keys()) |file_path| {
+                src_bytes_est += file_path.len;
                 const sub_tar_node = write_tar_node.start(file_path, 0);
                 defer sub_tar_node.end();
 
@@ -576,6 +600,7 @@ fn emitFileInternal(
                     const rendered = try renderBuildZigZon(gpa, dep_bzz, df, .output);
                     defer gpa.free(rendered);
                     try tar.writeFileBytes("build.zig.zon", rendered, .{});
+                    src_bytes_est += rendered.len;
                 } else {
                     // now we will write the file
                     var file = try std.fs.openFileAbsolute(fullpath, .{ .mode = .read_only });
@@ -584,7 +609,9 @@ fn emitFileInternal(
                     var file_reader = file.reader(&reader_buf);
                     // note: not using writeFile so we don't copy mtime and such
                     // TODO: save +x permission
-                    try tar.writeFileStream(file_path, try file_reader.getSize(), &file_reader.interface, .{});
+                    const file_size = try file_reader.getSize();
+                    try tar.writeFileStream(file_path, file_size, &file_reader.interface, .{});
+                    src_bytes_est += file_size;
                 }
             }
 
@@ -593,6 +620,16 @@ fn emitFileInternal(
             try tar.finishPedantically();
             try compressor.writer.flush();
             try out_file_writer.interface.flush();
+            //out_file_writer.pos
+
+            if (opts.verbose_compression) {
+                std.log.scoped(.compression).info("{s}: {Bi:.2} -> {Bi:.2} / compressed {d:.2}%", .{
+                    dep_abspath,
+                    src_bytes_est,
+                    out_file_writer.pos,
+                    (1.0 - @as(f64, @floatFromInt(out_file_writer.pos)) / @as(f64, @floatFromInt(src_bytes_est))) * 100,
+                });
+            }
         }
 
         // now that we have written the file, use the zig compiler to determine the hash of the package
