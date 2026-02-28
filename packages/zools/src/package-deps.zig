@@ -25,6 +25,8 @@ const PackageID = enum(usize) { _ };
 //     --src-pkg=. --zig-bin=zig --dst-dir=build/packages --url-prefix-$URL_PREFIX --update-readmes --update-root=.
 //   To gather everything into one .tar file so you can build depending only on the zig compiler:
 //     --src-pkg=. --zig-bin=zig --dst-file=build/app.tar --include-global-packages
+//   To see why a package is installed
+//     --why=path/to/package --include-global-packages
 // it would be nice to simplify these to not need so many arguments
 
 const PackageQueue = struct {
@@ -163,6 +165,7 @@ const Opts = struct {
     update_root: []const u8,
     no_include_local: bool,
     mode: Mode,
+    why_pkg: ?[]const u8,
 
     const Mode = enum { multi_file, single_file };
 
@@ -175,7 +178,7 @@ const Opts = struct {
             \\  zig run package-deps.zig -- ...args
             \\
             \\Example:
-            \\  zig run package-deps.zig -- --src-dir=. --zig-bin=zig --dst-dir=dst --url-prefix=https://github.com/org/repo/releases/tag/release-id/
+            \\  zig run package-deps.zig -- --src-pkg=. --zig-bin=zig --dst-dir=dst --url-prefix=https://github.com/org/repo/releases/tag/release-id/
             \\
             \\Flags:
             \\  --src-pkg=[src_dir]  / specifies the source directory to search for packages.
@@ -186,6 +189,7 @@ const Opts = struct {
             \\  --include-global-packages  / specifies that packages in the global package cache should be included
             \\  --include-global-packages=[dir]  / manually specify global package dir
             \\  --update-root=[folder]
+            \\  --why=[path]  / prints the chain of dependents leading to this package and exits
             \\
             \\For multi-file output:
             \\  --dst-dir=[dst]  / specifies the output folder. will non-recursively create if it does not exist.
@@ -195,6 +199,7 @@ const Opts = struct {
             \\
             \\For single-file output:
             \\  --dst-file=[file].tar  / specifies the output file
+            \\
         ;
         var src_pkgs: std.ArrayList([]const u8) = .empty;
         defer src_pkgs.deinit(gpa);
@@ -206,6 +211,8 @@ const Opts = struct {
         var update_root: []const u8 = ".";
         var override_global_packages_dir: ?[]const u8 = null;
         var no_include_local = false;
+        var why_pkg: ?[]const u8 = null;
+
         for (args[1..]) |arg| {
             if (std.mem.startsWith(u8, arg, "--src-pkg=")) {
                 try src_pkgs.append(gpa, arg["--src-pkg=".len..]);
@@ -228,6 +235,8 @@ const Opts = struct {
                 update_root = arg["--update-root=".len..];
             } else if (std.mem.eql(u8, arg, "--no-include-local")) {
                 no_include_local = true;
+            } else if (std.mem.startsWith(u8, arg, "--why=")) {
+                why_pkg = arg["--why=".len..];
             } else {
                 return printError("unexpected arg \"{f}\". usage:\n{s}", .{ std.zig.fmtString(arg), usage });
             }
@@ -268,6 +277,7 @@ const Opts = struct {
             .update_dependency_urls = update_dependency_urls,
             .update_root = update_root,
             .no_include_local = no_include_local,
+            .why_pkg = why_pkg,
             .mode = mode,
         };
     }
@@ -375,6 +385,33 @@ pub fn main() !u8 {
     var df = try deps.finalize();
     defer df.deinit();
 
+    // --- ADDED START ---
+    if (opts.why_pkg) |why_raw| {
+        const why_path = std.fs.cwd().realpathAlloc(gpa, why_raw) catch |e| {
+            return printError("could not resolve path '{s}': {s}", .{ why_raw, @errorName(e) });
+        };
+        defer gpa.free(why_path);
+
+        var target_id: ?PackageID = null;
+        var i: usize = 0;
+        while (i < df.abspaths.len()) : (i += 1) {
+            const pkg_path = df.abspaths.get(@enumFromInt(i));
+            if (std.mem.eql(u8, pkg_path, why_path)) {
+                target_id = @enumFromInt(i);
+                break;
+            }
+        }
+
+        if (target_id) |tid| {
+            try printWhyChain(tid, &df, 0);
+        } else {
+            std.log.err("package not found in dependency tree: {s}", .{why_path});
+            return 1;
+        }
+
+        return 0;
+    }
+
     std.fs.cwd().makeDir(".zig-cache") catch {};
     std.fs.cwd().makeDir(".zig-cache/tmp") catch {};
     std.fs.cwd().makeDir(context.tmp_global_cache_dir_name) catch {};
@@ -413,6 +450,33 @@ pub fn main() !u8 {
 
     if (context.has_error) return 1;
     return 0;
+}
+
+fn printWhyChain(id: PackageID, df: *PackageList, depth: usize) !void {
+    const path = df.abspaths.get(id);
+    const zon = df.bzzs.get(id);
+    const dependents = zon.dependents.view(&df.dependents);
+
+    // Indentation
+    var i: usize = 0;
+    while (i < depth) : (i += 1) std.debug.print("  ", .{});
+
+    if (depth == 0) {
+        std.debug.print("{s}\n", .{path});
+    } else {
+        std.debug.print("needed by {s}\n", .{path});
+    }
+
+    if (dependents.len == 0 and depth > 0) {
+        var j: usize = 0;
+        while (j < depth + 1) : (j += 1) std.debug.print("  ", .{});
+        std.debug.print("(root)\n", .{});
+        return;
+    }
+
+    for (dependents) |dep_id| {
+        try printWhyChain(dep_id, df, depth + 1);
+    }
 }
 
 const EmitFileOpts = struct {
