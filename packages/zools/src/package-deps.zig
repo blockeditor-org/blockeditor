@@ -19,7 +19,7 @@ const PackageID = enum(usize) { _ };
 //     zig build --fetch=all ; zig run packages/zools/src/package-deps.zig -- bundle build/packages https://lfs.pfg.pw/by-hash/zig-pkg/ --compression-level=best --verbose-compression --update-dependency-urls --exclude-local-packages
 //     REMINDER: run --fetch=all, remove the offending packages after bundling, not before. otherwise it keeps in the github urls.
 //   To gather all local packages into seperate tar files and update readmes to point to where to download them:
-//     bundle build/packages $URL_PREFIX --exclude-global-packages --update-readmes
+//     zig run packages/zools/src/package-deps.zig -- bundle build/packages https://lfs.pfg.pw/by-hash/zig-pkg/ --exclude-global-packages --update-readmes
 //   To gather everything into one .tar.gz file so you can build depending only on the zig compiler:
 //     bundle-onefile build/app.tar.gz
 //   To see why a package is installed
@@ -626,7 +626,7 @@ fn emitFileInternal(
                 const fullpath = try std.fs.path.join(gpa, &.{ df.abspaths.get(dep), file_path });
                 defer gpa.free(fullpath);
 
-                const tar_path = gpa.dupe(u8, file_path);
+                const tar_path = try gpa.dupe(u8, file_path);
                 defer gpa.free(tar_path);
                 if (std.fs.path.sep != std.fs.path.sep_posix) {
                     std.mem.replaceScalar(u8, tar_path, std.fs.path.sep, std.fs.path.sep_posix);
