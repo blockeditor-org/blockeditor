@@ -626,15 +626,17 @@ fn emitFileInternal(
                 const fullpath = try std.fs.path.join(gpa, &.{ df.abspaths.get(dep), file_path });
                 defer gpa.free(fullpath);
 
-                if (std.mem.indexOfScalar(u8, file_path, "\\")) {
-                    return printError("TODO: convert windows to posix path");
+                const tar_path = gpa.dupe(u8, file_path);
+                defer gpa.free(tar_path);
+                if (std.fs.path.sep != std.fs.path.sep_posix) {
+                    std.mem.replaceScalar(u8, tar_path, std.fs.path.sep, std.fs.path.sep_posix);
                 }
 
-                if (std.mem.eql(u8, file_path, "build.zig.zon")) {
+                if (std.mem.eql(u8, tar_path, "build.zig.zon")) {
                     // write build.zig.zon
                     const rendered = try renderBuildZigZon(gpa, dep_bzz, df, .output);
                     defer gpa.free(rendered);
-                    try tar.writeFileBytes("build.zig.zon", rendered, .{});
+                    try tar.writeFileBytes(tar_path, rendered, .{});
                     src_bytes_est += rendered.len;
                 } else {
                     // now we will write the file
@@ -645,7 +647,7 @@ fn emitFileInternal(
                     // note: not using writeFile so we don't copy mtime and such
                     // TODO: save +x permission
                     const file_size = try file_reader.getSize();
-                    try tar.writeFileStream(file_path, file_size, &file_reader.interface, .{});
+                    try tar.writeFileStream(tar_path, file_size, &file_reader.interface, .{});
                     src_bytes_est += file_size;
                 }
             }
