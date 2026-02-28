@@ -16,7 +16,7 @@ const PackageID = enum(usize) { _ };
 
 // Usage modes:
 //   To gather all URL dependencies for uploading onto your own server, and update local packages to use the new URL:
-//     zig run packages/zools/src/package-deps.zig -- bundle build/packages https://lfs.pfg.pw/by-hash/zig-pkg/ --compression-level=best --verbose-compression --update-dependency-urls --exclude-local-dependencies
+//     zig run packages/zools/src/package-deps.zig -- bundle build/packages https://lfs.pfg.pw/by-hash/zig-pkg/ --compression-level=best --verbose-compression --update-dependency-urls --exclude-local-packages
 //   To gather all local packages into seperate tar files and update readmes to point to where to download them:
 //     bundle build/packages $URL_PREFIX --exclude-global-packages --update-readmes
 //   To gather everything into one .tar.gz file so you can build depending only on the zig compiler:
