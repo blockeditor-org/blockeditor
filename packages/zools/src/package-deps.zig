@@ -868,18 +868,6 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
     var ast = try std.zig.Ast.parse(gpa, file, .zon);
     errdefer ast.deinit(gpa);
 
-    // we are extracting paths and dependencies, and then we are replacing dependencies with our own
-
-    var root: std.StringArrayHashMapUnmanaged(std.zig.Ast.Node.Index) = .empty;
-    defer root.deinit(gpa);
-    try parseStruct(gpa, arena, ast, ast.rootDecls()[0], &root);
-
-    var deps: std.StringArrayHashMapUnmanaged(std.zig.Ast.Node.Index) = .empty;
-    defer deps.deinit(gpa);
-    if (root.get("dependencies")) |deps_idx| {
-        try parseStruct(gpa, arena, ast, deps_idx, &deps);
-    }
-
     // now we parse the contents with zoir
     var zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
     errdefer zoir.deinit(gpa);
@@ -899,12 +887,13 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
     if (parsed.dependencies) |parsed_deps| {
         const fields = try structFields(zoir, parsed_deps);
         for (fields.names, 0..fields.vals.len) |name, idx| {
+            const field_value_node = fields.vals.at(@intCast(idx));
             const dep_parsed = try std.zon.parse.fromZoirNode(struct {
                 hash: ?[]const u8 = null,
                 url: ?[]const u8 = null,
                 path: ?[]const u8 = null,
                 lazy: bool = false,
-            }, arena, ast, zoir, fields.vals.at(@intCast(idx)), null, .{
+            }, arena, ast, zoir, field_value_node, null, .{
                 .ignore_unknown_fields = true,
                 .free_on_error = false,
             });
@@ -939,7 +928,7 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
                 return error.Errored;
             }
             gpres.value_ptr.* = .{
-                .ast_node = deps.get(name.get(zoir)).?,
+                .ast_node = field_value_node.getAstNode(zoir),
                 .lazy = dep_parsed.lazy,
             };
         }
@@ -972,24 +961,6 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
         .is_local = is_local,
         .name = name,
     });
-}
-
-fn parseStruct(gpa: std.mem.Allocator, arena: std.mem.Allocator, ast: std.zig.Ast, node: std.zig.Ast.Node.Index, out: *std.StringArrayHashMapUnmanaged(std.zig.Ast.Node.Index)) !void {
-    // TODO: we can remove this because zoir nodes offer a .getAstNode() function, so we have no need to parse an ast struct directly
-    var buf: [2]std.zig.Ast.Node.Index = undefined;
-    const struct_init = ast.fullStructInit(&buf, node) orelse return error.MissingRoot;
-
-    for (struct_init.ast.fields) |field_init| {
-        const init_token = ast.firstToken(field_init);
-        const field_name_token = init_token - 2;
-        std.debug.assert(ast.tokenTag(field_name_token) == .identifier);
-        var field_name = ast.tokenSlice(field_name_token);
-        if (field_name.len > 0 and field_name[0] == '@') {
-            field_name = try std.zig.string_literal.parseAlloc(arena, field_name[1..]);
-        }
-
-        try out.put(gpa, field_name, field_init);
-    }
 }
 
 fn structFields(zoir: std.zig.Zoir, node: std.zig.Zoir.Node.Index) !@FieldType(std.zig.Zoir.Node, "struct_literal") {
