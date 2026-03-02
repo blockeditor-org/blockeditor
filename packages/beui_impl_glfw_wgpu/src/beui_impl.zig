@@ -350,7 +350,7 @@ fn destroy(allocator: std.mem.Allocator, demo: *DemoState) void {
     allocator.destroy(demo);
 }
 
-fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, frame_timer: *std.time.Timer, last_frame_time: *u64, add_us: u64) void {
+fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, back_buffer_view: zgpu.wgpu.TextureView) void {
     const b2ft = tracy.traceNamed(@src(), "draw & wait");
     defer b2ft.end();
 
@@ -416,16 +416,6 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
             texpack.modified = null;
         }
     }
-
-    const back_buffer_view = blk: {
-        const b2ft1 = tracy.traceNamed(@src(), "wait for texture view");
-        defer b2ft1.end();
-        last_frame_time.* = add_us + frame_timer.read();
-        const res = gctx.swapchain.getCurrentTextureView();
-        frame_timer.reset();
-        break :blk res;
-    };
-    defer back_buffer_view.release();
 
     if (draw_lists.RenderListIndex == u16 and draw_list.indices.items.len % 2 == 1) draw_list.indices.append(0) catch @panic("oom"); // using a u16 index array it has to be aligned to 4 bytes still
 
@@ -597,6 +587,7 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
         const b2ft1 = tracy.traceNamed(@src(), "present frame");
         defer b2ft1.end();
         _ = gctx.present();
+        tracy.frameMark();
     }
 }
 
@@ -844,43 +835,50 @@ pub fn main() !void {
 
     var frame_num: u64 = 0;
 
-    var frame_timer = try std.time.Timer.start();
-    var last_frame_time: u64 = 0;
-
     var reduce_latency_target: u64 = target_none;
     _ = &reduce_latency_target;
 
-    var last_frame_was_wait = true;
-
+    var timer = try std.time.Timer.start();
+    _ = &timer;
     while (!window.shouldClose()) {
-        var add_us: u64 = 0;
-        const reduce_input_latency: usize = if (reduce_latency_target != 0) (reduce_latency_target -| last_frame_time) -| (1 * std.time.ns_per_ms) else 0;
-        if (reduce_input_latency > 0) {
-            const b2ft = tracy.traceNamed(@src(), "reduce latency");
-            defer b2ft.end();
+        const back_buffer_view = blk: {
+            const b2ft1 = tracy.traceNamed(@src(), "wait for texture view");
+            defer b2ft1.end();
+            const res = demo.gctx.swapchain.getCurrentTextureView();
+            break :blk res;
+        };
+        defer back_buffer_view.release();
 
-            add_us = frame_timer.read();
-            std.Thread.sleep(reduce_input_latency);
-            frame_timer.reset();
-        }
-
-        tracy.frameMark();
+        const b2ft = tracy.traceNamed(@src(), "render");
+        defer b2ft.end();
 
         _ = arena_state.reset(.retain_capacity);
         draw_list.clear();
 
         var beui_vtable: BeuiVtable = .{ .window = window };
-        beui.newFrame(.{
-            .can_capture_keyboard = true,
-            .can_capture_mouse = true,
-            .arena = arena,
-            .now_ms = std.time.milliTimestamp(),
-            .user_data = @ptrCast(@alignCast(&beui_vtable)),
-            .vtable = BeuiVtable.vtable,
-        });
-        defer beui.endFrame();
+        {
+            const b2ft2 = tracy.traceNamed(@src(), "beui.newFrame");
+            defer b2ft2.end();
+            beui.newFrame(.{
+                .can_capture_keyboard = true,
+                .can_capture_mouse = true,
+                .arena = arena,
+                .now_ms = std.time.milliTimestamp(),
+                .user_data = @ptrCast(@alignCast(&beui_vtable)),
+                .vtable = BeuiVtable.vtable,
+            });
+        }
+        defer {
+            const b2ft2 = tracy.traceNamed(@src(), "beui.endFrame");
+            defer b2ft2.end();
+            beui.endFrame();
+        }
 
-        zglfw.pollEvents();
+        {
+            const b2ft2 = tracy.traceNamed(@src(), "zglfw.pollEvents");
+            defer b2ft2.end();
+            zglfw.pollEvents();
+        }
         if (frame_num == 0) {
             beui.frame.has_events = true;
         }
@@ -901,26 +899,10 @@ pub fn main() !void {
             continue;
         }
         anywhere.zgui.framelog("frame: {d}", .{frame_num});
-        anywhere.zgui.framelog("last frame time: {D}", .{last_frame_time});
 
         if (beui.isKeyHeld(.mouse_middle)) {
+            // scroll emulation with middle mouse
             beui.frame.scroll_px += beui.frame.mouse_offset;
-        }
-
-        // transparency test rainbows
-        if (false) {
-            for (0..11) |i| {
-                const im: f32 = @floatFromInt(i);
-                draw_list.addRect(.{ 50 * im + 50, 50 }, .{ 50, 50 }, .{ .tint = .{ 1.0, 0.0, 0.0, im / 10.0 } });
-            }
-            for (0..11) |i| {
-                const im: f32 = @floatFromInt(i);
-                draw_list.addRect(.{ 50 * im + 50, 83 }, .{ 50, 50 }, .{ .tint = .{ 0.0, 1.0, 0.0, im / 10.0 } });
-            }
-            for (0..11) |i| {
-                const im: f32 = @floatFromInt(i);
-                draw_list.addRect(.{ 50 * im + 50, 116 }, .{ 50, 50 }, .{ .tint = .{ 0.0, 0.0, 1.0, im / 10.0 } });
-            }
         }
 
         const gctx = demo.gctx;
@@ -928,8 +910,8 @@ pub fn main() !void {
         const fb_height = gctx.swapchain_descriptor.height;
 
         {
-            const b2ft = tracy.traceNamed(@src(), "b2 frame");
-            defer b2ft.end();
+            const b2ft2 = tracy.traceNamed(@src(), "b2 frame");
+            defer b2ft2.end();
 
             const id = blk: {
                 const b2ft_ = tracy.traceNamed(@src(), "b2 newFrame");
@@ -976,23 +958,8 @@ pub fn main() !void {
             }
         }
 
-        draw(demo, &draw_list, &b2, &frame_timer, &last_frame_time, add_us);
+        draw(demo, &draw_list, &b2, back_buffer_view);
         frame_num += 1;
-
-        if (!beui.frame.has_events and allow_skip_frames) {
-            switch (b2.frame.next_frame_request) {
-                .none => {
-                    // wait until there are events to start the next frame
-                    // eventually we could even ignore frames that have a mouse move event but there is no
-                    // beui2 item that asks for the mouse position event
-                    zglfw.waitEvents(); // oops this doesn't work, it eats the events up
-                    last_frame_was_wait = true;
-                },
-                .animation => {
-                    last_frame_was_wait = false;
-                },
-            }
-        }
     }
 }
 
