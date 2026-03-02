@@ -9,6 +9,38 @@ pub const math = struct {
     pub const vec2i32 = @Vector(2, i32);
     pub const vec2i64 = @Vector(2, i64);
     pub const vec2f32 = @Vector(2, f32);
+
+    pub const RollingAverage = struct {
+        buffer: []f64,
+        sum: f64,
+        index: usize,
+        filled: bool,
+        pub fn init(buffer: []f64) RollingAverage {
+            return .{
+                .buffer = buffer,
+                .index = 0,
+                .filled = false,
+            };
+        }
+        pub fn clear(self: *RollingAverage) void {
+            self.sum = 0;
+            self.index = 0;
+            self.filled = false;
+        }
+        pub fn postValue(self: *RollingAverage, value: f64) void {
+            if (!self.filled) self.sum -= self.buffer[self.index];
+            self.sum += value;
+            self.buffer[self.index] = value;
+            self.index += 1;
+            self.index %= self.buffer.len;
+        }
+        pub fn calculateAverage(self: *RollingAverage) f64 {
+            const len_usize = if (self.filled) self.buffer.len else self.index;
+            if (len_usize == 0) return 0;
+            const len_f64: f64 = @floatFromInt(len_usize);
+            return self.sum / len_f64;
+        }
+    };
 };
 
 pub const AnyPtr = struct {
