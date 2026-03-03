@@ -144,6 +144,15 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     var renderer: Renderer = .init(rdl, self.gpa);
     defer renderer.deinit();
 
+    // buildings
+    {
+        var iter = self.game.map.building_pool.liveHandles;
+        while (iter.next()) |building_handle| {
+            const building: *Building = self.game.map.building_pool.getColumnPtrAssumeLive(building_handle, .ptr);
+            const descriptor = building_to_descriptor_map.getPtrConst(building.tag);
+            _ = descriptor;
+        }
+    }
     // wires,pipes
     {
         var iter = vec.Iterator(2, i32).size(self.game.map.size_int);
@@ -256,7 +265,9 @@ const Renderer = struct {
 fn onMouseEvent(self: *App, b2: *B2.Beui2, ev: B2.MouseEvent) ?Beui.Cursor {
     // std.log.info("onMouseEvent: {f}", .{print.autoPrint(ev)});
     if (ev.action == .move_while_down or ev.action == .up) {
-        self.interface.camera.offset += ev.offset;
+        var offset = ev.offset;
+        offset.y = -offset.y;
+        self.interface.camera.offset += offset;
     }
     _ = b2;
     return .arrow;
