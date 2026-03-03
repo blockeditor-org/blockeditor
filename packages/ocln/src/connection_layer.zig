@@ -27,8 +27,8 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                 const s1, const s2 = this.sides;
                 if (s1[0] == s2[0] and s1[1] == s2[1]) unreachable; // segments must have at least one length
                 std.debug.assert(@reduce(.And, s1 <= s2));
-                if (s1[0] == s2[0]) return .x;
-                if (s1[1] == s2[1]) return .y;
+                if (s1[0] == s2[0]) return .y;
+                if (s1[1] == s2[1]) return .x;
                 unreachable; // segments must be either horizontal or vertical
             }
             fn canMergeWith(this: *const Segment, other: *const Segment) bool {
@@ -104,7 +104,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             for (res[end..]) |*itm| std.debug.assert(itm.id == SegmentPool.Handle.nil.id);
             return res[0..end];
         }
-        const SegmentDisplay = enum(u8) {
+        pub const SegmentDisplay = enum(u8) {
             none = 0b0000,
             all = 0b1111,
             cross_x_over_y = 0b10000,
@@ -117,15 +117,15 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                 down: bool,
             };
             fn init(value: Init) SegmentDisplay {
-                return @intFromEnum(@as(u4, @enumFromInt(value)));
+                return @enumFromInt(@as(u4, @bitCast(value)));
             }
-            fn toInit(value: SegmentDisplay) Init {
+            pub fn toInit(value: SegmentDisplay) Init {
                 return switch (value) {
-                    .cross_x_over_y, .cross_y_over_x => @enumFromInt(0b1111),
-                    else => @enumFromInt(@as(u4, @intCast(value.toInt()))),
+                    .cross_x_over_y, .cross_y_over_x => @bitCast(0b1111),
+                    else => @bitCast(@as(u4, @intCast(value.toInt()))),
                 };
             }
-            fn toInt(value: SegmentDisplay) u8 {
+            pub fn toInt(value: SegmentDisplay) u8 {
                 return @intFromEnum(value);
             }
         };
@@ -137,7 +137,6 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                 .right = false,
                 .down = false,
             };
-            var is_cross = false;
             for (segments) |segment_handle| {
                 const segment: *Segment = this.segments.getColumnPtrAssumeLive(segment_handle, .ptr);
                 const bl_eq = @reduce(.And, segment.sides[0] == pos);
@@ -148,16 +147,13 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                         if (!ur_eq) result.right = true;
                     },
                     .y => {
-                        if (!bl_eq) result.down = true;
-                        if (!ur_eq) result.up = true;
+                        if (!bl_eq) result.up = true;
+                        if (!ur_eq) result.down = true;
                     },
                 }
-                if (!bl_eq and !ur_eq) is_cross = true;
             }
             // in the future we could assign an index to each segment and base it on which index is higher
-            if (is_cross) {
-                std.debug.assert(segments.len == 2);
-                std.debug.assert(result.left and result.up and result.right and result.down);
+            if (result.left and result.up and result.right and result.down and segments.len == 2) {
                 return .cross_x_over_y;
             }
             return .init(result);

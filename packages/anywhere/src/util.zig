@@ -9,6 +9,7 @@ pub const math = struct {
     pub const vec2i32 = @Vector(2, i32);
     pub const vec2i64 = @Vector(2, i64);
     pub const vec2f32 = @Vector(2, f32);
+    pub const vec2usize = vec.by(2, usize);
 
     pub fn Rect(comptime n: comptime_int, comptime T: type) type {
         return struct {

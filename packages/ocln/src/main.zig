@@ -101,6 +101,20 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
         },
         .user = .{},
     }) catch @panic("createWire");
+    _ = self.game.map.createWire(.{
+        .sides = .{
+            .{ 6, 10 },
+            .{ 10, 10 },
+        },
+        .user = .{},
+    }) catch @panic("createWire");
+    _ = self.game.map.createWire(.{
+        .sides = .{
+            .{ 10, 10 },
+            .{ 10, 15 },
+        },
+        .user = .{},
+    }) catch @panic("createWire");
 }
 pub fn deinit(self: *App) void {
     self.game.deinit();
@@ -137,20 +151,29 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
             if (tile.material == .none) continue;
 
-            const rect_pos: math.vec2f32 = pos * @as(math.vec2f32, @splat(self.interface.camera.scale)) + self.interface.camera.offset;
-            const rect_size: math.vec2f32 = .{ 16, 16 };
+            const rect_pos: math.vec2f32 = self.interface.camera.worldToRender(pos);
+            const rect_size: math.vec2f32 = @splat(self.interface.camera.scale);
 
             renderer.add(.from(rect_pos, rect_size), self.art.?, .from(getTileOffset(tile.material), @splat(16)));
         }
     }
     {
         var iter = vec.Iterator(2, i32).size(self.game.map.size_int);
-        while (iter.next()) |pos| {
-            const display = self.game.map.wires.getSegments(pos);
-            _ = display;
+        while (iter.next()) |posint| {
+            const pos: math.vec2f32 = @floatFromInt(posint);
+            const rect_pos: math.vec2f32 = self.interface.camera.worldToRender(pos);
+            const rect_size: math.vec2f32 = @splat(self.interface.camera.scale);
+
+            const display = self.game.map.wires.getSegmentDisplay(posint);
+            const val: usize = display.toInt();
+            const start: math.vec2f32 = .{ 0, 224 };
+            const addx = @mod(val, 16);
+            const addy = @divFloor(val, 16);
+            const addvec: math.vec2f32 = @floatFromInt(math.vec2usize{ addx, addy });
+            renderer.add(.from(rect_pos, rect_size), self.art.?, .from(start + addvec * math.vec2f32{ 16, 16 }, @splat(16)));
         }
     }
-    renderer.commit();
+    renderer.flush();
     rdl.addRect(.{ .pos = .{ 0, 0 }, .size = frame_size, .tint = .fromHexRgb(0x00c0c0) });
 
     rdl.addMouseEventCapture2(call_id.sub(@src()), .{ 0, 0 }, frame_size, .{
@@ -176,8 +199,9 @@ const Renderer = struct {
     gpa: std.mem.Allocator,
     vertices: std.ArrayList(B2.render_list.RenderListVertex),
     indices: std.ArrayList(B2.render_list.RenderListIndex),
+    last_art: ?*B2.ImageCache.Image,
     pub fn init(rdl: *B2.RepositionableDrawList, gpa: std.mem.Allocator) Renderer {
-        return .{ .vertices = .empty, .indices = .empty, .rdl = rdl, .gpa = gpa };
+        return .{ .vertices = .empty, .indices = .empty, .last_art = null, .rdl = rdl, .gpa = gpa };
     }
 
     pub fn deinit(renderer: *Renderer) void {
@@ -202,9 +226,9 @@ const Renderer = struct {
         const uv_bl = uv.pos + math.vec2f32{ 0, uv.size[1] };
         const uv_br = uv.pos + uv.size;
 
-        if (renderer.vertices.items.len + 3 >= std.math.maxInt(B2.render_list.RenderListIndex)) {
+        if (renderer.vertices.items.len + 3 >= std.math.maxInt(B2.render_list.RenderListIndex) or (renderer.last_art != null and image != renderer.last_art)) {
             // need to commit
-            renderer.commit();
+            renderer.flush();
         }
         const ib: B2.render_list.RenderListIndex = @intCast(renderer.vertices.items.len);
         renderer.vertices.appendSlice(renderer.gpa, &.{
@@ -217,11 +241,13 @@ const Renderer = struct {
             ib + 0, ib + 1, ib + 3,
             ib + 0, ib + 3, ib + 2,
         }) catch @panic("oom");
+        renderer.last_art = image;
     }
-    pub fn commit(renderer: *Renderer) void {
+    pub fn flush(renderer: *Renderer) void {
         renderer.rdl.addVertices(.rgba, renderer.vertices.items, renderer.indices.items);
         renderer.vertices.clearRetainingCapacity();
         renderer.indices.clearRetainingCapacity();
+        renderer.last_art = null;
     }
 };
 
@@ -245,6 +271,10 @@ const Interface = struct {
     camera: struct {
         offset: @Vector(2, f32) = @splat(0),
         scale: f32 = 16,
+
+        pub fn worldToRender(camera: *@This(), world: vec.by2f32) vec.by2f32 {
+            return world * @as(math.vec2f32, @splat(camera.scale)) + camera.offset;
+        }
     } = .{},
 
     pub fn serdes(item: *Interface, comptime mode: util.SerializeDeserialize, value: *util.SerializeDeserialize.Value(mode)) void {
