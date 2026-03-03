@@ -7,6 +7,7 @@ const tracy = anywhere.tracy;
 const build_options = @import("build_options");
 const App = @import("app");
 const ImageCache = B2.ImageCache;
+const event_thread_zig = @import("event_thread.zig");
 
 // TODO:
 // - [ ] beui needs to be able to render render_list
@@ -635,8 +636,7 @@ const callbacks = struct {
         }
     }
 
-    fn keyCallback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn keyCallback(b2: *B2.Beui2, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
         const beui = b2.persistent.beui1;
 
         if (action != .release) {
@@ -650,8 +650,7 @@ const callbacks = struct {
         beui.frame.has_events = true;
         handleKeyWithAction(beui, beui_key, action);
     }
-    fn charCallback(window: *zglfw.Window, codepoint: u32) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn charCallback(b2: *B2.Beui2, codepoint: u32) callconv(.c) void {
         const beui = b2.persistent.beui1;
         const codepoint_u21 = std.math.cast(u21, codepoint) orelse {
             std.log.warn("charCallback codepoint out of range: {d}", .{codepoint});
@@ -662,15 +661,13 @@ const callbacks = struct {
         beui.frame.text_input = printed;
     }
 
-    fn scrollCallback(window: *zglfw.Window, xoffset: f64, yoffset: f64) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn scrollCallback(b2: *B2.Beui2, xoffset: f64, yoffset: f64) callconv(.c) void {
         const beui = b2.persistent.beui1;
         if (!beui.frame.frame_cfg.?.can_capture_mouse) return;
         beui.frame.has_events = true;
         beui.frame.scroll_px += @floatCast(@Vector(2, f64){ xoffset, yoffset } * @Vector(2, f64){ 48, 48 });
     }
-    fn cursorPosCallback(window: *zglfw.Window, xpos: f64, ypos: f64) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn cursorPosCallback(b2: *B2.Beui2, xpos: f64, ypos: f64) callconv(.c) void {
         const beui = b2.persistent.beui1;
         if (!beui.frame.frame_cfg.?.can_capture_mouse) {
             // TODO: mouse_pos = null
@@ -688,8 +685,8 @@ const callbacks = struct {
             beui.frame.mouse_offset += beui.persistent.mouse_pos - prev_pos;
         }
     }
-    fn cursorEnterCallback(window: *zglfw.Window, entered: i32) callconv(.c) void {
-        _ = window;
+    fn cursorEnterCallback(b2: *B2.Beui2, entered: i32) callconv(.c) void {
+        _ = b2;
         _ = entered; // why is it i32 now
         // if (entered == zglfw.TRUE) {
         //     // entered
@@ -697,8 +694,7 @@ const callbacks = struct {
         //     // left
         // }
     }
-    fn mouseButtonCallback(window: *zglfw.Window, button: zglfw.MouseButton, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn mouseButtonCallback(b2: *B2.Beui2, button: zglfw.MouseButton, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
         const beui = b2.persistent.beui1;
 
         if (action != .release) {
@@ -757,21 +753,8 @@ pub fn main() !void {
 
     const gpa = tracy_wrapped.allocator();
 
-    var zgui_impl_data = zgui_impl.init(gpa);
-    defer zgui_impl_data.deinit();
-    zgui_impl.data_ptr = &zgui_impl_data;
-    defer zgui_impl.data_ptr = null;
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
     try zglfw.init();
     defer zglfw.terminate();
-
-    var app: App = undefined;
-    app.init(gpa);
-    defer app.deinit();
 
     // Change current working directory to where the executable is located.
     {
@@ -786,26 +769,6 @@ pub fn main() !void {
     defer window.destroy();
     window.setSizeLimits(-1, -1, -1, -1);
 
-    var beui: Beui = .{};
-
-    var b2: Beui.beui_experiment.Beui2 = undefined;
-    b2.init(&beui, gpa);
-    defer b2.deinit();
-
-    window.setUserPointer(@ptrCast(@alignCast(&b2)));
-
-    _ = window.setPosCallback(null);
-    _ = window.setKeyCallback(&callbacks.keyCallback);
-    _ = window.setSizeCallback(null);
-    _ = window.setCharCallback(&callbacks.charCallback);
-    _ = zglfw.setDropCallback(window, null);
-    _ = zglfw.setScrollCallback(window, &callbacks.scrollCallback);
-    _ = zglfw.setCursorPosCallback(window, &callbacks.cursorPosCallback);
-    _ = zglfw.setCursorEnterCallback(window, &callbacks.cursorEnterCallback);
-    _ = zglfw.setMouseButtonCallback(window, &callbacks.mouseButtonCallback);
-    _ = window.setContentScaleCallback(null);
-    _ = zglfw.setFramebufferSizeCallback(window, null);
-
     const demo = try create(gpa, window);
     defer destroy(gpa, demo);
 
@@ -815,7 +778,7 @@ pub fn main() !void {
     };
     _ = scale_factor;
 
-    var cursors = Beui.EnumArray(Beui.Cursor, ?*zglfw.Cursor).init(null);
+    var cursors = Cursors.init(null);
     for (&cursors.values, 0..) |*c, i| {
         c.* = zglfw.Cursor.createStandard(switch (@as(Beui.Cursor, @enumFromInt(i))) {
             .arrow => .arrow,
@@ -828,15 +791,56 @@ pub fn main() !void {
         }) catch null;
     }
     defer for (cursors.values) |c| if (c) |d| d.destroy();
-    var current_cursor: Beui.Cursor = .arrow;
+
+    var event_queue: event_thread_zig.EventQueue = .{ .gpa = gpa };
+
+    var res_err: anyerror!void = undefined;
+    var main_thread = try std.Thread.spawn(.{ .allocator = gpa }, main2, .{ &event_queue, window, demo, gpa, &cursors, &res_err });
+    event_thread_zig.eventThreadListen(window, &event_queue);
+    main_thread.join();
+
+    return res_err;
+}
+
+const Cursors = Beui.EnumArray(Beui.Cursor, ?*zglfw.Cursor);
+
+pub fn main2(event_queue: *event_thread_zig.EventQueue, window: *zglfw.Window, demo: *DemoState, gpa: std.mem.Allocator, cursors: *Cursors, res_err: *(anyerror!void)) void {
+    defer {
+        event_queue.kill.store(true, .seq_cst);
+        zglfw.postEmptyEvent();
+    }
+    main3(event_queue, window, demo, gpa, cursors) catch |e| {
+        res_err.* = e;
+        return;
+    };
+    res_err.* = {};
+    return;
+}
+pub fn main3(event_queue: *event_thread_zig.EventQueue, window: *zglfw.Window, demo: *DemoState, gpa: std.mem.Allocator, cursors: *Cursors) !void {
+    var zgui_impl_data = zgui_impl.init(gpa);
+    defer zgui_impl_data.deinit();
+    zgui_impl.data_ptr = &zgui_impl_data;
+    defer zgui_impl.data_ptr = null;
+
+    var app: App = undefined;
+    app.init(gpa);
+    defer app.deinit();
+
+    var beui: Beui = .{};
+
+    var b2: Beui.beui_experiment.Beui2 = undefined;
+    b2.init(&beui, gpa);
+    defer b2.deinit();
 
     var draw_list = draw_lists.RenderList.init(gpa);
     defer draw_list.deinit();
 
     var frame_num: u64 = 0;
+    var current_cursor: Beui.Cursor = .arrow;
 
-    var reduce_latency_target: u64 = target_none;
-    _ = &reduce_latency_target;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
     var timer = try std.time.Timer.start();
     _ = &timer;
@@ -877,7 +881,20 @@ pub fn main() !void {
         {
             const b2ft2 = tracy.traceNamed(@src(), "zglfw.pollEvents");
             defer b2ft2.end();
-            zglfw.pollEvents();
+
+            const events = try event_queue.takeEventsOwned();
+            defer gpa.free(events);
+
+            for (events) |event| {
+                switch (event) {
+                    .key => |ev| callbacks.keyCallback(&b2, ev.key, ev.scancode, ev.action, ev.mods),
+                    .char => |ev| callbacks.charCallback(&b2, ev.codepoint),
+                    .scroll => |ev| callbacks.scrollCallback(&b2, ev.xoffset, ev.yoffset),
+                    .cursorPos => |ev| callbacks.cursorPosCallback(&b2, ev.xpos, ev.ypos),
+                    .cursorEnter => |ev| callbacks.cursorEnterCallback(&b2, ev.entered),
+                    .mouseButton => |ev| callbacks.mouseButtonCallback(&b2, ev.button, ev.action, ev.mods),
+                }
+            }
         }
         if (frame_num == 0) {
             beui.frame.has_events = true;
