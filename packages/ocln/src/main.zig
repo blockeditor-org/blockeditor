@@ -144,19 +144,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     var renderer: Renderer = .init(rdl, self.gpa);
     defer renderer.deinit();
 
-    for (0..self.game.map.size_usize[1]) |y| {
-        for (0..self.game.map.size_usize[0]) |x| {
-            const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
-            const pos: @Vector(2, f32) = @floatFromInt(posint);
-            const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
-            if (tile.material == .none) continue;
-
-            const rect_pos: math.vec2f32 = self.interface.camera.worldToRender(pos);
-            const rect_size: math.vec2f32 = @splat(self.interface.camera.scale);
-
-            renderer.add(.from(rect_pos, rect_size), self.art.?, .from(getTileOffset(tile.material), @splat(16)));
-        }
-    }
+    // wires,pipes
     {
         var iter = vec.Iterator(2, i32).size(self.game.map.size_int);
         while (iter.next()) |posint| {
@@ -171,6 +159,20 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const addy = @divFloor(val, 16);
             const addvec: math.vec2f32 = @floatFromInt(math.vec2usize{ addx, addy });
             renderer.add(.from(rect_pos, rect_size), self.art.?, .from(start + addvec * math.vec2f32{ 16, 16 }, @splat(16)));
+        }
+    }
+    // tiles
+    for (0..self.game.map.size_usize[1]) |y| {
+        for (0..self.game.map.size_usize[0]) |x| {
+            const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
+            const pos: @Vector(2, f32) = @floatFromInt(posint);
+            const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
+            if (tile.material == .none) continue;
+
+            const rect_pos: math.vec2f32 = self.interface.camera.worldToRender(pos);
+            const rect_size: math.vec2f32 = @splat(self.interface.camera.scale);
+
+            renderer.add(.from(rect_pos, rect_size), self.art.?, .from(getTileOffset(tile.material), @splat(16)));
         }
     }
     renderer.flush();
