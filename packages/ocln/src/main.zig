@@ -545,15 +545,13 @@ const TileFlags = packed struct {
     cannot_enter: bool,
     can_stand: bool, // enter=false,stand=true means can climb. enter=false,stand=false = spikes or smth.
     /// indicates that the building on this tile has a power port
-    has_power_port: bool,
+    port: enum(u2) { none, power, pipe },
     /// indicates that the building on this tile has a pipe port
-    has_pipe_port: bool,
     has_building: bool,
     pub const empty: TileFlags = .{
         .cannot_enter = false,
         .can_stand = false,
-        .has_power_port = false,
-        .has_pipe_port = false,
+        .port = .none,
         .has_building = false,
     };
 };
@@ -565,7 +563,7 @@ const Wires = ConnectionLayer(struct {
 }, struct {
     map: *Map,
     pub fn hasIntrinsic(this: @This(), pos: vec.by2i32) bool {
-        return this.map.getFlag(pos, .has_power_port);
+        return this.map.getFlag(pos, .port) == .power;
     }
 });
 const Wire = Wires.Segment;
@@ -692,8 +690,8 @@ const Map = struct {
             if (expected.set_building and actual.has_building) {
                 return .{ .pos = pos, .status = .error_has_building };
             }
-            if (expected.set_power_port and actual.has_power_port) {
-                return .{ .pos = pos, .status = .error_has_power_port };
+            if (expected.set_power_port and actual.port != .none) {
+                return .{ .pos = pos, .status = .error_overlapping_port };
             }
             if (expected.needs_tile and !actual.cannot_enter) {
                 result = .{ .pos = pos, .status = .warning_missing_tile };
@@ -721,8 +719,8 @@ const Map = struct {
                 try this.pos_to_building.putNoClobber(this.gpa, pos, placed_id);
             }
             if (expected.set_power_port) {
-                std.debug.assert(!actual.has_power_port);
-                actual.has_power_port = true;
+                std.debug.assert(actual.port == .none);
+                actual.port = .power;
                 try this.wires.syncSegments(.{ .map = this }, pos);
             }
         }
@@ -746,8 +744,8 @@ const Map = struct {
                 std.debug.assert(this.pos_to_building.swapRemove(pos));
             }
             if (expected.set_power_port) {
-                std.debug.assert(actual.has_power_port);
-                actual.has_power_port = false;
+                std.debug.assert(actual.port == .power);
+                actual.port = .none;
                 try this.wires.syncSegments(.{ .map = this }, pos);
             }
         }
@@ -762,7 +760,7 @@ const PlaceBuildingStatus = struct {
         success,
         warning_missing_tile,
         error_has_building,
-        error_has_power_port,
+        error_overlapping_port,
         error_out_of_bounds,
     },
     fn ok(self: PlaceBuildingStatus) bool {
@@ -873,8 +871,8 @@ test Map {
         \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
     );
 
-    // don't merge with has_power_port
-    map.setFlag(.{ 30, 15 }, .has_power_port, true);
+    // don't merge with power port
+    map.setFlag(.{ 30, 15 }, .port, .power);
     try map.createWire(.{
         .sides = .{
             .{ 30, 15 },
@@ -892,7 +890,7 @@ test Map {
     );
 
     // merge when the power port is removed
-    map.setFlag(.{ 30, 15 }, .has_power_port, false);
+    map.setFlag(.{ 30, 15 }, .port, .none);
     try map.wires.syncSegments(.{ .map = map }, .{ 30, 15 });
 
     try print.snapshotPrint(&map.wires).snap(@src(),
