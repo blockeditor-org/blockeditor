@@ -10,6 +10,36 @@ pub const math = struct {
     pub const vec2i64 = @Vector(2, i64);
     pub const vec2f32 = @Vector(2, f32);
 
+    pub fn Rect(comptime n: comptime_int, comptime T: type) type {
+        return struct {
+            const vecNT = vec.by(n, T);
+            pos: vecNT,
+            size: vecNT,
+            pub fn from(pos: vecNT, size: vecNT) @This() {
+                return .{ .pos = pos, .size = size };
+            }
+            pub fn fromMinMax(min: vecNT, max: vecNT) @This() {
+                return .from(min, max - min);
+            }
+        };
+    }
+    pub fn UV(comptime n: comptime_int, comptime T: type) type {
+        return struct {
+            const vecNT = vec.by(n, T);
+            pos: vecNT,
+            size: vecNT,
+            pub fn from(pos: vecNT, size: vecNT, img_size: vecNT) @This() {
+                return .{ .pos = pos / img_size, .size = size / img_size };
+            }
+            pub fn innerRect(a: @This(), b: @This()) @This() {
+                return .{
+                    .pos = a.pos + b.pos * a.size,
+                    .size = a.size * b.size,
+                };
+            }
+        };
+    }
+
     pub const RollingAverage = struct {
         buffer: []f64,
         sum: f64,
@@ -18,6 +48,7 @@ pub const math = struct {
         pub fn init(buffer: []f64) RollingAverage {
             return .{
                 .buffer = buffer,
+                .sum = 0,
                 .index = 0,
                 .filled = false,
             };

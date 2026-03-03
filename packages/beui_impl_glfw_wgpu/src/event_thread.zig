@@ -41,11 +41,9 @@ pub const EventQueue = struct {
     gpa: std.mem.Allocator,
     kill: std.atomic.Value(bool) = .init(false),
 
-    pub fn deinit(self: *EventQueue, gpa: std.mem.Allocator) !void {
-        for (self.items) |*event| {
-            event.deinit();
-        }
-        self.items.deinit(gpa);
+    pub fn deinit(self: *EventQueue) void {
+        std.debug.assert(self.mutex.tryLock());
+        self.events.deinit(self.gpa);
     }
 
     pub fn postEvent(self: *EventQueue, event: Event) void {

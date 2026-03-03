@@ -90,6 +90,17 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
     self.* = .{ .gpa = gpa, .game = undefined, .art = null };
     self.game.init(gpa);
     self.game.map.generate(.{ 45, 20 }) catch @panic("oom");
+    _ = self.game.map.placeBuilding(.{
+        .tag = .generator,
+        .center = .{ 10, 10 },
+    }) catch @panic("placeBuilding");
+    _ = self.game.map.createWire(.{
+        .sides = .{
+            .{ 8, 8 },
+            .{ 8, 12 },
+        },
+        .user = .{},
+    }) catch @panic("createWire");
 }
 pub fn deinit(self: *App) void {
     self.game.deinit();
@@ -115,53 +126,31 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     //   - make sure the camera buffer is applied as a uniform this frame so we get smooth camera movement
     //     even if the contents of some renders are one frame delayed
     // especially we want our own vertex format instead of the generic one
-    var vertices = std.ArrayList(B2.render_list.RenderListVertex).empty;
-    defer vertices.deinit(self.gpa);
-    var indices = std.ArrayList(B2.render_list.RenderListIndex).empty;
-    defer indices.deinit(self.gpa);
+
+    var renderer: Renderer = .init(rdl, self.gpa);
+    defer renderer.deinit();
+
     for (0..self.game.map.size_usize[1]) |y| {
         for (0..self.game.map.size_usize[0]) |x| {
             const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
             const pos: @Vector(2, f32) = @floatFromInt(posint);
-            const uv = b2.persistent.image_cache.getImageUVOnRenderFromRdl(self.art.?);
             const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
             if (tile.material == .none) continue;
 
             const rect_pos: math.vec2f32 = pos * @as(math.vec2f32, @splat(self.interface.camera.scale)) + self.interface.camera.offset;
             const rect_size: math.vec2f32 = .{ 16, 16 };
-            const uv_pos: math.vec2f32 = uv.pos + (getTileOffset(tile.material) / math.vec2f32{ 256.0, 256.0 }) * uv.size;
-            const uv_size: math.vec2f32 = uv.size * (math.vec2f32{ 16.0 / 256.0, 16.0 / 256.0 });
 
-            const ul = rect_pos;
-            const ur = rect_pos + math.vec2f32{ rect_size[0], 0 };
-            const bl = rect_pos + math.vec2f32{ 0, rect_size[1] };
-            const br = rect_pos + rect_size;
-
-            const uv_ul = uv_pos;
-            const uv_ur = uv_pos + math.vec2f32{ uv_size[0], 0 };
-            const uv_bl = uv_pos + math.vec2f32{ 0, uv_size[1] };
-            const uv_br = uv_pos + uv_size;
-
-            if (vertices.items.len + 3 >= std.math.maxInt(B2.render_list.RenderListIndex)) {
-                // need to commit
-                rdl.addVertices(.rgba, vertices.items, indices.items);
-                vertices.clearRetainingCapacity();
-                indices.clearRetainingCapacity();
-            }
-            const ib: B2.render_list.RenderListIndex = @intCast(vertices.items.len);
-            vertices.appendSlice(self.gpa, &.{
-                .{ .pos = ul, .uv = uv_ul, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
-                .{ .pos = ur, .uv = uv_ur, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
-                .{ .pos = bl, .uv = uv_bl, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
-                .{ .pos = br, .uv = uv_br, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
-            }) catch @panic("oom");
-            indices.appendSlice(self.gpa, &.{
-                ib + 0, ib + 1, ib + 3,
-                ib + 0, ib + 3, ib + 2,
-            }) catch @panic("oom");
+            renderer.add(.from(rect_pos, rect_size), self.art.?, .from(getTileOffset(tile.material), @splat(16)));
         }
     }
-    rdl.addVertices(.rgba, vertices.items, indices.items);
+    {
+        var iter = vec.Iterator(2, i32).size(self.game.map.size_int);
+        while (iter.next()) |pos| {
+            const display = self.game.map.wires.getSegments(pos);
+            _ = display;
+        }
+    }
+    renderer.commit();
     rdl.addRect(.{ .pos = .{ 0, 0 }, .size = frame_size, .tint = .fromHexRgb(0x00c0c0) });
 
     rdl.addMouseEventCapture2(call_id.sub(@src()), .{ 0, 0 }, frame_size, .{
@@ -181,6 +170,60 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
 
     return rdl;
 }
+
+const Renderer = struct {
+    rdl: *B2.RepositionableDrawList,
+    gpa: std.mem.Allocator,
+    vertices: std.ArrayList(B2.render_list.RenderListVertex),
+    indices: std.ArrayList(B2.render_list.RenderListIndex),
+    pub fn init(rdl: *B2.RepositionableDrawList, gpa: std.mem.Allocator) Renderer {
+        return .{ .vertices = .empty, .indices = .empty, .rdl = rdl, .gpa = gpa };
+    }
+
+    pub fn deinit(renderer: *Renderer) void {
+        renderer.vertices.deinit(renderer.gpa);
+        renderer.indices.deinit(renderer.gpa);
+    }
+
+    pub fn add(renderer: *Renderer, rect: math.Rect(2, f32), image: *B2.ImageCache.Image, image_sub: math.Rect(2, f32)) void {
+        const image_uv_raw = renderer.rdl.b2.persistent.image_cache.getImageUVOnRenderFromRdl(image);
+        const image_uv: math.UV(2, f32) = .{ .pos = image_uv_raw.pos, .size = image_uv_raw.size };
+        const img_size: math.vec2f32 = @floatFromInt(image.size);
+
+        const uv = image_uv.innerRect(.from(image_sub.pos, image_sub.size, img_size));
+
+        const ul = rect.pos;
+        const ur = rect.pos + math.vec2f32{ rect.size[0], 0 };
+        const bl = rect.pos + math.vec2f32{ 0, rect.size[1] };
+        const br = rect.pos + rect.size;
+
+        const uv_ul = uv.pos;
+        const uv_ur = uv.pos + math.vec2f32{ uv.size[0], 0 };
+        const uv_bl = uv.pos + math.vec2f32{ 0, uv.size[1] };
+        const uv_br = uv.pos + uv.size;
+
+        if (renderer.vertices.items.len + 3 >= std.math.maxInt(B2.render_list.RenderListIndex)) {
+            // need to commit
+            renderer.commit();
+        }
+        const ib: B2.render_list.RenderListIndex = @intCast(renderer.vertices.items.len);
+        renderer.vertices.appendSlice(renderer.gpa, &.{
+            .{ .pos = ul, .uv = uv_ul, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
+            .{ .pos = ur, .uv = uv_ur, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
+            .{ .pos = bl, .uv = uv_bl, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
+            .{ .pos = br, .uv = uv_br, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
+        }) catch @panic("oom");
+        renderer.indices.appendSlice(renderer.gpa, &.{
+            ib + 0, ib + 1, ib + 3,
+            ib + 0, ib + 3, ib + 2,
+        }) catch @panic("oom");
+    }
+    pub fn commit(renderer: *Renderer) void {
+        renderer.rdl.addVertices(.rgba, renderer.vertices.items, renderer.indices.items);
+        renderer.vertices.clearRetainingCapacity();
+        renderer.indices.clearRetainingCapacity();
+    }
+};
 
 fn onMouseEvent(self: *App, b2: *B2.Beui2, ev: B2.MouseEvent) ?Beui.Cursor {
     // std.log.info("onMouseEvent: {f}", .{print.autoPrint(ev)});

@@ -11,6 +11,8 @@ pub const by2i32 = by(2, i32);
 pub const by2usize = by(2, usize);
 pub const by3i32 = by(3, i32);
 pub const by3usize = by(3, usize);
+pub const by2f32 = by(2, f32);
+pub const by2u16 = by(2, u16);
 
 pub fn Iterator(comptime n: comptime_int, comptime T: type) type {
     return struct {

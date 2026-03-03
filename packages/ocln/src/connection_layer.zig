@@ -95,8 +95,72 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             // update list
             @memcpy(value, &new_value_buf);
         }
-        pub fn getSegments(this: *@This(), pos: vec.by2i32) [segment_ref_count]SegmentPool.Handle {
-            return this.coordinate_to_segments_map.get(pos) orelse return @splat(.nil);
+        /// returned slice is valid until coordinate_to_segments_map changes
+        pub fn getSegments(this: *@This(), pos: vec.by2i32) []SegmentPool.Handle {
+            const res = this.coordinate_to_segments_map.getPtr(pos) orelse return &.{};
+            const end = for (res, 0..) |*itm, i| {
+                if (itm.id == SegmentPool.Handle.nil.id) break i;
+            } else res.len;
+            for (res[end..]) |*itm| std.debug.assert(itm.id == SegmentPool.Handle.nil.id);
+            return res[0..end];
+        }
+        const SegmentDisplay = enum(u8) {
+            none = 0b0000,
+            all = 0b1111,
+            cross_x_over_y = 0b10000,
+            cross_y_over_x = 0b10001,
+            _,
+            const Init = packed struct(u4) {
+                left: bool,
+                up: bool,
+                right: bool,
+                down: bool,
+            };
+            fn init(value: Init) SegmentDisplay {
+                return @intFromEnum(@as(u4, @enumFromInt(value)));
+            }
+            fn toInit(value: SegmentDisplay) Init {
+                return switch (value) {
+                    .cross_x_over_y, .cross_y_over_x => @enumFromInt(0b1111),
+                    else => @enumFromInt(@as(u4, @intCast(value.toInt()))),
+                };
+            }
+            fn toInt(value: SegmentDisplay) u8 {
+                return @intFromEnum(value);
+            }
+        };
+        pub fn getSegmentDisplay(this: *@This(), pos: vec.by2i32) SegmentDisplay {
+            const segments = this.getSegments(pos);
+            var result: SegmentDisplay.Init = .{
+                .left = false,
+                .up = false,
+                .right = false,
+                .down = false,
+            };
+            var is_cross = false;
+            for (segments) |segment_handle| {
+                const segment: *Segment = this.segments.getColumnPtrAssumeLive(segment_handle, .ptr);
+                const bl_eq = @reduce(.And, segment.sides[0] == pos);
+                const ur_eq = @reduce(.And, segment.sides[1] == pos);
+                switch (segment.direction()) {
+                    .x => {
+                        if (!bl_eq) result.left = true;
+                        if (!ur_eq) result.right = true;
+                    },
+                    .y => {
+                        if (!bl_eq) result.down = true;
+                        if (!ur_eq) result.up = true;
+                    },
+                }
+                if (!bl_eq and !ur_eq) is_cross = true;
+            }
+            // in the future we could assign an index to each segment and base it on which index is higher
+            if (is_cross) {
+                std.debug.assert(segments.len == 2);
+                std.debug.assert(result.left and result.up and result.right and result.down);
+                return .cross_x_over_y;
+            }
+            return .init(result);
         }
         fn trySplitOneSegment(this: *@This(), w1: SegmentPool.Handle, split_pos: vec.by2i32) !void {
             const w1_data: *Segment = this.segments.getColumnPtrAssumeLive(w1, .ptr);
@@ -115,7 +179,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
         fn trySplitSegments(this: *@This(), context: Context, pos: vec.by2i32) !void {
 
             // determine if wants split, split
-            const segments = this.getSegments(pos);
+            const segments = this.coordinate_to_segments_map.get(pos) orelse return;
             const wants_split = wants_split: {
                 if (context.hasIntrinsic(pos)) break :wants_split true;
                 for (segments) |seg| {
@@ -135,18 +199,13 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             }
         }
         fn tryMergeSegments(this: *@This(), context: Context, shared_point: vec.by2i32) !void {
-            var w1: SegmentPool.Handle = .nil;
-            var w2: SegmentPool.Handle = .nil;
-            for (this.getSegments(shared_point)) |segment| {
-                if (segment.id == SegmentPool.Handle.nil.id) continue;
-                for ([_]*SegmentPool.Handle{ &w1, &w2 }) |w| {
-                    if (w.*.id == SegmentPool.Handle.nil.id) {
-                        w.* = segment;
-                        break;
-                    }
-                } else return; // can't merge; too many segments
-            }
-            if (w1.id == SegmentPool.Handle.nil.id or w2.id == SegmentPool.Handle.nil.id) return; // can't merge; not enough segments
+            const w1, const w2 = blk: {
+                const segments = this.getSegments(shared_point);
+                if (segments.len < 2) return; // can't merge; not enough segments
+                if (segments.len > 2) return; // can't merge; too many segments
+                break :blk .{ segments[0], segments[1] };
+            };
+
             if (context.hasIntrinsic(shared_point)) return; // can't merge; there is a machine receiving power at the shared point
 
             const w1_data: *Segment = this.segments.getColumnPtrAssumeLive(w1, .ptr);

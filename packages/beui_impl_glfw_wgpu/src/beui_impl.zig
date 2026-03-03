@@ -793,6 +793,7 @@ pub fn main() !void {
     defer for (cursors.values) |c| if (c) |d| d.destroy();
 
     var event_queue: event_thread_zig.EventQueue = .{ .gpa = gpa };
+    defer event_queue.deinit();
 
     var res_err: anyerror!void = undefined;
     var main_thread = try std.Thread.spawn(.{ .allocator = gpa }, main2, .{ &event_queue, window, demo, gpa, &cursors, &res_err });
