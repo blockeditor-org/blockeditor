@@ -434,35 +434,42 @@ pub const FixedTimestep = struct {
 pub const SerializeDeserialize = struct {
     pub const Mode = enum { count, serialize, deserialize };
 
-    pub fn Value(comptime T: type, comptime mode: Mode) type {
+    pub fn Extra(comptime mode: Mode, comptime Child: type) type {
+        return switch (mode) {
+            .count => Child.Count,
+            .serialize => Child.Serialize,
+            .deserialize => Child.Deserialize,
+        };
+    }
+    pub fn Value(comptime mode: Mode) type {
         return struct {
-            state: switch (mode) {
+            internal: switch (mode) {
                 .count => struct {
-                    src: *const T,
-                    count: usize = 0,
+                    count: usize,
                 },
                 .serialize => struct {
-                    src: *const T,
                     res: []u8,
+                    // alternatively, we could enable serializing to a Writer and from a Reader
                 },
                 .deserialize => struct {
                     src_txt: []const u8,
                 },
             },
 
-            fn argMode(a: type) type {
-                return switch (mode) {
-                    .count, .serialize => a,
-                    .deserialize => a,
-                };
+            pub fn initCounter() Value(.count) {
+                return .{ .internal = .{ .count = 0 } };
             }
-            fn retMode(a: type) type {
-                return switch (mode) {
-                    .count => error{}!a,
-                    .serialize => error{}!a,
-                    .deserialize => error{DeserializeError}!a,
-                };
+            pub fn initSerializer(out: []u8) Value(.serialize) {
+                return .{ .internal = .{ .res = out } };
             }
+            pub fn initDeserializer(src: []const u8) Value(.deserialize) {
+                return .{ .internal = .{ .src_txt = src } };
+            }
+
+            pub const ErrorSet = switch (mode) {
+                .count, .serialize => error{},
+                .deserialize => error{DeserializeError},
+            };
 
             fn _set(self: *@This(), n: usize) []u8 {
                 if (self.internal.res.len < n) unreachable;
@@ -478,38 +485,40 @@ pub const SerializeDeserialize = struct {
             }
 
             fn _get(self: *@This(), n: usize) ![]const u8 {
-                if (self.src_txt.len < n) return error.DeserializeError;
-                const res = self.src_txt[0..n];
-                self.src_txt = self.src_txt[n..];
+                if (self.internal.src_txt.len < n) return error.DeserializeError;
+                const res = self.internal.src_txt[0..n];
+                self.internal.src_txt = self.internal.src_txt[n..];
                 return res;
             }
             fn _getC(self: *@This(), comptime n: usize) !*const [n]u8 {
-                if (self.src_txt.len < n) return error.DeserializeError;
-                const res = self.src_txt[0..n];
-                self.src_txt = self.src_txt[n..];
+                if (self.internal.src_txt.len < n) return error.DeserializeError;
+                const res = self.internal.src_txt[0..n];
+                self.internal.src_txt = self.internal.src_txt[n..];
                 return res;
             }
 
-            pub fn unique(self: *@This(), comptime Unique: type, value: argMode(Unique)) retMode(Unique) {
-                comptime std.debug.assert(std.meta.hasUniqueRepresentation(Unique));
-                const ret = try self.slice(Unique, 1, &.{value});
-                return ret[0];
+            fn hasUniqueRepresentation(comptime Type: type) bool {
+                if (@typeInfo(Type) == .float) return true;
+                return std.meta.hasUniqueRepresentation(Type);
             }
-            pub fn slice(self: *@This(), comptime Entry: type, len: usize, value: argMode([]align(1) const Entry)) retMode([]align(1) const Entry) {
-                comptime std.debug.assert(std.meta.hasUniqueRepresentation(Entry));
+
+            pub fn value(self: *@This(), comptime Type: type, v: *Type) ErrorSet!void {
+                comptime std.debug.assert(hasUniqueRepresentation(Type));
+                try self.slice(Type, 1, v[0..1]);
+            }
+            pub fn slice(self: *@This(), comptime Entry: type, len: usize, v: []Entry) ErrorSet!void {
+                comptime std.debug.assert(hasUniqueRepresentation(Entry));
                 switch (mode) {
                     .count => {
-                        self.internal.count += value.len * @sizeOf(Entry);
-                        return value;
+                        self.internal.count += v.len * @sizeOf(Entry);
                     },
                     .serialize => {
-                        const res = self._set(value.len * @sizeOf(Entry));
-                        @memcpy(res, std.mem.sliceAsBytes(value));
-                        return value;
+                        const res = self._set(v.len * @sizeOf(Entry));
+                        @memcpy(res, std.mem.sliceAsBytes(v));
                     },
                     .deserialize => {
                         const res = try self._get(len * @sizeOf(Entry));
-                        return std.mem.bytesAsSlice(Entry, res);
+                        @memcpy(v, std.mem.bytesAsSlice(Entry, res));
                     },
                 }
             }

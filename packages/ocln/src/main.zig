@@ -84,7 +84,6 @@ const Layers = enum {
 const App = @This();
 gpa: std.mem.Allocator,
 game: Game,
-interface: Interface = .{},
 art: ?*B2.ImageCache.Image,
 pub fn init(self: *App, gpa: std.mem.Allocator) void {
     self.* = .{ .gpa = gpa, .game = undefined, .art = null };
@@ -115,6 +114,23 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
         },
         .user = .{},
     }) catch @panic("createWire");
+
+    const count = blk: {
+        var sd: util.SerializeDeserialize.Value(.count) = .initCounter();
+        try self.game.serdes(.count, &sd, {});
+        break :blk sd.internal.count;
+    };
+    const serialized = gpa.alloc(u8, count) catch @panic("oom");
+    defer gpa.free(serialized);
+    {
+        var sd: util.SerializeDeserialize.Value(.serialize) = .initSerializer(serialized);
+        try self.game.serdes(.serialize, &sd, {});
+    }
+    {
+        var sd: util.SerializeDeserialize.Value(.deserialize) = .initDeserializer(serialized);
+        var result: Game = undefined;
+        result.serdes(.deserialize, &sd, &.{ .gpa = gpa }) catch @panic("deserfail");
+    }
 }
 pub fn deinit(self: *App) void {
     self.game.deinit();
@@ -124,7 +140,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     const b2 = call_id.b2;
     const rdl = call_id.b2.draw();
     const frame_size = b2.frame.frame_cfg.size;
-    self.interface.camera.frame_size = frame_size;
+    self.game.interface.camera.frame_size = frame_size;
 
     if (self.art == null) {
         var loader: loadimage.Loader = loadimage.Loader.init(self.gpa, @embedFile("art.png")) catch @panic("loadimage fail");
@@ -142,7 +158,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     //     even if the contents of some renders are one frame delayed
     // especially we want our own vertex format instead of the generic one
 
-    var renderer: Renderer = .init(rdl, self.gpa, &self.interface.camera);
+    var renderer: Renderer = .init(rdl, self.gpa, &self.game.interface.camera);
     defer renderer.deinit();
 
     // buildings
@@ -268,7 +284,7 @@ const Renderer = struct {
 fn onMouseEvent(self: *App, b2: *B2.Beui2, ev: B2.MouseEvent) ?Beui.Cursor {
     // std.log.info("onMouseEvent: {f}", .{print.autoPrint(ev)});
     if (ev.action == .move_while_down or ev.action == .up) {
-        self.interface.camera.centered_on_pos += self.interface.camera.worldToWindow().inverse().transformVector(ev.offset);
+        self.game.interface.camera.centered_on_pos += self.game.interface.camera.worldToWindow().inverse().transformVector(ev.offset);
     }
     _ = b2;
     return .arrow;
@@ -293,14 +309,28 @@ const Camera = struct {
             .from(camera.frame_size / @as(math.vec2f32, @splat(2)), @splat(camera.scale)),
         );
     }
+
+    pub fn serdes(
+        item: *Camera,
+        comptime mode: util.SerializeDeserialize.Mode,
+        sd: *util.SerializeDeserialize.Value(mode),
+        extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+    ) !void {
+        _ = extra;
+        try sd.value(f32, &item.scale);
+        try sd.value(f32, &item.centered_on_pos[0]);
+        try sd.value(f32, &item.centered_on_pos[1]);
+    }
 };
 const Interface = struct {
     camera: Camera = .{},
-
-    pub fn serdes(item: *Interface, comptime mode: util.SerializeDeserialize, value: *util.SerializeDeserialize.Value(mode)) void {
-        item.camera.scale = value.unique(f32, &item.camera.scale);
-        item.camera.offset[0] = value.unique(f32, &item.camera.offset[0]);
-        item.camera.offset[1] = value.unique(f32, &item.camera.offset[1]);
+    pub fn serdes(
+        item: *Interface,
+        comptime mode: util.SerializeDeserialize.Mode,
+        sd: *util.SerializeDeserialize.Value(mode),
+        extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+    ) !void {
+        try item.camera.serdes(mode, sd, extra);
     }
 };
 
@@ -316,13 +346,28 @@ fn getTileImage(material: MaterialTag) Image {
 
 const Game = struct {
     map: Map,
+    interface: Interface,
     pub fn init(game: *Game, gpa: std.mem.Allocator) void {
-        game.* = .{ .map = undefined };
+        game.* = .{ .map = undefined, .interface = .{} };
         game.map.init(gpa);
     }
     pub fn deinit(game: *Game) void {
         game.map.deinit();
     }
+
+    pub fn serdes(
+        item: *Game,
+        comptime mode: util.SerializeDeserialize.Mode,
+        value: *util.SerializeDeserialize.Value(mode),
+        extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+    ) !void {
+        try item.interface.serdes(mode, value, extra);
+    }
+};
+const GameSerializeExtra = struct {
+    pub const Count = void;
+    pub const Serialize = void;
+    pub const Deserialize = *const struct { gpa: std.mem.Allocator };
 };
 
 // https://en.wikipedia.org/wiki/Connected-component_labeling
