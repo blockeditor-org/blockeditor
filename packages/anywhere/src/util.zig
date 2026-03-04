@@ -32,6 +32,11 @@ pub const math = struct {
         pub fn inverse(self: *const Transform2D) Transform2D {
             return .{ .scale = @as(math.vec2f32, @splat(1)) / self.scale, .offset = self.offset / self.scale };
         }
+        pub fn multiply(self: *const Transform2D, other: *const Transform2D) Transform2D {
+            // b.transform(a.transform(p)) should be equivalent to a.multiply(b).transform(p)
+            // idk if this is correct. maybe.
+            return .{ .scale = self.scale * other.scale, .offset = self.offset * other.scale + other.offset };
+        }
     };
 
     pub fn Rect(comptime n: comptime_int, comptime T: type) type {
