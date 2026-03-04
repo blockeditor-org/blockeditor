@@ -11,6 +11,21 @@ pub const math = struct {
     pub const vec2f32 = @Vector(2, f32);
     pub const vec2usize = vec.by(2, usize);
 
+    /// we could add angle if we want. we probably never want skew though, we can save that for a 3d transformation matrix
+    pub const Transform2D = struct {
+        offset: math.vec2f32,
+        scale: math.vec2f32,
+        pub fn transformPoint(self: *const Transform2D, point: math.vec2f32) math.vec2f32 {
+            return point * self.scale + self.offset;
+        }
+        pub fn transformVector(self: *const Transform2D, end_point: math.vec2f32) math.vec2f32 {
+            return end_point * self.scale; // aka transform(end) - transform(@splat(0))
+        }
+        pub fn inverse(self: *const Transform2D) Transform2D {
+            return .{ .scale = @as(math.vec2f32, @splat(1)) / self.scale, .offset = self.offset / self.scale };
+        }
+    };
+
     pub fn Rect(comptime n: comptime_int, comptime T: type) type {
         return struct {
             const vecNT = vec.by(n, T);

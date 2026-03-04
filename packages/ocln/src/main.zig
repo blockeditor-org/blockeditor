@@ -124,6 +124,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     const b2 = call_id.b2;
     const rdl = call_id.b2.draw();
     const frame_size = b2.frame.frame_cfg.size;
+    self.interface.camera.frame_size = frame_size;
 
     if (self.art == null) {
         var loader: loadimage.Loader = loadimage.Loader.init(self.gpa, @embedFile("art.png")) catch @panic("loadimage fail");
@@ -141,12 +142,12 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     //     even if the contents of some renders are one frame delayed
     // especially we want our own vertex format instead of the generic one
 
-    var renderer: Renderer = .init(rdl, self.gpa);
+    var renderer: Renderer = .init(rdl, self.gpa, &self.interface.camera);
     defer renderer.deinit();
 
     // buildings
     {
-        var iter = self.game.map.building_pool.liveHandles;
+        var iter = self.game.map.building_pool.liveHandles();
         while (iter.next()) |building_handle| {
             const building: *Building = self.game.map.building_pool.getColumnPtrAssumeLive(building_handle, .ptr);
             const descriptor = building_to_descriptor_map.getPtrConst(building.tag);
@@ -158,8 +159,6 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
         var iter = vec.Iterator(2, i32).size(self.game.map.size_int);
         while (iter.next()) |posint| {
             const pos: math.vec2f32 = @floatFromInt(posint);
-            const rect_pos: math.vec2f32 = self.interface.camera.worldToRender(pos);
-            const rect_size: math.vec2f32 = @splat(self.interface.camera.scale);
 
             const display = self.game.map.wires.getSegmentDisplay(posint);
             const val: usize = display.toInt();
@@ -167,7 +166,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const addx = @mod(val, 16);
             const addy = @divFloor(val, 16);
             const addvec: math.vec2f32 = @floatFromInt(math.vec2usize{ addx, addy });
-            renderer.add(.from(rect_pos, rect_size), self.art.?, .from(start + addvec * math.vec2f32{ 16, 16 }, @splat(16)));
+            renderer.add(.from(pos, @splat(1)), self.art.?, .from(start + addvec * math.vec2f32{ 16, 16 }, @splat(16)));
         }
     }
     // tiles
@@ -178,10 +177,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
             if (tile.material == .none) continue;
 
-            const rect_pos: math.vec2f32 = self.interface.camera.worldToRender(pos);
-            const rect_size: math.vec2f32 = @splat(self.interface.camera.scale);
-
-            renderer.add(.from(rect_pos, rect_size), self.art.?, .from(getTileOffset(tile.material), @splat(16)));
+            renderer.add(.from(pos, @splat(1)), self.art.?, .from(getTileOffset(tile.material), @splat(16)));
         }
     }
     renderer.flush();
@@ -211,8 +207,9 @@ const Renderer = struct {
     vertices: std.ArrayList(B2.render_list.RenderListVertex),
     indices: std.ArrayList(B2.render_list.RenderListIndex),
     last_art: ?*B2.ImageCache.Image,
-    pub fn init(rdl: *B2.RepositionableDrawList, gpa: std.mem.Allocator) Renderer {
-        return .{ .vertices = .empty, .indices = .empty, .last_art = null, .rdl = rdl, .gpa = gpa };
+    camera: *Camera,
+    pub fn init(rdl: *B2.RepositionableDrawList, gpa: std.mem.Allocator, camera: *Camera) Renderer {
+        return .{ .vertices = .empty, .indices = .empty, .last_art = null, .rdl = rdl, .gpa = gpa, .camera = camera };
     }
 
     pub fn deinit(renderer: *Renderer) void {
@@ -220,17 +217,17 @@ const Renderer = struct {
         renderer.indices.deinit(renderer.gpa);
     }
 
-    pub fn add(renderer: *Renderer, rect: math.Rect(2, f32), image: *B2.ImageCache.Image, image_sub: math.Rect(2, f32)) void {
+    pub fn add(renderer: *Renderer, rect_worldspace: math.Rect(2, f32), image: *B2.ImageCache.Image, image_sub: math.Rect(2, f32)) void {
         const image_uv_raw = renderer.rdl.b2.persistent.image_cache.getImageUVOnRenderFromRdl(image);
         const image_uv: math.UV(2, f32) = .{ .pos = image_uv_raw.pos, .size = image_uv_raw.size };
         const img_size: math.vec2f32 = @floatFromInt(image.size);
 
         const uv = image_uv.innerRect(.from(image_sub.pos, image_sub.size, img_size));
 
-        const ul = rect.pos;
-        const ur = rect.pos + math.vec2f32{ rect.size[0], 0 };
-        const bl = rect.pos + math.vec2f32{ 0, rect.size[1] };
-        const br = rect.pos + rect.size;
+        const bl: math.vec2f32 = renderer.camera.worldToWindow().transformPoint(rect_worldspace.pos);
+        const ur: math.vec2f32 = renderer.camera.worldToWindow().transformPoint(rect_worldspace.pos + rect_worldspace.size);
+        const br: math.vec2f32 = .{ ur[0], bl[1] };
+        const ul: math.vec2f32 = .{ bl[0], ur[1] };
 
         const uv_ul = uv.pos;
         const uv_ur = uv.pos + math.vec2f32{ uv.size[0], 0 };
@@ -249,6 +246,7 @@ const Renderer = struct {
             .{ .pos = br, .uv = uv_br, .tint = Beui.Color.fromHexRgb(0xFFFFFF).value, .circle = .{ 0, 0 } },
         }) catch @panic("oom");
         renderer.indices.appendSlice(renderer.gpa, &.{
+            // note that these are inverted because ul/br/ur/bl are inverted
             ib + 0, ib + 1, ib + 3,
             ib + 0, ib + 3, ib + 2,
         }) catch @panic("oom");
@@ -265,9 +263,7 @@ const Renderer = struct {
 fn onMouseEvent(self: *App, b2: *B2.Beui2, ev: B2.MouseEvent) ?Beui.Cursor {
     // std.log.info("onMouseEvent: {f}", .{print.autoPrint(ev)});
     if (ev.action == .move_while_down or ev.action == .up) {
-        var offset = ev.offset;
-        offset.y = -offset.y;
-        self.interface.camera.offset += offset;
+        self.interface.camera.centered_on_pos += self.interface.camera.worldToWindow().inverse().transformVector(ev.offset);
     }
     _ = b2;
     return .arrow;
@@ -280,15 +276,20 @@ fn onScrollEvent(self: *App, b2: *B2.Beui2, ev: B2.ScrollEvent) bool {
     return true;
 }
 
-const Interface = struct {
-    camera: struct {
-        offset: @Vector(2, f32) = @splat(0),
-        scale: f32 = 16,
+const Camera = struct {
+    centered_on_pos: @Vector(2, f32) = @splat(0),
+    scale: f32 = 16,
 
-        pub fn worldToRender(camera: *@This(), world: vec.by2f32) vec.by2f32 {
-            return world * @as(math.vec2f32, @splat(camera.scale)) + camera.offset;
-        }
-    } = .{},
+    frame_size: @Vector(2, f32) = .{ 1, 1 },
+
+    pub fn worldToWindow(camera: *Camera) math.Transform2D {
+        const scale: math.vec2f32 = @as(math.vec2f32, @splat(camera.scale)) * @as(math.vec2f32, .{ 1, -1 });
+        const offset: math.vec2f32 = camera.centered_on_pos * scale + camera.frame_size / @as(math.vec2f32, @splat(2));
+        return .{ .scale = scale, .offset = offset };
+    }
+};
+const Interface = struct {
+    camera: Camera = .{},
 
     pub fn serdes(item: *Interface, comptime mode: util.SerializeDeserialize, value: *util.SerializeDeserialize.Value(mode)) void {
         item.camera.scale = value.unique(f32, &item.camera.scale);

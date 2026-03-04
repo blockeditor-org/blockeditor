@@ -147,8 +147,8 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                         if (!ur_eq) result.right = true;
                     },
                     .y => {
-                        if (!bl_eq) result.up = true;
-                        if (!ur_eq) result.down = true;
+                        if (!bl_eq) result.down = true;
+                        if (!ur_eq) result.up = true;
                     },
                 }
             }
