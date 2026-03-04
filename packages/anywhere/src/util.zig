@@ -15,6 +15,14 @@ pub const math = struct {
     pub const Transform2D = struct {
         offset: math.vec2f32,
         scale: math.vec2f32,
+
+        /// generate the Transform2D that converts a rectangle from rect_a to rect_b
+        /// [Transform2d thatTransforms: rect_a to: rect_b]
+        pub fn from(rect_a: Rect(2, f32), rect_b: Rect(2, f32)) Transform2D {
+            const scale = rect_b.size / rect_a.size;
+            return .{ .scale = scale, .offset = rect_a.pos * scale + rect_b.pos };
+        }
+
         pub fn transformPoint(self: *const Transform2D, point: math.vec2f32) math.vec2f32 {
             return point * self.scale + self.offset;
         }

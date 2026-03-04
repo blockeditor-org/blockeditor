@@ -283,9 +283,10 @@ const Camera = struct {
     frame_size: @Vector(2, f32) = .{ 1, 1 },
 
     pub fn worldToWindow(camera: *Camera) math.Transform2D {
-        const scale: math.vec2f32 = @as(math.vec2f32, @splat(camera.scale)) * @as(math.vec2f32, .{ 1, -1 });
-        const offset: math.vec2f32 = camera.centered_on_pos * scale + camera.frame_size / @as(math.vec2f32, @splat(2));
-        return .{ .scale = scale, .offset = offset };
+        return .from(
+            .from(camera.centered_on_pos, .{ 1, -1 }),
+            .from(camera.frame_size / @as(math.vec2f32, @splat(2)), @splat(camera.scale)),
+        );
     }
 };
 const Interface = struct {
