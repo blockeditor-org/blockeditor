@@ -92,19 +92,19 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
     self.game.map.generate(.{ 45, 20 }) catch @panic("oom");
     _ = self.game.map.placeBuilding(.{
         .tag = .generator,
-        .center = .{ 10, 10 },
+        .center = .{ 8, 10 },
     }) catch @panic("placeBuilding");
     _ = self.game.map.createWire(.{
         .sides = .{
-            .{ 8, 8 },
-            .{ 8, 12 },
+            .{ 8, 4 },
+            .{ 8, 16 },
         },
         .user = .{},
     }) catch @panic("createWire");
     _ = self.game.map.createWire(.{
         .sides = .{
-            .{ 6, 10 },
-            .{ 10, 10 },
+            .{ 2, 10 },
+            .{ 20, 10 },
         },
         .user = .{},
     }) catch @panic("createWire");
@@ -151,7 +151,10 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
         while (iter.next()) |building_handle| {
             const building: *Building = self.game.map.building_pool.getColumnPtrAssumeLive(building_handle, .ptr);
             const descriptor = building_to_descriptor_map.getPtrConst(building.tag);
-            _ = descriptor;
+
+            const center: @Vector(2, f32) = @floatFromInt(building.center);
+
+            renderer.add(.from(center + descriptor.image.world.pos, descriptor.image.world.size), self.art.?, descriptor.image.spritesheet);
         }
     }
     // wires,pipes
@@ -177,7 +180,9 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
             const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
             if (tile.material == .none) continue;
 
-            renderer.add(.from(pos, @splat(1)), self.art.?, .from(getTileOffset(tile.material), @splat(16)));
+            const image = getTileImage(tile.material);
+
+            renderer.add(.from(pos + image.world.pos, image.world.size), self.art.?, image.spritesheet);
         }
     }
     renderer.flush();
@@ -299,13 +304,13 @@ const Interface = struct {
     }
 };
 
-fn getTileOffset(material: MaterialTag) @Vector(2, f32) {
+fn getTileImage(material: MaterialTag) Image {
     return switch (material) {
-        .unobtanium => .{ 64, 0 },
-        .stone => .{ 16, 0 },
-        .dirt => .{ 16, 16 },
-        .shelf => .{ 32, 9 },
-        else => .{ 48, 0 },
+        .unobtanium => .{ .world = .from(@splat(0), @splat(1)), .spritesheet = .from(.{ 64, 0 }, @splat(16)) },
+        .stone => .{ .world = .from(@splat(0), @splat(1)), .spritesheet = .from(.{ 16, 0 }, @splat(16)) },
+        .dirt => .{ .world = .from(@splat(0), @splat(1)), .spritesheet = .from(.{ 16, 16 }, @splat(16)) },
+        .shelf => .{ .world = .from(@splat(0), @splat(1)), .spritesheet = .from(.{ 32, 9 }, @splat(16)) },
+        else => .{ .world = .from(@splat(0), @splat(1)), .spritesheet = .from(.{ 48, 0 }, @splat(16)) },
     };
 }
 
@@ -794,6 +799,10 @@ const building_to_descriptor_map: std.EnumArray(BuildingTag, BuildingDescriptor)
             0, 0, 0,
             0, 0, 0,
         })),
+        .image = .{
+            .world = .from(.{ -1, 0 }, .{ 3, 4 }),
+            .spritesheet = .from(.{ 0, 64 }, .{ 48, 64 }),
+        },
         .flags = &.{
             .{ .set_building = true },
             .{ .set_building = true, .set_power_port = true },
@@ -805,11 +814,17 @@ const BuildingDescriptor = struct {
     offset: @Vector(2, i32),
     grid: Grid(2, i32, usize),
     flags: []const BuildingDescriptorFlag,
+    image: Image,
 };
 const BuildingDescriptorFlag = packed struct {
     set_building: bool = false,
     set_power_port: bool = false,
     needs_tile: bool = false,
+};
+
+const Image = struct {
+    world: math.Rect(2, f32),
+    spritesheet: math.Rect(2, f32),
 };
 
 test Map {
