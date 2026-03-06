@@ -9,6 +9,7 @@ const loadimage = @import("loadimage");
 const vec = util.vec;
 const connection_layer = @import("connection_layer.zig");
 const ConnectionLayer = connection_layer.ConnectionLayer;
+const buildings = @import("buildings.zig");
 
 const Beui = @import("beui").Beui;
 const B2 = Beui.beui_experiment;
@@ -114,6 +115,8 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
         },
         .user = .{},
     }) catch @panic("createWire");
+    _ = self.game.map.placeBuilding(.{ .tag = .power_outlet, .center = .{ 10, 14 } }) catch @panic("placeBuilding");
+    _ = self.game.map.placeBuilding(.{ .tag = .lamp, .center = .{ 13, 14 } }) catch @panic("placeBuilding");
 
     const count = blk: {
         var sd: util.SerializeDeserialize.Value(.count) = .initCounter();
@@ -166,7 +169,7 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
         var iter = self.game.map.building_pool.liveHandles();
         while (iter.next()) |building_handle| {
             const building: *Building = self.game.map.building_pool.getColumnPtrAssumeLive(building_handle, .ptr);
-            const descriptor = building_to_descriptor_map.getPtrConst(building.tag);
+            const descriptor = buildings.building_to_descriptor_map.getPtrConst(building.tag);
 
             const center: @Vector(2, f32) = @floatFromInt(building.center);
 
@@ -631,12 +634,10 @@ const Wires = ConnectionLayer(struct {
 });
 const Wire = Wires.Segment;
 
-const BuildingTag = enum {
-    generator,
-};
 const Building = struct {
-    tag: BuildingTag,
+    tag: buildings.BuildingTag,
     center: vec.by2i32,
+    data: ?*const anyopaque = null,
 };
 const BuildingInfo = struct {};
 const BuildingPool = zpool.Pool(16, 16, Building, struct { ptr: Building });
@@ -741,7 +742,7 @@ const Map = struct {
     }
 
     fn canPlaceBuilding(this: *Map, building: Building) PlaceBuildingStatus {
-        const descriptor = building_to_descriptor_map.get(building.tag);
+        const descriptor = buildings.building_to_descriptor_map.get(building.tag);
         var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         var result: PlaceBuildingStatus = .{ .pos = building.center, .status = .success };
         while (range.next()) |subpos| {
@@ -768,7 +769,7 @@ const Map = struct {
 
         const placed_id = try this.building_pool.add(.{ .ptr = building });
 
-        const descriptor = building_to_descriptor_map.get(building.tag);
+        const descriptor = buildings.building_to_descriptor_map.get(building.tag);
         var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         while (range.next()) |subpos| {
             const index = descriptor.grid.get(subpos).?;
@@ -793,7 +794,7 @@ const Map = struct {
     fn removeBuilding(this: *Map, building_id: BuildingPool.Handle) !void {
         const building: Building = this.building_pool.getColumnAssumeLive(building_id, .ptr);
 
-        const descriptor = building_to_descriptor_map.get(building.tag);
+        const descriptor = buildings.building_to_descriptor_map.get(building.tag);
         var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         while (range.next()) |subpos| {
             const index = descriptor.grid.get(subpos).?;
@@ -833,41 +834,7 @@ const PlaceBuildingStatus = struct {
         };
     }
 };
-const building_to_descriptor_map: std.EnumArray(BuildingTag, BuildingDescriptor) = .init(.{
-    .generator = @as(BuildingDescriptor, .{
-        .offset = .{ 1, 1 },
-        .grid = .fromSizeSlice(.{ 3, 5 }, @constCast(&[_]usize{
-            // note that this is upside-down
-            2, 2, 2,
-            0, 0, 1,
-            0, 0, 0,
-            0, 0, 0,
-            0, 0, 0,
-        })),
-        .image = .{
-            .world = .from(.{ -1, 0 }, .{ 3, 4 }),
-            .spritesheet = .from(.{ 0, 64 }, .{ 48, 64 }),
-        },
-        .flags = &.{
-            .{ .set_building = true },
-            .{ .set_building = true, .set_power_port = true },
-            .{ .needs_tile = true },
-        },
-    }),
-});
-const BuildingDescriptor = struct {
-    offset: @Vector(2, i32),
-    grid: Grid(2, i32, usize),
-    flags: []const BuildingDescriptorFlag,
-    image: Image,
-};
-const BuildingDescriptorFlag = packed struct {
-    set_building: bool = false,
-    set_power_port: bool = false,
-    needs_tile: bool = false,
-};
-
-const Image = struct {
+pub const Image = struct {
     world: math.Rect(2, f32),
     spritesheet: math.Rect(2, f32),
 };
