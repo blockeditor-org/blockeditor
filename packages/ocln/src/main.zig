@@ -97,8 +97,8 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
     }) catch @panic("placeBuilding");
     _ = self.game.map.createWire(.{
         .sides = .{
-            .{ 8, 4 },
-            .{ 8, 16 },
+            .{ 8, 6 },
+            .{ 8, 18 },
         },
         .user = .{},
     }) catch @panic("createWire");
@@ -121,6 +121,7 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
 
     self.game.update() catch @panic("update");
     self.game.interface.overlay = .wires;
+    self.game.interface.camera.scale *= 4;
 
     const count = blk: {
         var sd: util.SerializeDeserialize.Value(.count) = .initCounter();
@@ -146,6 +147,7 @@ pub fn deinit(self: *App) void {
 pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     const b2 = call_id.b2;
     const rdl = call_id.b2.draw();
+    const id = call_id.sub(@src());
     const frame_size = b2.frame.frame_cfg.size;
     self.game.interface.camera.frame_size = frame_size;
 
@@ -168,47 +170,13 @@ pub fn render(self: *App, call_id: B2.ID) *B2.RepositionableDrawList {
     var renderer: Renderer = .init(rdl, self.gpa, &self.game.interface.camera);
     defer renderer.deinit();
 
-    // buildings
-    {
-        var iter = self.game.map.building_pool.liveHandles();
-        while (iter.next()) |building_handle| {
-            const building: *Building = self.game.map.building_pool.getColumnPtrAssumeLive(building_handle, .ptr);
-            const descriptor = buildings.building_to_descriptor_map.getPtrConst(building.tag);
-
-            const center: @Vector(2, f32) = @floatFromInt(building.center);
-
-            renderer.add(.from(center + descriptor.image.world.pos, descriptor.image.world.size), self.art.?, descriptor.image.spritesheet);
-        }
+    switch (self.game.interface.overlay) {
+        .normal => {},
+        .wires => renderer.renderWiresOverlay(&self.game, self.art.?, id.sub(@src())),
     }
-    // wires,pipes
-    {
-        var iter = vec.Iterator(2, i32).size(self.game.map.size_int);
-        while (iter.next()) |posint| {
-            const pos: math.vec2f32 = @floatFromInt(posint);
-
-            const display = self.game.map.wires.getSegmentDisplay(posint);
-            const val: usize = display.toInt();
-            const start: math.vec2f32 = .{ 0, 224 };
-            const addx = @mod(val, 16);
-            const addy = @divFloor(val, 16);
-            const addvec: math.vec2f32 = @floatFromInt(math.vec2usize{ addx, addy });
-            renderer.add(.from(pos, @splat(1)), self.art.?, .from(start + addvec * math.vec2f32{ 16, 16 }, @splat(16)));
-        }
-    }
-    // tiles
-    for (0..self.game.map.size_usize[1]) |y| {
-        for (0..self.game.map.size_usize[0]) |x| {
-            const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
-            const pos: @Vector(2, f32) = @floatFromInt(posint);
-            const tile = self.game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
-            if (tile.material == .none) continue;
-
-            const image = getTileImage(tile.material);
-
-            renderer.add(.from(pos + image.world.pos, image.world.size), self.art.?, image.spritesheet);
-        }
-    }
+    renderer.renderRemaining(&self.game, self.art.?);
     renderer.flush();
+
     rdl.addRect(.{ .pos = .{ 0, 0 }, .size = frame_size, .tint = .fromHexRgb(0x00c0c0) });
 
     rdl.addMouseEventCapture2(call_id.sub(@src()), .{ 0, 0 }, frame_size, .{
@@ -236,6 +204,10 @@ const Renderer = struct {
     indices: std.ArrayList(B2.render_list.RenderListIndex),
     last_art: ?*B2.ImageCache.Image,
     camera: *Camera,
+    rendered: struct {
+        wires: bool = false,
+    } = .{},
+
     pub fn init(rdl: *B2.RepositionableDrawList, gpa: std.mem.Allocator, camera: *Camera) Renderer {
         return .{ .vertices = .empty, .indices = .empty, .last_art = null, .rdl = rdl, .gpa = gpa, .camera = camera };
     }
@@ -243,6 +215,91 @@ const Renderer = struct {
     pub fn deinit(renderer: *Renderer) void {
         renderer.vertices.deinit(renderer.gpa);
         renderer.indices.deinit(renderer.gpa);
+    }
+
+    pub fn renderRemaining(renderer: *Renderer, game: *Game, art: *B2.ImageCache.Image) void {
+        renderer.renderBuildings(game, art);
+        if (!renderer.rendered.wires) renderer.renderWires(game, art);
+        renderer.renderTiles(game, art);
+    }
+
+    pub fn renderBuildings(renderer: *Renderer, game: *Game, art: *B2.ImageCache.Image) void {
+        var iter = game.map.building_pool.liveHandles();
+        while (iter.next()) |building_handle| {
+            const building: *Building = game.map.building_pool.getColumnPtrAssumeLive(building_handle, .ptr);
+            const descriptor = buildings.building_to_descriptor_map.getPtrConst(building.tag);
+
+            const center: @Vector(2, f32) = @floatFromInt(building.center);
+
+            renderer.add(.from(center + descriptor.image.world.pos, descriptor.image.world.size), art, descriptor.image.spritesheet);
+        }
+    }
+
+    pub fn renderWiresOverlay(renderer: *Renderer, game: *Game, art: *B2.ImageCache.Image, call_id: B2.ID) void {
+        const id = call_id.sub(@src());
+        var segments_iter = game.map.wires.segments.liveHandles();
+        const loop_id_outer = id.pushLoop(@src(), Wires.SegmentPool.Handle);
+        while (segments_iter.next()) |segment_handle| {
+            const loop_id = loop_id_outer.value(@src(), segment_handle);
+            const segment: *Wires.Segment = game.map.wires.segments.getColumnPtrAssumeLive(segment_handle, .ptr);
+            // render text halfway between the sides
+            const rounded = @round(segment.value * 100) / 100;
+            const arrow = switch (std.math.order(rounded, 0)) {
+                .lt => switch (segment.direction()) {
+                    .x => "l", //"←",
+                    .y => "d", //"↓",
+                },
+                .eq => "",
+                .gt => switch (segment.direction()) {
+                    .x => "r", //"→",
+                    .y => "u", //"↑",
+                },
+            };
+            const unit = if (rounded == 0) "" else "kJ/s";
+            const msg = renderer.rdl.b2.fmt("{s}{d:.2}{s}", .{ arrow, @abs(rounded), unit });
+
+            const sbl: math.vec2f32 = @floatFromInt(segment.sides[0]);
+            const sur: math.vec2f32 = @floatFromInt(segment.sides[1]);
+            const ul = game.interface.camera.worldToWindow().transformPoint(.{ sbl[0] + 0.5, sur[1] + 0.5 });
+            const br = game.interface.camera.worldToWindow().transformPoint(.{ sur[0] + 0.5, sbl[1] + 0.5 });
+
+            renderer.flush();
+            const text_line = B2.textLine(.{ .caller_id = loop_id.sub(@src()), .constraints = .{ .available_size = .{ .w = null, .h = null } } }, .{ .text = msg });
+            renderer.rdl.place(text_line.rdl, .{
+                .offset = (br - ul) / @as(math.vec2f32, @splat(2)) + ul - (text_line.size / @as(math.vec2f32, @splat(2))),
+            });
+        }
+        renderer.renderWires(game, art);
+    }
+    pub fn renderWires(renderer: *Renderer, game: *Game, art: *B2.ImageCache.Image) void {
+        renderer.rendered.wires = true;
+        var iter = vec.Iterator(2, i32).size(game.map.size_int);
+        while (iter.next()) |posint| {
+            const pos: math.vec2f32 = @floatFromInt(posint);
+
+            const display = game.map.wires.getSegmentDisplay(posint);
+            const val: usize = display.toInt();
+            const start: math.vec2f32 = .{ 0, 224 };
+            const addx = @mod(val, 16);
+            const addy = @divFloor(val, 16);
+            const addvec: math.vec2f32 = @floatFromInt(math.vec2usize{ addx, addy });
+            renderer.add(.from(pos, @splat(1)), art, .from(start + addvec * math.vec2f32{ 16, 16 }, @splat(16)));
+        }
+    }
+
+    pub fn renderTiles(renderer: *Renderer, game: *Game, art: *B2.ImageCache.Image) void {
+        for (0..game.map.size_usize[1]) |y| {
+            for (0..game.map.size_usize[0]) |x| {
+                const posint: @Vector(2, i32) = @intCast(@Vector(2, usize){ x, y });
+                const pos: @Vector(2, f32) = @floatFromInt(posint);
+                const tile = game.map.materials.get(.{ posint[0], posint[1], Layers.tile.int() }) orelse Material.empty;
+                if (tile.material == .none) continue;
+
+                const image = getTileImage(tile.material);
+
+                renderer.add(.from(pos + image.world.pos, image.world.size), art, image.spritesheet);
+            }
+        }
     }
 
     pub fn add(renderer: *Renderer, rect_worldspace: math.Rect(2, f32), image: *B2.ImageCache.Image, image_sub: math.Rect(2, f32)) void {
@@ -281,6 +338,7 @@ const Renderer = struct {
         renderer.last_art = image;
     }
     pub fn flush(renderer: *Renderer) void {
+        if (renderer.vertices.items.len == 0) return;
         renderer.rdl.addVertices(.rgba, renderer.vertices.items, renderer.indices.items);
         renderer.vertices.clearRetainingCapacity();
         renderer.indices.clearRetainingCapacity();

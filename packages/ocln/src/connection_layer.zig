@@ -24,7 +24,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             user: User,
             value: f64 = 0,
 
-            fn direction(this: *const Segment) enum { x, y } {
+            pub fn direction(this: *const Segment) enum { x, y } {
                 const s1, const s2 = this.sides;
                 if (s1[0] == s2[0] and s1[1] == s2[1]) unreachable; // segments must have at least one length
                 std.debug.assert(@reduce(.And, s1 <= s2));
@@ -35,7 +35,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             fn canMergeWith(this: *const Segment, other: *const Segment) bool {
                 return this.direction() == other.direction() and this.user.canMergeWith(&other.user);
             }
-            fn hasSide(this: *const Segment, side: vec.by2i32) bool {
+            pub fn hasSide(this: *const Segment, side: vec.by2i32) bool {
                 for (&this.sides) |*our_side| {
                     if (@reduce(.And, our_side.* == side)) return true;
                 }
