@@ -10,6 +10,7 @@ const vec = util.vec;
 const connection_layer = @import("connection_layer.zig");
 const ConnectionLayer = connection_layer.ConnectionLayer;
 const buildings = @import("buildings.zig");
+const power = @import("power.zig");
 
 const Beui = @import("beui").Beui;
 const B2 = Beui.beui_experiment;
@@ -117,6 +118,9 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
     }) catch @panic("createWire");
     _ = self.game.map.placeBuilding(.{ .tag = .power_outlet, .center = .{ 10, 14 } }) catch @panic("placeBuilding");
     _ = self.game.map.placeBuilding(.{ .tag = .lamp, .center = .{ 13, 14 } }) catch @panic("placeBuilding");
+
+    self.game.update() catch @panic("update");
+    self.game.interface.overlay = .wires;
 
     const count = blk: {
         var sd: util.SerializeDeserialize.Value(.count) = .initCounter();
@@ -327,6 +331,8 @@ const Camera = struct {
 };
 const Interface = struct {
     camera: Camera = .{},
+    overlay: Overlay = .normal,
+    const Overlay = enum { normal, wires };
     pub fn serdes(
         item: *Interface,
         comptime mode: util.SerializeDeserialize.Mode,
@@ -366,6 +372,117 @@ const Game = struct {
     ) !void {
         try item.interface.serdes(mode, value, extra);
     }
+
+    pub fn update(this: *Game) !void {
+        const t1 = anywhere.tracy.trace(@src());
+        defer t1.end();
+
+        // first, we do some things in parallel
+        // - agent pathfinding & such
+        // - water calculations
+        // - power calculations
+        // io.async(...)
+        // then, we merge and apply the results sequentially
+
+        // update power:
+        // 1. we iterate over every power wire and add a node at the start point and end point and a link between the two
+        // 2. now we need to do connected component labeling to identify subgraphs
+
+        const gpa = this.map.gpa;
+
+        var resolver: WireNetworkResolver = .{ .intersection_queue = .empty, .intersection_queue_index = 0 };
+        defer resolver.intersection_queue.deinit(gpa);
+
+        var segments = this.map.wires.segments.liveHandles();
+        while (segments.next()) |segment_handle| {
+            const segment: *Wires.Segment = this.map.wires.segments.getColumnPtrAssumeLive(segment_handle, .ptr);
+            try resolver.intersection_queue.put(gpa, segment.sides[0], {});
+            if (resolver.intersection_queue.count() > resolver.intersection_queue_index) {
+                try resolver.exploreAndCalculate(this, gpa);
+            }
+        }
+    }
+
+    const WireNetworkResolver = struct {
+        intersection_queue: std.AutoArrayHashMapUnmanaged(math.vec2i32, void),
+        intersection_queue_index: usize,
+
+        fn exploreAndCalculate(self: *WireNetworkResolver, game: *Game, gpa: std.mem.Allocator) !void {
+            const t2 = anywhere.tracy.trace(@src());
+            defer t2.end();
+
+            var nodes: std.AutoArrayHashMapUnmanaged(math.vec2i32, power.Node) = .empty;
+            defer nodes.deinit(gpa);
+
+            var links: std.MultiArrayList(struct { handle: Wires.SegmentPool.Handle, link: power.Link }) = .empty; // link index -> wire.segment
+            defer links.deinit(gpa);
+
+            while (self.intersection_queue_index < self.intersection_queue.count()) : (self.intersection_queue_index += 1) {
+                const pos = self.intersection_queue.keys()[self.intersection_queue_index];
+                const connections = game.map.wires.getSegments(pos);
+                std.debug.assert(connections.len > 0);
+                for (connections) |connection_handle| {
+                    const connection: *Wires.Segment = game.map.wires.segments.getColumnPtrAssumeLive(connection_handle, .ptr);
+
+                    const s0 = try nodes.getOrPut(gpa, connection.sides[0]);
+                    if (!s0.found_existing) s0.value_ptr.* = .{ .intrinsic_value = 0 };
+
+                    const s1 = try nodes.getOrPut(gpa, connection.sides[1]);
+                    if (!s1.found_existing) s0.value_ptr.* = .{ .intrinsic_value = 0 };
+
+                    try links.append(gpa, .{
+                        .link = .{
+                            .src = s0.index,
+                            .dst = s1.index,
+                            .cost = @floatFromInt(@reduce(.Add, @abs(connection.sides[1] - connection.sides[0]))),
+                        },
+                        .handle = connection_handle,
+                    });
+
+                    try self.intersection_queue.put(gpa, connection.sides[0], {});
+                    try self.intersection_queue.put(gpa, connection.sides[1], {});
+                }
+            }
+
+            // TODO:
+            //     - within a subgraph, we sum the maximum power production
+            //     - based on this, we sum the power need. when there is more need than production, some items don't get power.
+            //       batteries get any excess power if there are any available (up to maximum production level)
+            //     - now, we determine power production based on need
+            //     - finally, we report results:
+            //       - which machines are active
+            //       - how much the generators are used
+            //       - which wires heat up (wires only heat up if more power is going through them than their capacity)
+            //         - where does the energy to heat the wire come from? maybe we increase battery drain or generator production to
+            //           get the energy. if we fali then we would have to reduce consumption which would mess with the graph so instead
+            //           we can just ignore it. meaning the smallest wire can carry infinite capacity going from a generator to a battery
+            //           because production and consumption is exactly matched. no that doesn't quite work. it will come from somewhere.
+            // for now let's loop over the nodes and set their intrinsic values
+            for (nodes.keys(), nodes.values()) |pos, *node| {
+                if (game.map.getFlag(pos, .port) == .power) {
+                    const building_handle = game.map.pos_to_building.get(pos) orelse unreachable; // ports are only present on buildings
+                    const building: *Building = game.map.building_pool.getColumnPtrAssumeLive(building_handle, .ptr);
+                    switch (building.tag) {
+                        .generator => node.intrinsic_value += 10,
+                        .power_outlet => node.intrinsic_value += -10,
+                        else => {},
+                    }
+                }
+            }
+
+            var result: power.PowerNetwork = .{
+                .gpa = gpa,
+                .links = .fromOwnedSlice(links.items(.link)),
+                .nodes = .fromOwnedSlice(nodes.values()),
+            };
+            try result.calculate();
+
+            for (links.items(.link), links.items(.handle)) |*link, handle| {
+                const connection: *Wires.Segment = game.map.wires.segments.getColumnPtrAssumeLive(handle, .ptr);
+                connection.value = link.value;
+            }
+        }
+    };
 };
 const GameSerializeExtra = struct {
     pub const Count = void;

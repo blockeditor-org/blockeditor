@@ -44,6 +44,19 @@
             "stopAtEntry": true
         },
         {
+            "name": "Debug Ocln (Mac)",
+            "preLaunchTask": "Build (Debug)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/zig-out/bin/ocln",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
             "name": "Debug Ocln (Windows)",
             "preLaunchTask": "Build (Debug)",
             "type": "cppvsdbg",

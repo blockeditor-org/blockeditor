@@ -19,34 +19,34 @@ const printer = @import("print.zig");
 //             it up very hot without it getting the surrouding air too hot)
 // - mybe consider doing xyz at a (lhs):(rhs) ratio (rhs)/(lhs+rhs)
 
-const Node = struct {
-    intrinsic_value: i64 = 0,
+pub const Node = struct {
+    intrinsic_value: f64 = 0,
 };
-const Link = struct {
+pub const Link = struct {
     src: usize,
     dst: usize,
-    cost: u64,
+    cost: f64,
     value: f64 = 0, // positive = src->dst, negative = dst->src
 };
 
-const PowerNetwork = struct {
+pub const PowerNetwork = struct {
     nodes: std.ArrayList(Node),
     links: std.ArrayList(Link),
     gpa: std.mem.Allocator,
 
-    fn init(gpa: std.mem.Allocator) PowerNetwork {
+    pub fn init(gpa: std.mem.Allocator) PowerNetwork {
         return .{
             .nodes = .empty,
             .links = .empty,
             .gpa = gpa,
         };
     }
-    fn deinit(self: *PowerNetwork) void {
+    pub fn deinit(self: *PowerNetwork) void {
         self.nodes.deinit(self.gpa);
         self.links.deinit(self.gpa);
     }
 
-    fn calculate(self: *PowerNetwork) !void {
+    pub fn calculate(self: *PowerNetwork) !void {
         if (self.nodes.items.len == 0) return;
 
         for (self.links.items) |*link| {
@@ -59,7 +59,7 @@ const PowerNetwork = struct {
         const G_base = try self.gpa.alloc(usize, size);
         defer self.gpa.free(G_base);
         for (G_base, 0..) |*res, i| res.* = i;
-        const G_values = try self.gpa.alloc(f64, size);
+        const G_values = try self.gpa.alloc(f64, size * size);
         defer self.gpa.free(G_values);
         @memset(G_values, 0);
 
@@ -68,14 +68,14 @@ const PowerNetwork = struct {
         @memset(I, 0);
 
         for (I, self.nodes.items[0..size]) |*res, *node| {
-            res.* = @floatFromInt(node.intrinsic_value);
+            res.* = node.intrinsic_value;
         }
 
         for (self.links.items) |*link| {
             const u = link.src;
             const v = link.dst;
 
-            const cost: f64 = @as(f64, @floatFromInt(@max(1, link.cost)));
+            const cost: f64 = link.cost;
             const conductance: f64 = @as(f64, 1.0) / cost;
 
             if (u < size) {
@@ -102,7 +102,7 @@ const PowerNetwork = struct {
         for (self.links.items) |*link| {
             const v_src: f64 = if (link.src >= size) 0 else potentials[link.src];
             const v_dst: f64 = if (link.dst >= size) 0 else potentials[link.dst];
-            const cost: f64 = @as(f64, @floatFromInt(@max(1, link.cost)));
+            const cost: f64 = link.cost;
             const current = (v_src - v_dst) / cost;
             link.value = current;
         }

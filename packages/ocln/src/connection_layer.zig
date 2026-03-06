@@ -22,6 +22,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             /// sides[0] <= sides[1]. sides[0] != sides[1]. (min[0] == max[0]) != (min[1] == max[1])
             sides: [2]vec.by2i32,
             user: User,
+            value: f64 = 0,
 
             fn direction(this: *const Segment) enum { x, y } {
                 const s1, const s2 = this.sides;
@@ -41,7 +42,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                 return false;
             }
         };
-        const SegmentPool = zpool.Pool(16, 16, Segment, struct { ptr: Segment });
+        pub const SegmentPool = zpool.Pool(16, 16, Segment, struct { ptr: Segment });
 
         gpa: std.mem.Allocator,
         coordinate_to_segments_map: std.AutoArrayHashMapUnmanaged(vec.by2i32, [segment_ref_count]SegmentPool.Handle),
