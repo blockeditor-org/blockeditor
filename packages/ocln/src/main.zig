@@ -398,6 +398,19 @@ const Game = struct {
     map: Map,
     interface: Interface,
     pub fn init(game: *Game, gpa: std.mem.Allocator) void {
+        // ser/des validation: TODO
+        if (false) {
+            var t: Game = undefined;
+            t.initUnvalidated(gpa);
+            defer t.deinit();
+
+            const serialized = t.serializeAlloc(gpa) catch @panic("oom");
+            game.deserialize(gpa, serialized) catch @panic("deserialize failure");
+        } else {
+            game.initUnvalidated(gpa);
+        }
+    }
+    fn initUnvalidated(game: *Game, gpa: std.mem.Allocator) void {
         game.* = .{ .map = undefined, .interface = .{} };
         game.map.init(gpa);
     }
@@ -412,6 +425,7 @@ const Game = struct {
         extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
     ) !void {
         try item.interface.serdes(mode, value, extra);
+        // try item.map.serdes(mode, value, extra);
     }
 
     pub fn update(this: *Game) !void {
@@ -474,6 +488,7 @@ const Game = struct {
 
         var dsr1: Game = undefined;
         try dsr1.deserialize(gpa, ser1);
+        // defer dsr1.deinit(); // TODO
 
         const ser2 = try dsr1.serializeAlloc(gpa);
         defer gpa.free(ser2);
