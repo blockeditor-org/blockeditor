@@ -9,6 +9,9 @@ pub const BuildingDescriptor = struct {
     grid: Grid(2, i32, usize),
     flags: []const BuildingDescriptorFlag,
     image: main.Image,
+    power: ?struct {
+        mode: enum { battery, producer, consumer },
+    } = null,
 };
 pub const BuildingDescriptorFlag = packed struct {
     set_building: bool = false,
@@ -50,6 +53,9 @@ pub const building_to_descriptor_map: std.EnumArray(BuildingTag, BuildingDescrip
             .world = .from(.{ -1, 0 }, .{ 3, 4 }),
             .spritesheet = .from(.{ 0, 64 }, .{ 48, 64 }),
         },
+        .power = .{
+            .mode = .producer,
+        },
     }),
     .power_outlet = @as(BuildingDescriptor, .{
         .offset = .{ 0, 0 },
@@ -62,6 +68,9 @@ pub const building_to_descriptor_map: std.EnumArray(BuildingTag, BuildingDescrip
         .image = .{
             .world = .from(.{ 0, 0 }, .{ 1, 1 }),
             .spritesheet = .from(.{ 80, 0 }, .{ 16, 16 }),
+        },
+        .power = .{
+            .mode = .consumer,
         },
     }),
     .lamp = @as(BuildingDescriptor, .{
@@ -78,6 +87,9 @@ pub const building_to_descriptor_map: std.EnumArray(BuildingTag, BuildingDescrip
         .image = .{
             .world = .from(.{ 0, 0 }, .{ 1, 2 }),
             .spritesheet = .from(.{ 144, 0 }, .{ 16, 32 }),
+        },
+        .power = .{
+            .mode = .consumer,
         },
     }),
 });

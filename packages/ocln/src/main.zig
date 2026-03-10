@@ -516,16 +516,163 @@ const Game = struct {
             //           we can just ignore it. meaning the smallest wire can carry infinite capacity going from a generator to a battery
             //           because production and consumption is exactly matched. no that doesn't quite work. it will come from somewhere.
             // for now let's loop over the nodes and set their intrinsic values
+
+            const Item = struct {
+                const Item = @This();
+                handle: BuildingPool.Handle,
+                building: *Building,
+                descriptor: *const buildings.BuildingDescriptor,
+                node: *power.Node,
+                fn energyPriorityHighestToLowest(map: *Map, lhs: Item, rhs: Item) bool {
+                    const lhs_level = map.getPriorityLevel(lhs.building.energy_priority);
+                    const rhs_level = map.getPriorityLevel(rhs.building.energy_priority);
+                    return @intFromEnum(lhs_level) > @intFromEnum(rhs_level);
+                }
+            };
+            var producers = std.ArrayList(Item).empty;
+            defer producers.deinit(gpa);
+            var consumers = std.ArrayList(Item).empty;
+            defer consumers.deinit(gpa);
+            var batteries = std.ArrayList(Item).empty;
+            defer batteries.deinit(gpa);
+
             for (nodes.keys(), nodes.values()) |pos, *node| {
                 if (game.map.getFlag(pos, .port) == .power) {
                     const building_handle = game.map.pos_to_building.get(pos) orelse unreachable; // ports are only present on buildings
                     const building: *Building = game.map.building_pool.getColumnPtrAssumeLive(building_handle, .ptr);
-                    switch (building.tag) {
-                        .generator => node.intrinsic_value += 10,
-                        .power_outlet => node.intrinsic_value += -10,
-                        else => {},
+                    const building_descriptor = buildings.building_to_descriptor_map.getPtrConst(building.tag);
+                    std.debug.assert(building_descriptor.power != null); // if it has a power port it must have a power descriptor
+                    const item: Item = .{ .handle = building_handle, .building = building, .descriptor = building_descriptor, .node = node };
+                    switch (building_descriptor.power.?.mode) {
+                        .producer => try producers.append(gpa, item),
+                        .consumer => try consumers.append(gpa, item),
+                        .battery => try batteries.append(gpa, item),
                     }
                 }
+            }
+            std.mem.sort(Item, producers.items, &game.map, Item.energyPriorityHighestToLowest);
+            std.mem.sort(Item, consumers.items, &game.map, Item.energyPriorityHighestToLowest);
+            std.mem.sort(Item, batteries.items, &game.map, Item.energyPriorityHighestToLowest);
+
+            // these units are the amount of energy transmitted in one tick
+            var maximum_generation: u64 = 0;
+            var actual_consumption: u64 = 0;
+            var actual_production: u64 = 0;
+
+            for (producers.items) |item| {
+                switch (item.building.tag) {
+                    .generator => maximum_generation += 5,
+                    else => std.debug.panic("TODO impl power producer: {s}", .{@tagName(item.building.tag)}),
+                }
+            }
+
+            // TODO: add maximum single-tick discharge capacity from batteries (likely this will be the battery's charge level)
+
+            var committed_consumers_end: usize = 0;
+            {
+                var uncommitted: u64 = 0;
+                var uncommitted_level: PriorityLevel = .min;
+                for (consumers.items, 0..) |item, index| {
+                    const prio = game.map.getPriorityLevel(item.building.energy_priority);
+                    if (prio != uncommitted_level) {
+                        actual_consumption += uncommitted;
+                        committed_consumers_end = index;
+
+                        uncommitted = 0;
+                        uncommitted_level = prio;
+                    }
+
+                    switch (item.building.tag) {
+                        .power_outlet => uncommitted += 5,
+                        else => std.debug.panic("TODO impl power consumer: {s}", .{@tagName(item.building.tag)}),
+                    }
+                    if (actual_consumption + uncommitted > maximum_generation) {
+                        // too much uncommitted consumption, we can't commit this level
+                        break;
+                    }
+                } else {
+                    actual_consumption += uncommitted;
+                    committed_consumers_end = consumers.items.len;
+                }
+            }
+            if (actual_consumption < maximum_generation) {
+                // TODO: if there is excess production capacity, fill batteries
+            }
+
+            var committed_producers_end: usize = 0;
+            var shared_producers_end: usize = 0;
+            var shared_producers_share: u64 = 0; // total amount of energy produced by all shared producers
+            {
+                var uncommitted: u64 = 0;
+                var uncommitted_level: PriorityLevel = .min;
+                for (producers.items, 0..) |item, index| {
+                    const prio = game.map.getPriorityLevel(item.building.energy_priority);
+                    if (prio != uncommitted_level) {
+                        actual_production += uncommitted;
+                        committed_producers_end = index;
+                        shared_producers_end = index;
+
+                        uncommitted = 0;
+                        uncommitted_level = prio;
+                    }
+
+                    switch (item.building.tag) {
+                        .generator => uncommitted += 5,
+                        else => std.debug.panic("TODO impl power producer: {s}", .{@tagName(item.building.tag)}),
+                    }
+                    if (actual_production + uncommitted > actual_consumption) {
+                        shared_producers_share = actual_consumption - actual_production;
+                        actual_production = actual_consumption;
+                        // too much uncommitted generation, we need to finish off this level as shared producers
+                        shared_producers_end = index;
+                        break;
+                    }
+                } else {
+                    actual_production += uncommitted;
+                    committed_producers_end = consumers.items.len;
+                    shared_producers_end = consumers.items.len;
+                }
+
+                for (producers.items[shared_producers_end..], shared_producers_end..) |item, index| {
+                    const prio = game.map.getPriorityLevel(item.building.energy_priority);
+                    if (prio != uncommitted_level) break;
+                    shared_producers_end = index;
+                }
+            }
+
+            if (actual_production < actual_consumption) {
+                // TODO: if there is not enough production capacity, drain batteries
+            }
+
+            if (actual_production != actual_consumption) {
+                std.debug.panic("generation and consumption must be matched by now. consumption={d},production={d}", .{ actual_consumption, actual_production });
+            }
+
+            // TODO: activate all consumers from 0 to committed_consumers_len
+            for (consumers.items[0..committed_consumers_end]) |item| {
+                switch (item.building.tag) {
+                    .power_outlet => item.node.intrinsic_value -= 5,
+                    else => std.debug.panic("TODO impl power consumer: {s}", .{@tagName(item.building.tag)}),
+                }
+            }
+            // TODO: activate all producers at n% capacity based on their share of the shared production share
+            for (producers.items[0..committed_producers_end]) |item| {
+                switch (item.building.tag) {
+                    .generator => item.node.intrinsic_value += 5,
+                    else => std.debug.panic("TODO impl power producer: {s}", .{@tagName(item.building.tag)}),
+                }
+            }
+            for (producers.items[committed_producers_end..shared_producers_end]) |item| {
+                _ = item;
+                @panic("TODO: activate shared producer");
+            }
+
+            var balance: f64 = 0;
+            for (nodes.values()) |*node| {
+                balance += node.intrinsic_value;
+            }
+            if (@abs(balance) > 0.1) {
+                std.debug.panic("generation and consumption are supposed to be balanced. balance is: {d}", .{balance});
             }
 
             var result: power.PowerNetwork = .{
@@ -813,9 +960,22 @@ const Building = struct {
     tag: buildings.BuildingTag,
     center: vec.by2i32,
     data: ?*const anyopaque = null,
+
+    // nil or not in pool indicates default priority.
+    energy_priority: PriorityPool.Handle = .nil,
 };
 const BuildingInfo = struct {};
 const BuildingPool = zpool.Pool(16, 16, Building, struct { ptr: Building });
+
+const PriorityLevel = enum(u32) {
+    min = 0,
+    default = std.math.maxInt(i32), // half
+    _,
+};
+const Priority = struct {
+    name: []const u8,
+};
+const PriorityPool = zpool.Pool(16, 16, Priority, struct { ptr: Priority, value: PriorityLevel });
 
 const Map = struct {
     gpa: std.mem.Allocator,
@@ -824,6 +984,7 @@ const Map = struct {
     materials: Grid(3, i32, Material),
     tile_flags: Grid(2, i32, TileFlags),
     building_pool: BuildingPool,
+    priority_pool: PriorityPool,
     pos_to_building: std.AutoArrayHashMapUnmanaged(vec.by2i32, BuildingPool.Handle),
     wires: Wires,
     players: PlayerPool,
@@ -839,6 +1000,7 @@ const Map = struct {
             .players = .init(gpa),
             .pos_to_building = .empty,
             .building_pool = .init(gpa),
+            .priority_pool = .init(gpa),
         };
     }
     pub fn deinit(this: *Map) void {
@@ -846,8 +1008,12 @@ const Map = struct {
         this.tile_flags.deinit(this.gpa);
         this.pos_to_building.deinit(this.gpa);
         this.building_pool.deinit();
+        this.priority_pool.deinit();
         this.wires.deinit();
         this.players.deinit();
+    }
+    pub fn getPriorityLevel(this: *Map, priority: PriorityPool.Handle) PriorityLevel {
+        return this.priority_pool.getColumn(priority, .value) catch return .default;
     }
     pub fn generate(this: *Map, size: vec.by2usize) !void {
         this.size_int = @intCast(size);
@@ -917,7 +1083,7 @@ const Map = struct {
     }
 
     fn canPlaceBuilding(this: *Map, building: Building) PlaceBuildingStatus {
-        const descriptor = buildings.building_to_descriptor_map.get(building.tag);
+        const descriptor = buildings.building_to_descriptor_map.getPtrConst(building.tag);
         var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         var result: PlaceBuildingStatus = .{ .pos = building.center, .status = .success };
         while (range.next()) |subpos| {
@@ -944,7 +1110,7 @@ const Map = struct {
 
         const placed_id = try this.building_pool.add(.{ .ptr = building });
 
-        const descriptor = buildings.building_to_descriptor_map.get(building.tag);
+        const descriptor = buildings.building_to_descriptor_map.getPtrConst(building.tag);
         var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         while (range.next()) |subpos| {
             const index = descriptor.grid.get(subpos).?;
@@ -969,7 +1135,7 @@ const Map = struct {
     fn removeBuilding(this: *Map, building_id: BuildingPool.Handle) !void {
         const building: Building = this.building_pool.getColumnAssumeLive(building_id, .ptr);
 
-        const descriptor = buildings.building_to_descriptor_map.get(building.tag);
+        const descriptor = buildings.building_to_descriptor_map.getPtrConst(building.tag);
         var range = vec.Iterator(2, i32).size(@intCast(descriptor.grid.size));
         while (range.next()) |subpos| {
             const index = descriptor.grid.get(subpos).?;
