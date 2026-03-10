@@ -365,9 +365,13 @@ const Camera = struct {
         extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
     ) !void {
         _ = extra;
-        try sd.value(f32, &item.scale);
-        try sd.value(f32, &item.centered_on_pos[0]);
-        try sd.value(f32, &item.centered_on_pos[1]);
+        const scale = try sd.value(f32, if (mode == .serialize) item.scale);
+        const centered_on_pos_0 = try sd.value(f32, if (mode == .serialize) item.centered_on_pos[0]);
+        const centered_on_pos_1 = try sd.value(f32, if (mode == .serialize) item.centered_on_pos[1]);
+        if (mode == .deserialize) item.* = .{
+            .scale = scale,
+            .centered_on_pos = .{ centered_on_pos_0, centered_on_pos_1 },
+        };
     }
 };
 const Interface = struct {
@@ -1046,6 +1050,29 @@ const Map = struct {
         this.priority_pool.deinit();
         this.wires.deinit();
         this.players.deinit();
+    }
+    pub fn serdes(
+        item: *Map,
+        comptime mode: util.SerializeDeserialize.Mode,
+        sd: *util.SerializeDeserialize.Value(mode),
+        extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+    ) !void {
+        if (mode == .deserialize) item.gpa = extra.gpa;
+        const size_int = try sd.value(math.vec2i32, if (mode == .serialize) item.size_int);
+        const size_usize = try sd.value(math.vec2usize, if (mode == .serialize) item.size_usize);
+
+        const materials_size = try sd.value(math.vec3usize, if (mode == .serialize) item.materials.size);
+        const materials_slice = try sd.sliceAutoLen(math.vec3usize, if (mode == .serialize) item.materials.items);
+
+        const tile_flags_size = try sd.value(math.vec2usize, if (mode == .serialize) item.tile_flags.size);
+        const tile_flags_slice = try sd.sliceAutoLen(TileFlags, if (mode == .serialize) item.tile_flags.items);
+
+        if (mode == .deserialize) item.* = .{
+            .size_int = size_int,
+            .size_usize = size_usize,
+            .materials = .fromSizeSlice(materials_size, try extra.gpa.dupe(Material, materials_slice)),
+            .tile_flags = .fromSiceSlice(tile_flags_size, try extra.gpa.dupe(TileFlags, tile_flags_slice)),
+        };
     }
     pub fn getPriorityLevel(this: *Map, priority: PriorityPool.Handle) PriorityLevel {
         return this.priority_pool.getColumn(priority, .value) catch return .default;

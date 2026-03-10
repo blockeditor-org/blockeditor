@@ -10,6 +10,7 @@ pub const math = struct {
     pub const vec2i64 = @Vector(2, i64);
     pub const vec2f32 = @Vector(2, f32);
     pub const vec2usize = vec.by(2, usize);
+    pub const vec3usize = vec.by(3, usize);
 
     /// we could add angle if we want. we probably never want skew though, we can save that for a 3d transformation matrix
     pub const Transform2D = struct {
@@ -502,25 +503,48 @@ pub const SerializeDeserialize = struct {
                 return std.meta.hasUniqueRepresentation(Type);
             }
 
-            pub fn value(self: *@This(), comptime Type: type, v: *Type) ErrorSet!void {
+            pub fn value(self: *@This(), comptime Type: type, v: switch (mode) {
+                .serialize => Type,
+                else => void,
+            }) ErrorSet!switch (mode) {
+                .deserialize => Type,
+                else => void,
+            } {
                 comptime std.debug.assert(hasUniqueRepresentation(Type));
-                try self.slice(Type, 1, v[0..1]);
+                const ret = try self.slice(Type, 1, if (mode == .serialize) (&v)[0..1]);
+                if (mode == .deserialize) return ret[0];
             }
-            pub fn slice(self: *@This(), comptime Entry: type, len: usize, v: []Entry) ErrorSet!void {
+            pub fn slice(self: *@This(), comptime Entry: type, len: usize, v: switch (mode) {
+                .serialize => []const Entry,
+                else => void,
+            }) ErrorSet!switch (mode) {
+                .deserialize => []align(1) const Entry,
+                else => void,
+            } {
                 comptime std.debug.assert(hasUniqueRepresentation(Entry));
                 switch (mode) {
                     .count => {
-                        self.internal.count += v.len * @sizeOf(Entry);
+                        self.internal.count += len * @sizeOf(Entry);
                     },
                     .serialize => {
+                        std.debug.assert(len == v.len);
                         const res = self._set(v.len * @sizeOf(Entry));
                         @memcpy(res, std.mem.sliceAsBytes(v));
                     },
                     .deserialize => {
-                        const res = try self._get(len * @sizeOf(Entry));
-                        @memcpy(v, std.mem.bytesAsSlice(Entry, res));
+                        return std.mem.bytesAsSlice(Entry, try self._get(len * @sizeOf(Entry)));
                     },
                 }
+            }
+            pub fn sliceAutoLen(self: *@This(), comptime Entry: type, v: switch (mode) {
+                .serialize => []const Entry,
+                else => void,
+            }) ErrorSet!switch (mode) {
+                .deserialize => []align(1) const Entry,
+                else => void,
+            } {
+                const len = self.value(usize, if (mode == .serialize) v.len);
+                return self.slice(Entry, len, v);
             }
         };
     }
