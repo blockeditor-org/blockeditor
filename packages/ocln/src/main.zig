@@ -1014,7 +1014,113 @@ const PriorityLevel = enum(u32) {
 const Priority = struct {
     name: []const u8,
 };
-const PriorityPool = zpool.Pool(16, 16, Priority, struct { ptr: Priority, value: PriorityLevel });
+const PriorityPool = zpool.Pool(16, 16, Priority, struct { ptr: Priority, level: PriorityLevel });
+
+fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode) type {
+    return struct {
+        const PS = @This();
+        // const Pool = PriorityPool; // for zls autocomplete for now
+        index: usize,
+        count: usize,
+        internal: switch (mode) {
+            .count => void,
+            .serialize => struct {
+                handle_to_index_and_want_map: std.AutoArrayHashMapUnmanaged(Pool.Handle, void),
+            },
+            .deserialize => struct {
+                index_to_handle_map: std.ArrayListUnmanaged(Pool.Handle),
+                pool: Pool,
+            },
+        },
+
+        pub fn begin(
+            sd: *util.SerializeDeserialize.Value(mode),
+            extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+            out: switch (mode) {
+                .count, .serialize => *Pool,
+                .deserialize => void,
+            },
+        ) !PS {
+            const count = sd.value(usize, if (mode == .serialize) out.liveHandleCount());
+            switch (mode) {
+                .count => {
+                    return .{ .count = count, .internal = .{ .count = count } };
+                },
+                .serialize => {
+                    var result: PS = .{ .count = count, .internal = .{ .handle_to_index_map = .empty } };
+                    errdefer result.internal.handle_to_index_map.deinit(extra.gpa);
+                    // iterate over pool, add to handle_to_index_map
+                    var iter = out.liveHandles();
+                    while (iter.next()) |handle| {
+                        result.internal.handle_to_index_map.putNoClobber(extra.gpa, handle, {});
+                    }
+                    return result;
+                },
+                .deserialize => {
+                    var result: PS = .{ .count = count, .internal = .{ .index_to_handle_map = .empty, .pool = undefined } };
+                    errdefer result.internal.index_to_handle_map.deinit(extra.gpa);
+                    // initialize pool
+                    result.internal.pool = try .initCapacity(extra.gpa, count);
+                    errdefer result.internal.pool.deinit();
+                    // fill index_to_handle_map
+                    for (0..count) |index| {
+                        const added_handle = try out.add(undefined);
+                        std.debug.assert(result.internal.index_to_handle_map.items.len == index);
+                        try result.internal.index_to_handle_map.append(extra.gpa, added_handle);
+                    }
+                    return result;
+                },
+            }
+        }
+        pub fn serdesHandle(
+            self: *PS,
+            sd: *util.SerializeDeserialize.Value(mode),
+            extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+            v: switch (mode) {
+                .serialize => Pool.Handle,
+            },
+        ) !switch (mode) {
+            .deserialize => Pool.Handle,
+        } {
+            _ = extra;
+            const index = sd.value(usize, if (mode == .serialize) blk: {
+                break :blk self.internal.handle_to_index_and_want_map.getIndex(v).?;
+            });
+            if (mode == .deserialize) {
+                if (self.internal.index_to_handle_map.items.len < index) return error.DeserializeError;
+                return self.internal.index_to_handle_map.items[index];
+            }
+        }
+        // TODO: we should have this accept a column and return *Child
+        pub fn serdesNext(self: *PS) ?Pool.Handle {
+            if (self.index >= self.count) return null;
+            defer self.index += 1;
+            return switch (mode) {
+                .count => @panic("todo serdesnext should return handle for count"),
+                .serialize => self.internal.handle_to_index_and_want_map.keys()[self.index],
+                .deserialize => self.internal.index_to_handle_map.items[self.index],
+            };
+        }
+        pub fn set(self: *PS, handle: Pool.Handle, value: Pool.Columns) void {
+            comptime std.debug.assert(mode == .deserialize);
+            self.internal.pool.setColumnsAssumeLive(handle, value);
+        }
+        pub fn end(self: *PS) !switch (mode) {
+            .deserialize => Pool,
+            else => void,
+        } {
+            std.debug.assert(self.index == self.count); // need to loop over serdesNext() before calling end
+            if (mode == .deserialize) return self.internal.pool;
+        }
+        pub fn deinit(self: *PS, extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra)) void {
+            switch (mode) {
+                .count => {},
+                .serialize => self.internal.handle_to_index_and_want_map.deinit(extra.gpa),
+                .deserialize => self.internal.index_to_handle_map.deinit(extra.gpa),
+            }
+        }
+    };
+}
 
 const Map = struct {
     gpa: std.mem.Allocator,
@@ -1061,21 +1167,42 @@ const Map = struct {
         const size_int = try sd.value(math.vec2i32, if (mode == .serialize) item.size_int);
         const size_usize = try sd.value(math.vec2usize, if (mode == .serialize) item.size_usize);
 
+        var priority_pool_handler: PoolSerdes(PriorityPool, mode) = try .begin(sd, extra, if (mode != .deserialize) item.priority_pool);
+        defer priority_pool_handler.deinit();
+
         const materials_size = try sd.value(math.vec3usize, if (mode == .serialize) item.materials.size);
         const materials_slice = try sd.sliceAutoLen(math.vec3usize, if (mode == .serialize) item.materials.items);
 
         const tile_flags_size = try sd.value(math.vec2usize, if (mode == .serialize) item.tile_flags.size);
         const tile_flags_slice = try sd.sliceAutoLen(TileFlags, if (mode == .serialize) item.tile_flags.items);
 
+        while (priority_pool_handler.serdesNext()) |handle| {
+            const level = try sd.value(PriorityLevel, if (mode == .serialize) item.getPriorityLevel(handle));
+            if (mode == .deserialize) priority_pool_handler.set(handle, .{
+                .ptr = .{ .name = "" },
+                .level = level,
+            });
+        }
+        const priority_pool = try priority_pool_handler.end();
+
+        // so for serializing those lists we will have to loop over the lists probably
+        // and then for serializing the pools we have to decide:
+        // - we can reindex them, by keeping a pool reindexer hashmap
+        // - step 1: first, we iterate the pool to assign indices to every pool handle in order. it returns a pool indexer struct.
+        // - step 2:
+        //   - when we serialize a handle, we take the pool indexer struct. it says handle -> index, or index -> handle
+        //   -
+
         if (mode == .deserialize) item.* = .{
             .size_int = size_int,
             .size_usize = size_usize,
             .materials = .fromSizeSlice(materials_size, try extra.gpa.dupe(Material, materials_slice)),
             .tile_flags = .fromSiceSlice(tile_flags_size, try extra.gpa.dupe(TileFlags, tile_flags_slice)),
+            .priority_pool = priority_pool,
         };
     }
     pub fn getPriorityLevel(this: *Map, priority: PriorityPool.Handle) PriorityLevel {
-        return this.priority_pool.getColumn(priority, .value) catch return .default;
+        return this.priority_pool.getColumn(priority, .level) catch return .default;
     }
     pub fn generate(this: *Map, size: vec.by2usize) !void {
         this.size_int = @intCast(size);
