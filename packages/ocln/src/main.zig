@@ -730,7 +730,7 @@ const Game = struct {
 };
 const GameSerializeExtra = struct {
     pub const Count = void;
-    pub const Serialize = void;
+    pub const Serialize = *const struct { gpa: std.mem.Allocator };
     pub const Deserialize = *const struct { gpa: std.mem.Allocator };
 };
 
@@ -745,13 +745,14 @@ const GameSerializeExtra = struct {
 
 const MAP_NLAYERS: usize = @typeInfo(Layers).@"enum".fields.len;
 
-const MaterialTag = enum {
+const MaterialTag = enum(u32) {
     none,
     unobtanium,
     dirt,
     stone,
     shelf,
     other,
+    _,
 
     fn canStandOn(mat: MaterialTag) bool {
         return switch (mat) {
@@ -775,7 +776,7 @@ const MaterialTag = enum {
 pub const milli_per_one = 1000000;
 pub const milli_per_kilo = 1000000000;
 pub const zero_millicelsius_in_millikelvin = 273150000;
-pub const Material = struct {
+pub const Material = extern struct {
     // TODO: we should store material properties in here rather than a material tag
     // because many tiles will have mixed materials (ie oxygen & water, wire & pipe)
     // and we will approximate that by summing the material properties over their area.
@@ -968,13 +969,14 @@ const Player = struct {
 };
 const PlayerPool = zpool.Pool(16, 16, Player, struct { ptr: Player });
 
-const TileFlags = packed struct {
+const TileFlags = packed struct(u32) {
     cannot_enter: bool,
     can_stand: bool, // enter=false,stand=true means can climb. enter=false,stand=false = spikes or smth.
     /// indicates that the building on this tile has a power port
-    port: enum(u2) { none, power, pipe },
+    port: enum(u2) { none, power, pipe, _ },
     /// indicates that the building on this tile has a pipe port
     has_building: bool,
+    unused: u27 = 0,
     pub const empty: TileFlags = .{
         .cannot_enter = false,
         .can_stand = false,
@@ -1019,7 +1021,6 @@ const PriorityPool = zpool.Pool(16, 16, Priority, struct { ptr: Priority, level:
 fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode) type {
     return struct {
         const PS = @This();
-        // const Pool = PriorityPool; // for zls autocomplete for now
         index: usize,
         count: usize,
         internal: switch (mode) {
@@ -1171,7 +1172,7 @@ const Map = struct {
         defer priority_pool_handler.deinit();
 
         const materials_size = try sd.value(math.vec3usize, if (mode == .serialize) item.materials.size);
-        const materials_slice = try sd.sliceAutoLen(math.vec3usize, if (mode == .serialize) item.materials.items);
+        const materials_slice = try sd.sliceAutoLen(Material, if (mode == .serialize) item.materials.items);
 
         const tile_flags_size = try sd.value(math.vec2usize, if (mode == .serialize) item.tile_flags.size);
         const tile_flags_slice = try sd.sliceAutoLen(TileFlags, if (mode == .serialize) item.tile_flags.items);
@@ -1196,7 +1197,7 @@ const Map = struct {
         if (mode == .deserialize) item.* = .{
             .size_int = size_int,
             .size_usize = size_usize,
-            .materials = .fromSizeSlice(materials_size, try extra.gpa.dupe(Material, materials_slice)),
+            .materials = .fromSizeSlice(materials_size, materials_slice),
             .tile_flags = .fromSiceSlice(tile_flags_size, try extra.gpa.dupe(TileFlags, tile_flags_slice)),
             .priority_pool = priority_pool,
         };
