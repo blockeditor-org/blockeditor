@@ -119,26 +119,9 @@ pub fn init(self: *App, gpa: std.mem.Allocator) void {
     _ = self.game.map.placeBuilding(.{ .tag = .power_outlet, .center = .{ 10, 14 } }) catch @panic("placeBuilding");
     _ = self.game.map.placeBuilding(.{ .tag = .lamp, .center = .{ 13, 14 } }) catch @panic("placeBuilding");
 
-    self.game.update() catch @panic("update");
     self.game.interface.overlay = .wires;
     self.game.interface.camera.scale *= 4;
-
-    const count = blk: {
-        var sd: util.SerializeDeserialize.Value(.count) = .initCounter();
-        try self.game.serdes(.count, &sd, {});
-        break :blk sd.internal.count;
-    };
-    const serialized = gpa.alloc(u8, count) catch @panic("oom");
-    defer gpa.free(serialized);
-    {
-        var sd: util.SerializeDeserialize.Value(.serialize) = .initSerializer(serialized);
-        try self.game.serdes(.serialize, &sd, {});
-    }
-    {
-        var sd: util.SerializeDeserialize.Value(.deserialize) = .initDeserializer(serialized);
-        var result: Game = undefined;
-        result.serdes(.deserialize, &sd, &.{ .gpa = gpa }) catch @panic("deserfail");
-    }
+    self.game.update() catch @panic("update");
 }
 pub fn deinit(self: *App) void {
     self.game.deinit();
@@ -435,6 +418,10 @@ const Game = struct {
         const t1 = anywhere.tracy.trace(@src());
         defer t1.end();
 
+        defer {
+            this.validateSerdes() catch |e| std.debug.panic("invalidSerdes: {s}", .{@errorName(e)});
+        }
+
         // first, we do some things in parallel
         // - agent pathfinding & such
         // - water calculations
@@ -459,6 +446,39 @@ const Game = struct {
                 try resolver.exploreAndCalculate(this, gpa);
             }
         }
+    }
+
+    pub fn serializeAlloc(this: *Game, gpa: std.mem.Allocator) ![]u8 {
+        const count = blk: {
+            var sd: util.SerializeDeserialize.Value(.count) = .initCounter();
+            try this.serdes(.count, &sd, {});
+            break :blk sd.internal.count;
+        };
+        const serialized = gpa.alloc(u8, count) catch @panic("oom");
+        errdefer gpa.free(serialized);
+        {
+            var sd: util.SerializeDeserialize.Value(.serialize) = .initSerializer(serialized);
+            try this.serdes(.serialize, &sd, {});
+        }
+        return serialized;
+    }
+    pub fn deserialize(this: *Game, gpa: std.mem.Allocator, src: []u8) !void {
+        var sd: util.SerializeDeserialize.Value(.deserialize) = .initDeserializer(src);
+        this.serdes(.deserialize, &sd, &.{ .gpa = gpa }) catch @panic("deserfail");
+    }
+    pub fn validateSerdes(dsr0: *Game) !void {
+        const gpa = dsr0.map.gpa;
+
+        const ser1 = try dsr0.serializeAlloc(gpa);
+        defer gpa.free(ser1);
+
+        var dsr1: Game = undefined;
+        try dsr1.deserialize(gpa, ser1);
+
+        const ser2 = try dsr1.serializeAlloc(gpa);
+        defer gpa.free(ser2);
+
+        try std.testing.expectEqualStrings(ser1, ser2);
     }
 
     const WireNetworkResolver = struct {
