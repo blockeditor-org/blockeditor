@@ -73,6 +73,7 @@ type ResolveClass = {
   fields: Map<string, ResolveType>,
 };
 type ResolveMapping = {
+  name: string,
   class: string,
   fromFields: Set<string>,
   toFields: Set<string>,
@@ -104,11 +105,12 @@ function csKey(cs: ResolveMappingCS): string {
     sortField: cs.sortField,
   });
 }
-function amKey(am: ResolveMapping): string {
+function amKey(am: Omit<ResolveMapping, "name">): string {
   return JSON.stringify({
     class: am.class,
     fromFields: [...am.fromFields].toSorted(),
     sortField: am.sortField,
+    limit: am.limit,
   });
 }
 function unionSortMode(a: ResolveSortMode, b: ResolveSortMode): ResolveSortMode {
@@ -141,6 +143,11 @@ function resolveQueryProvider(userQuery: UserQueryProvider): ResolveQueryProvide
   if ('after' in userQuery) return {kind: "Order.after", value: resolveQueryProvider(userQuery.after)};
   throw new Error("unsupported user query? " + userQuery);
 }
+function completeMapping(m: Omit<ResolveMapping, "name">, name: string): m is ResolveMapping {
+  (m as ResolveMapping).name = name;
+  return true;
+}
+function assert(b: boolean): asserts b { if (!b) throw new Error("not b") }
 function initDb(user: User) {
   const allMappings: ResolveMapping[] = [];
   const amToMapping: Map<string, ResolveMapping> = new Map();
@@ -152,7 +159,7 @@ function initDb(user: User) {
     csToMapping.set(key, list);
     return list;
   }
-  function addMapping(m: ResolveMapping): ResolveMapping {
+  function addMapping(m: Omit<ResolveMapping, "name">): ResolveMapping {
     const am = amKey(m);
     const pm = amToMapping.get(am)!;
     if (pm) {
@@ -163,6 +170,7 @@ function initDb(user: User) {
       }
       return pm;
     }
+    assert(completeMapping(m, am));
     amToMapping.set(am, m);
     allMappings.push(m);
     getCS({class: m.class, sortField: m.sortField}).push(m);
