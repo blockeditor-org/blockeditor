@@ -384,7 +384,8 @@ function codegen(resolve: Resolve) {
     const from = codegenFieldsType(ctx, mapping.class, mapping.fromFields);
     const to = codegenFieldsType(ctx, mapping.class, mapping.toFields);
     const sort = sortModeMap[mapping.sortMode];
-    const type = c`lib.Map(${sort}, ${from}, ${to})`;
+    const limit = mapping.limit != null ? c`.max(${craw(""+mapping.limit)})` : c`.unlimited`;
+    const type = c`lib.Mapping(${sort}, ${limit}, ${from}, ${to})`;
 
     dbLines.push(c`${zigIdent(valueName)}: ${zigIdent(typeName)},`);
     lines.push(c`pub const ${zigIdent(typeName)} = ${type};`);
@@ -436,6 +437,8 @@ function codegen(resolve: Resolve) {
   lines.push(c``, c`pub const Db = struct {${cnljoin(dbLines)}};`);
 
   const lib = `
+  const std = @import("std");
+
   pub fn Incrementer(comptime Handle: type) type {
     return struct {
       last: Handle,
@@ -452,7 +455,16 @@ function codegen(resolve: Resolve) {
   }
 
   pub const SortMode = enum { none, append_only, append_prepend, tree };
-  pub fn Map(comptime sort: SortMode, comptime From: type, comptime To: type) type {
+  pub const MappingLimit = enum(usize) {
+    unlimited = std.math.maxInt(usize),
+    _
+    pub fn from(value: ?usize) MappingLimit {
+      if (value) |v| return @enumFromInt(v);
+      return .unlimited;
+    }
+  };
+  pub fn Mapping(comptime sort: SortMode, comptime limit: MappingLimit, comptime From: type, comptime To: type) type {
+    _ = limit;
     return struct {
       const This = @This();
       const SortBacking = switch(sort) {
