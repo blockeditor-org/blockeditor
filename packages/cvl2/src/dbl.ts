@@ -630,7 +630,7 @@ initDb({
       handle: "Grid",
     },
     "Grid.Pixel": {
-      owner: "Text",
+      owner: "Grid",
       x: "u8",
       y: "u8",
       value: "u8",
@@ -649,8 +649,12 @@ initDb({
   },
   insert: {
     "Text.new": {class: "Text", insert: {handle: {unique: "Text"}}, get: ["handle"]},
-    "Text.push": {class: "Text.Character", insert: {owner: {arg: "owner"}, char: {arg: "char"}, order: "last"}, get: []},
+    "Text.push": {class: "Text.Character", insert: {owner: {arg: "text"}, char: {arg: "char"}, order: "last"}, get: []},
     "Grid.new": {class: "Text", insert: {handle: {unique: "Grid"}}, get: ["handle"]},
+    // TODO: here we want to delete the old pixel & insert the new pixel at the same time. unclear how to do this.
+    // I guess by having Grid.at limit 1, it could prefer the latest added item. but that seems odd.
+    // we would have to have Grid.at sort by insertion date dsc.
+    "Grid.set": {class: "Grid.Pixel", insert: {owner: {arg: "grid"}, x: {arg: "x"}, y: {arg: "y"}, value: {arg: "value"}}, get: []},
   },
 });
 
