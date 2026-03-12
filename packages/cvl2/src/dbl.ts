@@ -196,12 +196,13 @@ function initDb(user: User) {
   };
 
   for (const [name, value] of Object.entries(user.get)) {
-    if (value.sort.length !== 1) throw new Error("todo (no or multi) sort");
+    if (value.sort.length > 1) throw new Error("todo multi sort");
+    if (value.sort.length === 0 && value.limit !== 1) throw new Error("todo no sort without limit set");
     const m = addMapping(rx, {
       class: value.class,
       fromFields: new Set(Object.entries(value.filter).map(([k]) => k)),
       toFields: new Set(value.get),
-      sortField: value.sort[0]![0],
+      sortField: value.sort[0]?.[0] ?? "",
       sortMode: "none",
       limit: value.limit,
     });
@@ -430,7 +431,7 @@ function codegen(resolve: Resolve) {
     const bodyLines: Code[] = [];
     const mapKeys: Code[] = [];
     for (const key of getFn.mappingKeys) {
-      mapKeys.push(c`${zigIdent(key.name)} = ${codegenQueryProvider(ctx, key.value)},`);
+      mapKeys.push(c`.${zigIdent(key.name)} = ${codegenQueryProvider(ctx, key.value)},`);
     }
     bodyLines.push(c`return db.${zigIdent(mapping.value)}.get(.{${cnljoin(mapKeys)}});`);
     lines.push(c`pub fn ${zigIdent(getFn.name)}(db: *Db, args: struct {${cnljoin(args)}}) ${returnType} {${cnljoin(bodyLines)}}`); 
@@ -547,12 +548,22 @@ initDb({
       char: "u8",
       order: "Order",
     },
+    "Grid": {
+      handle: "Grid",
+    },
+    "Grid.Pixel": {
+      owner: "Text",
+      x: "u8",
+      y: "u8",
+      value: "u8",
+    },
   },
   // we could define mappings manually instead of inferring them from queries
   // a mapping would be eg: {class: "Text.Character", filter: ["owner"], sort: [["order", "asc"]], get: ["char"], limit: 1}
   // and then the queries would reference mappings
   get: {
     "Text.body": {args: {"text": "Text"}, class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [["order", "asc"]], get: ["char"]},
+    "Grid.at": {args: {"grid": "Grid", "x": "u8", "y": "u8"}, class: "Grid.Pixel", filter: {owner: {arg: "grid"}, x: {arg: "x"}, y: {arg: "y"}}, sort: [], limit: 1, get: ["value"]},
   },
   delete: {
     "Text.clear": {args: {"text": "Text"}, class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [], get: []},
@@ -561,6 +572,7 @@ initDb({
   insert: {
     "Text.new": {args: {}, class: "Text", insert: {handle: {unique: "Text"}}, get: ["handle"]},
     "Text.push": {args: {"owner": "Text", "char": "u8"}, class: "Text.Character", insert: {owner: {arg: "owner"}, char: {arg: "char"}, order: "last"}, get: []},
+    "Grid.new": {args: {}, class: "Text", insert: {handle: {unique: "Grid"}}, get: ["handle"]},
   },
 });
 
