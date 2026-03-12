@@ -37,31 +37,38 @@ type UserData = {
 type UserQueryProvider = {arg: string} | "first" | "last" | {after: UserQueryProvider} | {before: UserQueryProvider};
 type UserQuerySortProvider = "asc" | "dsc";
 type UserBaseQuery = {
-    args: string[],
+    args: Record<string, UserType>,
     class: string,
   };
-type UserGetQueries = {
-  [key: string]: UserBaseQuery & {
-    filter: {[key: string]: UserQueryProvider},
-    sort: [string, UserQuerySortProvider][],
-    get: string[],
-  }
+type UserGetQuery = UserBaseQuery & {
+  filter: {[key: string]: UserQueryProvider},
+  sort: [string, UserQuerySortProvider][],
+  get: string[],
+  limit?: number,
 };
-type UserDeleteQueries = {
-  [key: string]: UserBaseQuery & {
-    filter: {[key: string]: UserQueryProvider},
-  }
+type UserDeleteQuery = UserBaseQuery & {
+  filter: {[key: string]: UserQueryProvider},
 };
-type UserInsertQueries = {
-  [key: string]: UserBaseQuery & {
-    insert: {[key: string]: UserQueryProvider},
-  },
+type UserInsertQuery = UserBaseQuery & {
+  insert: {[key: string]: UserQueryProvider},
 };
-type User = {classes: UserData, get: UserGetQueries, delete: UserDeleteQueries, insert: UserInsertQueries};
+type User = {
+  classes: UserData,
+  get: Record<string, UserGetQuery>,
+  delete: Record<string, UserDeleteQuery>,
+  insert: Record<string, UserInsertQuery>,
+};
 type ResolveDataFields = {
 
 };
 type ResolveType = {kind: "ref", class: string} | {kind: "u8"} | {kind: "Order"};
+type ResolveQueryProvider = (
+  | {kind: "arg", arg: string}
+  | {kind: "Order.first"}
+  | {kind: "Order.last"}
+  | {kind: "Order.after", value: ResolveQueryProvider}
+  | {kind: "Order.before", value: ResolveQueryProvider}
+);
 type ResolveClass = {
   fields: Map<string, ResolveType>,
 };
@@ -71,11 +78,21 @@ type ResolveMapping = {
   toFields: Set<string>,
   sortField: string,
   sortMode: ResolveSortMode,
+  limit: number | undefined,
 };
 type ResolveSortMode = "none" | "appendOnly" | "appendPrepend" | "tree";
 type Resolve = {
   mappings: ResolveMapping[],
   classes: Map<string, ResolveClass>,
+  queries: {
+    get: ResolveGetQuery[],
+  },
+};
+type ResolveGetQuery = {
+  name: string,
+  args: {name: string, type: ResolveType}[],
+  mappingKeys: {name: string, value: ResolveQueryProvider}[],
+  mapping: ResolveMapping,
 };
 type ResolveMappingCS = {
   class: string,
@@ -107,17 +124,35 @@ function exclam<T>(v: T | undefined): NoInfer<T> {
   if (!v) throw new Error("no exclam");
   return v;
 }
+function resolveType(user: User, userType: UserType): ResolveType {
+  if (Object.hasOwn(user.classes, userType)) {
+    return {kind: "ref", class: userType};
+  } else if (userType === "u8") {
+    return {kind: "u8"};
+  } else if (userType === "Order") {
+    return {kind: "Order"};
+  } else throw new Error("unsupported user type? " + userType);
+}
+function resolveQueryProvider(userQuery: UserQueryProvider): ResolveQueryProvider {
+  if (userQuery === "first") return {kind: "Order.first"};
+  if (userQuery === "last") return {kind: "Order.last"};
+  if ('arg' in userQuery) return {kind: "arg", arg: userQuery.arg};
+  if ('before' in userQuery) return {kind: "Order.before", value: resolveQueryProvider(userQuery.before)};
+  if ('after' in userQuery) return {kind: "Order.after", value: resolveQueryProvider(userQuery.after)};
+  throw new Error("unsupported user query? " + userQuery);
+}
 function initDb(user: User) {
   const allMappings: ResolveMapping[] = [];
   const amToMapping: Map<string, ResolveMapping> = new Map();
   const csToMapping = new Map<string, ResolveMapping[]>();
+  const allGetQueries: ResolveGetQuery[] = [];
   function getCS(cs: ResolveMappingCS): ResolveMapping[] {
     const key = csKey(cs);
     const list = csToMapping.get(key) ?? [];
     csToMapping.set(key, list);
     return list;
   }
-  function addMapping(m: ResolveMapping) {
+  function addMapping(m: ResolveMapping): ResolveMapping {
     const am = amKey(m);
     const pm = amToMapping.get(am)!;
     if (pm) {
@@ -126,21 +161,29 @@ function initDb(user: User) {
       for (const toField of m.toFields) {
         pm.toFields.add(toField);
       }
-      return;
+      return pm;
     }
     amToMapping.set(am, m);
     allMappings.push(m);
     getCS({class: m.class, sortField: m.sortField}).push(m);
+    return m;
   }
 
   for (const [name, value] of Object.entries(user.get)) {
     if (value.sort.length !== 1) throw new Error("todo (no or multi) sort");
-    addMapping({
+    const m = addMapping({
       class: value.class,
       fromFields: new Set(Object.entries(value.filter).map(([k]) => k)),
       toFields: new Set(value.get),
       sortField: value.sort[0]![0],
       sortMode: "none",
+      limit: value.limit,
+    });
+    allGetQueries.push({
+      name,
+      args: Object.entries(value.args).map(([name, type]) => ({name, type: resolveType(user, type)})),
+      mappingKeys: Object.entries(value.filter).map(([k, v]) => ({name: k, value: resolveQueryProvider(v)})),
+      mapping: m,
     });
   }
   for (const [name, value] of Object.entries(user.insert)) {
@@ -157,15 +200,7 @@ function initDb(user: User) {
   for (const [name, desc] of Object.entries(user.classes)) {
     const resolveClass: ResolveClass = {fields: new Map()};
     for (const [fieldName, userType] of Object.entries(desc)) {
-      let resolveType: ResolveType;
-      if (Object.hasOwn(user.classes, userType)) {
-        resolveType = {kind: "ref", class: userType};
-      } else if (userType === "u8") {
-        resolveType = {kind: "u8"};
-      } else if (userType === "Order") {
-        resolveType = {kind: "Order"};
-      } else throw new Error("unsupported user type? " + userType);
-      resolveClass.fields.set(fieldName, resolveType);
+      resolveClass.fields.set(fieldName, resolveType(user, userType));
     }
     allClasses.set(name, resolveClass);
   }
@@ -183,6 +218,9 @@ function initDb(user: User) {
   codegen({
     mappings: allMappings,
     classes: allClasses,
+    queries: {
+      get: allGetQueries,
+    },
   });
   // which shouldn't be too hard to codegen into
   // Map<Text, ArrayList(u8)>
@@ -280,6 +318,10 @@ function codegenFieldsType(ctx: CodegenCtx, mappingClass: string, mappingFields:
   }
   return c`struct {${cnljoin(fields)}}`;
 }
+function codegenQueryProvider(ctx: CodegenCtx, queryProvider: ResolveQueryProvider): Code {
+  if (queryProvider.kind === "arg") return zigIdent(queryProvider.arg);
+  throw new Error("TODO codegenQueryProvider: "+queryProvider.kind);
+}
 const sortModeMap: {[key in ResolveSortMode]: Code} = {
   none: c`.none`,
   appendOnly: c`.append_only`,
@@ -290,32 +332,39 @@ const sortModeMap: {[key in ResolveSortMode]: Code} = {
 function codegen(resolve: Resolve) {
   const ctx: CodegenCtx = {resolve};
   const lines: Code[] = [];
-  let gid = 0;
+  const mappingToNameMap = new Map<ResolveMapping, {type: string, value: string}>();
 
   lines.push(c`const Db = @This();`);
   lines.push(c`const lib = @import("lib.zig");`);
 
   lines.push(c``, c`// Mappings`);
+  const mappingLines: Code[] = [];
   for (let i = 0; i < resolve.mappings.length; i++) {
     const mapping = resolve.mappings[i]!;
     // - give the mapping a name
-    const name = `mapping_${i}`;
+    const typeName = `${mapping.class}.Mapping${i}`;
+    const valueName = `${mapping.class}.mapping${i}`;
+    mappingToNameMap.set(mapping, {type: typeName, value: valueName});
     // - generate the type, ie Map(Text.Handle, Sorted(struct {char: u8}))
     const from = codegenFieldsType(ctx, mapping.class, mapping.fromFields);
     const to = codegenFieldsType(ctx, mapping.class, mapping.toFields);
     const sort = sortModeMap[mapping.sortMode];
     const type = c`Map(${sort}, ${from}, ${to})`;
 
-    lines.push(c`${zigIdent(name)}: ${type},`);
+    lines.push(c`${zigIdent(valueName)}: ${zigIdent(typeName)},`);
+    mappingLines.push(c`pub const ${zigIdent(typeName)} = ${type};`);
 
     // fn Map(K, V) return AutoArrayHashMap(K, V)
     // fn Sorted(T) switch(order) { .append_only => MultiArrayList(T), .rb_tree => RbTree(T) }
   }
 
+  lines.push(c``, c`// Mapping Types`);
+  for (const mapping of mappingLines) lines.push(mapping);
+
   lines.push(c``, c`// Handle Types`);
   // we don't actually want all of these. we want Text but not Text.Character
   for (const [className, classData] of resolve.classes) {
-    lines.push(c`const ${zigIdent(className)} = Pool(32, 32, opaque{}, struct{});`);
+    lines.push(c`pub const ${zigIdent(className)} = Pool(struct {});`);
   }
 
   /*
@@ -331,6 +380,24 @@ function codegen(resolve: Resolve) {
     return try db.text_to_chars_map.get(.{ .owner = owner });
   }
   */
+
+  // TODO: generate the insert functions
+  lines.push(c``, c`// Get Functions`);
+  for (const getFn of resolve.queries.get) {
+    const mapping = mappingToNameMap.get(getFn.mapping)!;
+    const args: Code[] = [];
+    for (const arg of getFn.args) {
+      args.push(c`${zigIdent(arg.name)}: ${codegenType(ctx, arg.type)},`);
+    }
+    const returnType: Code = c`${zigIdent(mapping.type)}.Iterator`;
+    const bodyLines: Code[] = [];
+    const mapKeys: Code[] = [];
+    for (const key of getFn.mappingKeys) {
+      mapKeys.push(c`${zigIdent(key.name)} = ${codegenQueryProvider(ctx, key.value)},`);
+    }
+    bodyLines.push(c`return db.${zigIdent(mapping.value)}.get(.{${cnljoin(mapKeys)}})`);
+    lines.push(c`pub fn ${zigIdent(getFn.name)}(db: *Db, args: struct {${cnljoin(args)}}) ${returnType} {${cnljoin(bodyLines)}}`); 
+  }
 
   const lib = `
   pub const SortMode = enum { none, append_only, append_prepend, tree };
@@ -406,7 +473,6 @@ function codegen(resolve: Resolve) {
   }
   `;
 
-  // TODO: generate the insert & get functions
   console.log(crender(cjoin(lines, cnl, undefined, cnl)));
 }
 
@@ -420,14 +486,14 @@ initDb({
     },
   },
   get: {
-    "Text.body": {args: ["text"], class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [["order", "asc"]], get: ["char"]},
+    "Text.body": {args: {"text": "Text"}, class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [["order", "asc"]], get: ["char"]},
   },
   delete: {
-    "Text.clear": {args: ["text"], class: "Text.Character", filter: {owner: {arg: "text"}}}
+    "Text.clear": {args: {"text": "Text"}, class: "Text.Character", filter: {owner: {arg: "text"}}}
   },
   insert: {
-    "Text.new": {args: [], class: "Text", insert: {}},
-    "Text.push": {args: ["owner", "char"], class: "Text.Character", insert: {owner: {arg: "owner"}, char: {arg: "char"}, order: "last"}},
+    "Text.new": {args: {}, class: "Text", insert: {}},
+    "Text.push": {args: {"owner": "Text", "char": "u8"}, class: "Text.Character", insert: {owner: {arg: "owner"}, char: {arg: "char"}, order: "last"}},
   },
 });
 
