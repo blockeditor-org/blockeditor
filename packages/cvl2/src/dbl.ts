@@ -415,6 +415,10 @@ function codegen(resolve: Resolve) {
   */
 
   // TODO: generate the insert functions
+  // for an insert function:
+  // - find all mappings for the destination class
+  // - duplicate the inserted data into all mappings
+
   lines.push(c``, c`// Get Functions`);
   for (const getFn of resolve.queries.get) {
     const mapping = mappingToNameMap.get(getFn.mapping)!;
