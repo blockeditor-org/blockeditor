@@ -526,7 +526,7 @@ function codegen(resolve: Resolve) {
       pub fn remove(self: *Holder, item: This) void {
         _ = self;
         _ = item;
-        // TODO
+        // TODO if this is like a pool we could allow the next one to reclaim this index
       }
     };
   }
