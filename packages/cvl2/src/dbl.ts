@@ -36,9 +36,7 @@ type UserData = {
 };
 type UserQueryProvider = {arg: string} | "first" | "last" | {after: UserQueryProvider} | {before: UserQueryProvider} | {unique: string};
 type UserQuerySortProvider = "asc" | "dsc";
-type UserArgs = Record<string, UserType>;
 type UserBaseQuery = {
-    args: UserArgs,
     class: string,
     get: string[],
   };
@@ -93,11 +91,12 @@ type Resolve = {
     get: ResolveGetQuery[],
   },
 };
-type ResolveArgs = {name: string, type: ResolveType}[];
+type ResolveArg = {name: string, type: ResolveType};
+type ResolveMappingKey = {name: string, value: ResolveQueryProvider};
 type ResolveGetQuery = {
   name: string,
-  args: ResolveArgs,
-  mappingKeys: {name: string, value: ResolveQueryProvider}[],
+  args: ResolveArg[],
+  mappingKeys: ResolveMappingKey[],
   mapping: ResolveMapping,
 };
 type ResolveMappingCS = {
@@ -140,16 +139,20 @@ function resolveType(rx: ResolveContext, userType: UserType): ResolveType {
     return {kind: "Order"};
   } else throw new Error("unsupported user type? " + userType);
 }
-function resolveQueryProvider(rx: ResolveContext, userQuery: UserQueryProvider): ResolveQueryProvider {
+type InferredArgsHelper = {
+  clss: string,
+  args: ResolveArg[],
+};
+function resolveQueryProvider(rx: ResolveContext, infer: InferredArgsHelper, slot: ResolveType, userQuery: UserQueryProvider): ResolveQueryProvider {
   if (userQuery === "first") return {kind: "Order.first"};
   if (userQuery === "last") return {kind: "Order.last"};
-  if ('arg' in userQuery) return {kind: "arg", arg: userQuery.arg};
-  if ('before' in userQuery) return {kind: "Order.before", value: resolveQueryProvider(rx, userQuery.before)};
-  if ('after' in userQuery) return {kind: "Order.after", value: resolveQueryProvider(rx, userQuery.after)};
+  if ('arg' in userQuery) {
+    infer.args.push({name: userQuery.arg, type: slot});
+    return {kind: "arg", arg: userQuery.arg};
+  }
+  if ('before' in userQuery) return {kind: "Order.before", value: resolveQueryProvider(rx, infer, {kind: "handle", class: infer.clss}, userQuery.before)};
+  if ('after' in userQuery) return {kind: "Order.after", value: resolveQueryProvider(rx, infer, {kind: "handle", class: infer.clss}, userQuery.after)};
   throw new Error("unsupported user query? " + userQuery);
-}
-function resolveArgs(rx: ResolveContext, args: UserArgs): ResolveArgs {
-  return Object.entries(args).map(([name, type]) => ({name, type: resolveType(rx, type)}));
 }
 type ResolveContext = {
   user: User,
@@ -187,13 +190,21 @@ function completeMapping(m: Omit<ResolveMapping, "name">, name: string): m is Re
 function assert(b: boolean): asserts b { if (!b) throw new Error("not b") }
 function initDb(user: User) {
   const allGetQueries: ResolveGetQuery[] = [];
-  const needsHandleClasses = new Set<string>();
   const rx: ResolveContext = {
     user,
     amToMapping: new Map(),
     csToMapping: new Map(),
     allMappings: [],
   };
+
+  const allClasses: Map<string, ResolveClass> = new Map();
+  for (const [name, desc] of Object.entries(user.classes)) {
+    const resolveClass: ResolveClass = {fields: new Map()};
+    for (const [fieldName, userType] of Object.entries(desc)) {
+      resolveClass.fields.set(fieldName, resolveType(rx, userType));
+    }
+    allClasses.set(name, resolveClass);
+  }
 
   for (const [name, value] of Object.entries(user.get)) {
     if (value.sort.length > 1) throw new Error("todo multi sort");
@@ -206,17 +217,18 @@ function initDb(user: User) {
       sortMode: "none",
       limit: value.limit,
     });
-    const args = resolveArgs(rx, value.args);
+    const infer: InferredArgsHelper = {clss: value.class, args: []};
+    const mappingKeys: ResolveMappingKey[] = Object.entries(value.filter).map(([k, v]): ResolveMappingKey => {
+      const fieldType = allClasses.get(value.class)?.fields.get(k);
+      if (!fieldType) throw new Error(`missing fieldType for ${value.class}/${k}`);
+      return {name: k, value: resolveQueryProvider(rx, infer, fieldType, v)};
+    });
     allGetQueries.push({
       name,
-      args,
-      mappingKeys: Object.entries(value.filter).map(([k, v]) => ({name: k, value: resolveQueryProvider(rx, v)})),
+      args: infer.args,
+      mappingKeys,
       mapping: m,
     });
-
-    for (const arg of args) {
-      if (arg.type.kind === "handle") needsHandleClasses.add(arg.type.class);
-    }
   }
   for (const [name, value] of Object.entries(user.insert)) {
     for (const [insk, insv] of Object.entries(value.insert)) {
@@ -226,29 +238,6 @@ function initDb(user: User) {
         mapping.sortMode = unionSortMode(mapping.sortMode, intrinsicSortMode);
       }
     }
-
-    const args = resolveArgs(rx, value.args);
-    for (const arg of args) {
-      if (arg.type.kind === "handle") needsHandleClasses.add(arg.type.class);
-    }
-  }
-  for (const [name, value] of Object.entries(user.delete)) {
-    const args = resolveArgs(rx, value.args);
-    for (const arg of args) {
-      if (arg.type.kind === "handle") needsHandleClasses.add(arg.type.class);
-    }
-  }
-
-  const allClasses: Map<string, ResolveClass> = new Map();
-  for (const [name, desc] of Object.entries(user.classes)) {
-    const resolveClass: ResolveClass = {fields: new Map()};
-    for (const [fieldName, userType] of Object.entries(desc)) {
-      resolveClass.fields.set(fieldName, resolveType(rx, userType));
-    }
-    if (needsHandleClasses.has(name)) {
-      resolveClass.fields.set("$handle", {kind: "handle", class: name});
-    }
-    allClasses.set(name, resolveClass);
   }
 
   // insert fns:
@@ -562,17 +551,17 @@ initDb({
   // a mapping would be eg: {class: "Text.Character", filter: ["owner"], sort: [["order", "asc"]], get: ["char"], limit: 1}
   // and then the queries would reference mappings
   get: {
-    "Text.body": {args: {"text": "Text"}, class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [["order", "asc"]], get: ["char"]},
-    "Grid.at": {args: {"grid": "Grid", "x": "u8", "y": "u8"}, class: "Grid.Pixel", filter: {owner: {arg: "grid"}, x: {arg: "x"}, y: {arg: "y"}}, sort: [], limit: 1, get: ["value"]},
+    "Text.body": {class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [["order", "asc"]], get: ["char"]},
+    "Grid.at": {class: "Grid.Pixel", filter: {owner: {arg: "grid"}, x: {arg: "x"}, y: {arg: "y"}}, sort: [], limit: 1, get: ["value"]},
   },
   delete: {
-    "Text.clear": {args: {"text": "Text"}, class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [], get: []},
-    "Text.delete": {args: {"text": "Text"}, class: "Text", filter: {handle: {arg: "text"}}, sort: [], get: []},
+    "Text.clear": {class: "Text.Character", filter: {owner: {arg: "text"}}, sort: [], get: []},
+    "Text.delete": {class: "Text", filter: {handle: {arg: "text"}}, sort: [], get: []},
   },
   insert: {
-    "Text.new": {args: {}, class: "Text", insert: {handle: {unique: "Text"}}, get: ["handle"]},
-    "Text.push": {args: {"owner": "Text", "char": "u8"}, class: "Text.Character", insert: {owner: {arg: "owner"}, char: {arg: "char"}, order: "last"}, get: []},
-    "Grid.new": {args: {}, class: "Text", insert: {handle: {unique: "Grid"}}, get: ["handle"]},
+    "Text.new": {class: "Text", insert: {handle: {unique: "Text"}}, get: ["handle"]},
+    "Text.push": {class: "Text.Character", insert: {owner: {arg: "owner"}, char: {arg: "char"}, order: "last"}, get: []},
+    "Grid.new": {class: "Text", insert: {handle: {unique: "Grid"}}, get: ["handle"]},
   },
 });
 
