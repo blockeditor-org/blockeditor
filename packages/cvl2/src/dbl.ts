@@ -70,6 +70,7 @@ type ResolveQueryProvider = (
   | {kind: "Order.last"}
   | {kind: "Order.after", value: ResolveQueryProvider}
   | {kind: "Order.before", value: ResolveQueryProvider}
+  | {kind: "unique", class: string}
 );
 type ResolveClass = {
   fields: Map<string, ResolveType>,
@@ -79,16 +80,18 @@ type ResolveMapping = {
   class: string,
   fromFields: Set<string>,
   toFields: Set<string>,
-  sortField: string,
+  sortFields: string[],
   sortMode: ResolveSortMode,
   limit: number | undefined,
 };
 type ResolveSortMode = "none" | "appendOnly" | "appendPrepend" | "tree";
 type Resolve = {
   mappings: ResolveMapping[],
+  classToMappings: Map<string, ResolveMapping[]>,
   classes: Map<string, ResolveClass>,
   queries: {
     get: ResolveGetQuery[],
+    insert: ResolveInsertQuery[],
   },
 };
 type ResolveArg = {name: string, type: ResolveType};
@@ -98,6 +101,13 @@ type ResolveGetQuery = {
   args: ResolveArg[],
   mappingKeys: ResolveMappingKey[],
   mapping: ResolveMapping,
+};
+type ResolveInsertQuery = {
+  name: string,
+  args: ResolveArg[],
+  class: string,
+  values: ResolveMappingKey[],
+  get: string[],
 };
 type ResolveMappingCS = {
   class: string,
@@ -113,7 +123,7 @@ function amKey(am: Omit<ResolveMapping, "name">): string {
   return JSON.stringify({
     class: am.class,
     fromFields: [...am.fromFields].toSorted(),
-    sortField: am.sortField,
+    sortFields: am.sortFields,
     limit: am.limit,
   });
 }
@@ -152,18 +162,26 @@ function resolveQueryProvider(rx: ResolveContext, infer: InferredArgsHelper, slo
   }
   if ('before' in userQuery) return {kind: "Order.before", value: resolveQueryProvider(rx, infer, {kind: "handle", class: infer.clss}, userQuery.before)};
   if ('after' in userQuery) return {kind: "Order.after", value: resolveQueryProvider(rx, infer, {kind: "handle", class: infer.clss}, userQuery.after)};
+  if ('unique' in userQuery) return {kind: "unique", class: userQuery.unique};
   throw new Error("unsupported user query? " + userQuery);
 }
 type ResolveContext = {
   user: User,
   amToMapping: Map<string, ResolveMapping>,
   csToMapping: Map<string, ResolveMapping[]>,
+  classToMappings: Map<string, ResolveMapping[]>,
   allMappings: ResolveMapping[],
+  allClasses: Map<string, ResolveClass>,
 };
 function getCS(rx: ResolveContext, cs: ResolveMappingCS): ResolveMapping[] {
   const key = csKey(cs);
   const list = rx.csToMapping.get(key) ?? [];
   rx.csToMapping.set(key, list);
+  return list;
+}
+function getMappingsForClass(rx: ResolveContext, className: string): ResolveMapping[] {
+  const list = rx.classToMappings.get(className) ?? [];
+  rx.classToMappings.set(className, list);
   return list;
 }
 function addMapping(rx: ResolveContext, m: Omit<ResolveMapping, "name">): ResolveMapping {
@@ -180,30 +198,43 @@ function addMapping(rx: ResolveContext, m: Omit<ResolveMapping, "name">): Resolv
   assert(completeMapping(m, am));
   rx.amToMapping.set(am, m);
   rx.allMappings.push(m);
-  getCS(rx, {class: m.class, sortField: m.sortField}).push(m);
+  for (const sortField of m.sortFields) getCS(rx, {class: m.class, sortField}).push(m);
+  getMappingsForClass(rx, m.class).push(m);
   return m;
 }
 function completeMapping(m: Omit<ResolveMapping, "name">, name: string): m is ResolveMapping {
   (m as ResolveMapping).name = name;
   return true;
 }
+function parseProviders(rx: ResolveContext, clss: string, queries: Record<string, UserQueryProvider>): {args: ResolveArg[], keys: ResolveMappingKey[]} {
+
+  const infer: InferredArgsHelper = {clss, args: []};
+  const mappingKeys: ResolveMappingKey[] = Object.entries(queries).map(([k, v]): ResolveMappingKey => {
+    const fieldType = rx.allClasses.get(clss)?.fields.get(k);
+    if (!fieldType) throw new Error(`missing fieldType for ${clss}/${k}`);
+    return {name: k, value: resolveQueryProvider(rx, infer, fieldType, v)};
+  });
+  return {args: infer.args, keys: mappingKeys};
+}
 function assert(b: boolean): asserts b { if (!b) throw new Error("not b") }
 function initDb(user: User) {
   const allGetQueries: ResolveGetQuery[] = [];
+  const allInsertQueries: ResolveInsertQuery[] = [];
   const rx: ResolveContext = {
     user,
     amToMapping: new Map(),
     csToMapping: new Map(),
+    classToMappings: new Map(),
     allMappings: [],
+    allClasses: new Map(),
   };
 
-  const allClasses: Map<string, ResolveClass> = new Map();
   for (const [name, desc] of Object.entries(user.classes)) {
     const resolveClass: ResolveClass = {fields: new Map()};
     for (const [fieldName, userType] of Object.entries(desc)) {
       resolveClass.fields.set(fieldName, resolveType(rx, userType));
     }
-    allClasses.set(name, resolveClass);
+    rx.allClasses.set(name, resolveClass);
   }
 
   for (const [name, value] of Object.entries(user.get)) {
@@ -213,20 +244,15 @@ function initDb(user: User) {
       class: value.class,
       fromFields: new Set(Object.entries(value.filter).map(([k]) => k)),
       toFields: new Set(value.get),
-      sortField: value.sort[0]?.[0] ?? "",
+      sortFields: value.sort.map(([k]) => k),
       sortMode: "none",
       limit: value.limit,
     });
-    const infer: InferredArgsHelper = {clss: value.class, args: []};
-    const mappingKeys: ResolveMappingKey[] = Object.entries(value.filter).map(([k, v]): ResolveMappingKey => {
-      const fieldType = allClasses.get(value.class)?.fields.get(k);
-      if (!fieldType) throw new Error(`missing fieldType for ${value.class}/${k}`);
-      return {name: k, value: resolveQueryProvider(rx, infer, fieldType, v)};
-    });
+    const providers = parseProviders(rx, value.class, value.filter);
     allGetQueries.push({
       name,
-      args: infer.args,
-      mappingKeys,
+      args: providers.args,
+      mappingKeys: providers.keys,
       mapping: m,
     });
   }
@@ -238,6 +264,14 @@ function initDb(user: User) {
         mapping.sortMode = unionSortMode(mapping.sortMode, intrinsicSortMode);
       }
     }
+    const providers = parseProviders(rx, value.class, value.insert);
+    allInsertQueries.push({
+      name,
+      class: value.class,
+      args: providers.args,
+      values: providers.keys,
+      get: value.get,
+    });
   }
 
   // insert fns:
@@ -252,9 +286,11 @@ function initDb(user: User) {
 
   codegen({
     mappings: rx.allMappings,
-    classes: allClasses,
+    classToMappings: rx.classToMappings,
+    classes: rx.allClasses,
     queries: {
       get: allGetQueries,
+      insert: allInsertQueries,
     },
   });
   // which shouldn't be too hard to codegen into
@@ -352,7 +388,9 @@ function codegenFieldsType(ctx: CodegenCtx, mappingClass: string, mappingFields:
   return c`struct {${cnljoin(fields)}}`;
 }
 function codegenQueryProvider(ctx: CodegenCtx, queryProvider: ResolveQueryProvider): Code {
-  if (queryProvider.kind === "arg") return zigIdent(queryProvider.arg);
+  if (queryProvider.kind === "arg") return c`args.${zigIdent(queryProvider.arg)}`;
+  if (queryProvider.kind === "unique") return c`try db.${zigIdent(`incrementer_${queryProvider.class}`)}.add()`;
+  if (queryProvider.kind === "Order.last") return c`{}`;
   throw new Error("TODO codegenQueryProvider: "+queryProvider.kind);
 }
 const sortModeMap: {[key in ResolveSortMode]: Code} = {
@@ -405,26 +443,61 @@ function codegen(resolve: Resolve) {
   }
   */
 
-  // TODO: generate the insert functions
-  // for an insert function:
-  // - find all mappings for the destination class
-  // - duplicate the inserted data into all mappings
-
   lines.push(c``, c`// Get Functions`);
   for (const getFn of resolve.queries.get) {
-    const mapping = mappingToNameMap.get(getFn.mapping)!;
+    const mappingName = mappingToNameMap.get(getFn.mapping)!;
     const args: Code[] = [];
     for (const arg of getFn.args) {
       args.push(c`${zigIdent(arg.name)}: ${codegenType(ctx, arg.type)},`);
     }
-    const returnType: Code = c`${zigIdent(mapping.type)}.Iterator`;
+    const returnType: Code = c`${zigIdent(mappingName.type)}.Iterator`;
     const bodyLines: Code[] = [];
     const mapKeys: Code[] = [];
     for (const key of getFn.mappingKeys) {
       mapKeys.push(c`.${zigIdent(key.name)} = ${codegenQueryProvider(ctx, key.value)},`);
     }
-    bodyLines.push(c`return db.${zigIdent(mapping.value)}.get(.{${cnljoin(mapKeys)}});`);
+    bodyLines.push(c`return db.${zigIdent(mappingName.value)}.get(.{${cnljoin(mapKeys)}});`);
     lines.push(c`pub fn ${zigIdent(getFn.name)}(db: *Db, args: struct {${cnljoin(args)}}) ${returnType} {${cnljoin(bodyLines)}}`); 
+  }
+
+  // TODO: generate the insert functions
+  // for an insert function:
+  // - find all mappings for the destination class
+  // - duplicate the inserted data into all mappings
+  lines.push(c``, c`// Insert Functions`);
+  for (const insertFn of resolve.queries.insert) {
+    const args: Code[] = [];
+    for (const arg of insertFn.args) {
+      args.push(c`${zigIdent(arg.name)}: ${codegenType(ctx, arg.type)},`);
+    }
+    const bodyLines: Code[] = [];
+    const generatedFields: Code[] = [];
+    const returnType = c`error{OutOfMemory}!${codegenFieldsType(ctx, insertFn.class, new Set(insertFn.get))}}`;
+
+    for (const field of insertFn.values) {
+      generatedFields.push(c`.${zigIdent(field.name)} = ${codegenQueryProvider(ctx, field.value)},`);
+    }
+    bodyLines.push(c`const value = .{${cnljoin(generatedFields)}};`);
+
+    const allMappings = resolve.classToMappings.get(insertFn.class) ?? [];
+    for (const mapping of allMappings) {
+      const mappingName = mappingToNameMap.get(mapping)!;
+      const fromLines: Code[] = [];
+      for (const field of mapping.fromFields) {
+        fromLines.push(c`.${zigIdent(field)} = value.${zigIdent(field)},`);
+      }
+      const toLines: Code[] = [];
+      for (const field of mapping.toFields) {
+        toLines.push(c`.${zigIdent(field)} = value.${zigIdent(field)},`);
+      }
+      bodyLines.push(c`try db.${zigIdent(mappingName.value)}.insert(.{${cnljoin(fromLines)}}, .{${cnljoin(toLines)}});`);
+    }
+    const outputLines: Code[] = [];
+    for (const getline of insertFn.get) {
+      outputLines.push(c`.${zigIdent(getline)} = value.${zigIdent(getline)},`);
+    }
+    bodyLines.push(c`return .{${cnljoin(outputLines)}};`);
+    lines.push(c`pub fn ${zigIdent(insertFn.name)}(db: *Db, args: struct {${cnljoin(args)}}) ${returnType} {${cnljoin(bodyLines)}}`); 
   }
 
   dbLines.push(c``, c`// Handle Incrementers`);
