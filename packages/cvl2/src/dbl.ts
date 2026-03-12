@@ -436,6 +436,10 @@ function codegen(resolve: Resolve) {
 
   lines.push(c``, c`pub const Db = struct {${cnljoin(dbLines)}};`);
 
+  // serialization:
+  // - we only need to serialize enough data to be able to reconstruct the mappings
+  // - then when we deserialize, we reconstruct the mappings
+
   const lib = `
   const std = @import("std");
 
