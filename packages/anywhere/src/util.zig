@@ -538,31 +538,34 @@ pub const SerializeDeserialize = struct {
                 // problem 2: certainly can't serialize a pointer
             }
 
-            // pub fn begin(name)
-            // pub fn end()
-            // pub fn value(name: ...)
+            pub fn begin(self: *@This(), name: []const u8) void {
+                _ = self;
+                _ = name;
+            }
+            pub fn end(self: *@This()) void {
+                _ = self;
+            }
 
-            pub fn value(self: *@This(), comptime Type: type, v: mode.In(Type)) ErrorSet!mode.Out(Type) {
+            pub fn value(self: *@This(), comptime Type: type, name: []const u8, v: mode.In(Type)) ErrorSet!mode.Out(Type) {
                 if (comptime !canDumpBytes(Type)) {
                     switch (@typeInfo(Type)) {
                         .vector => |info| {
+                            self.begin(name);
+                            defer self.end();
+
                             var result: Type = undefined;
                             inline for (0..info.len) |i| {
-                                const item = try self.value(info.child, if (comptime mode.in()) v[i]);
+                                const item = try self.value(info.child, std.fmt.comptimePrint("{d}", .{i}), if (comptime mode.in()) v[i]);
                                 if (comptime mode.out()) result[i] = item;
                             }
                             return if (comptime mode.out()) result;
                         },
-                        .@"struct" => |info| {
-                            if (info.layout == .@"packed") @compileLog("sizeof", @sizeOf(Type) * 8, "bitSizeOf", @bitSizeOf(Type), "forType", @typeName(Type));
-                            @compileLog("layout", @tagName(info.layout), "forStruct", @typeName(Type), "hua", canDumpBytes(Type));
-                        },
                         .@"enum" => |info| {
-                            const item = try self.value(info.tag_type, if (comptime mode.in()) @as(info.tag_type, @intFromEnum(info)));
+                            const item = try self.value(info.tag_type, name, if (comptime mode.in()) @as(info.tag_type, @intFromEnum(info)));
                             return if (comptime mode.out()) std.meta.intToEnum(Type, item) catch return error.DeserializeError;
                         },
                         .int => |info| {
-                            const item = try self.value(@Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } }), if (comptime mode.in()) v);
+                            const item = try self.value(@Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } }), name, if (comptime mode.in()) v);
                             return if (comptime mode.out()) std.math.cast(Type, item) catch return error.DeserializeError;
                         },
                         else => {},
@@ -570,16 +573,22 @@ pub const SerializeDeserialize = struct {
                     @compileError("!hasUniqueRepresentation: " ++ @typeName(Type) ++ " / because " ++ @tagName(@typeInfo(Type)));
                 }
 
-                const ret = try self.slice(Type, 1, if (comptime mode.in()) (&v)[0..1]);
+                self.begin(name);
+                defer self.end();
+
+                const ret = try self.slice(Type, "value", 1, if (comptime mode.in()) (&v)[0..1]);
                 return if (comptime mode.out()) ret[0];
             }
-            pub fn slice(self: *@This(), comptime Entry: type, len: usize, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
+            pub fn slice(self: *@This(), comptime Entry: type, name: []const u8, len: usize, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
+                self.begin(name);
+                defer self.end();
+
                 if (!canDumpBytes(Entry)) {
                     // need to do a manual array dump
                     // for deserialize this also means allocating a temporary slice which is not ideal
                     const result = if (comptime mode.out()) try self.internal.arena.allocator().alloc(Entry, len);
                     for (0..len) |index| {
-                        const item = try self.value(Entry, if (comptime mode.in()) v[index]);
+                        const item = try self.value(Entry, "{d}", if (comptime mode.in()) v[index]);
                         if (comptime mode.out()) result[index] = item;
                     }
                     return result;
@@ -598,9 +607,12 @@ pub const SerializeDeserialize = struct {
                     },
                 }
             }
-            pub fn sliceAutoLen(self: *@This(), comptime Entry: type, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
-                const len = try self.value(usize, if (comptime mode.in()) v.len);
-                return self.slice(Entry, if (comptime mode.out()) len else v.len, v);
+            pub fn sliceAutoLen(self: *@This(), comptime Entry: type, name: []const u8, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
+                self.begin(name);
+                defer self.end();
+
+                const len = try self.value(usize, "len", if (comptime mode.in()) v.len);
+                return self.slice(Entry, "ptr", if (comptime mode.out()) len else v.len, v);
             }
         };
     }

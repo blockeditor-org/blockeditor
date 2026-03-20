@@ -365,12 +365,11 @@ const Camera = struct {
         extra: mode.Extra(GameSerializeExtra),
     ) !void {
         _ = extra;
-        const scale = try sd.value(f32, if (comptime mode.in()) item.scale);
-        const centered_on_pos_0 = try sd.value(f32, if (comptime mode.in()) item.centered_on_pos[0]);
-        const centered_on_pos_1 = try sd.value(f32, if (comptime mode.in()) item.centered_on_pos[1]);
+        const scale = try sd.value(f32, "scale", if (comptime mode.in()) item.scale);
+        const centered_on_pos = try sd.value(math.vec2f32, "centered_on_pos", if (comptime mode.in()) item.centered_on_pos);
         if (comptime mode.out()) item.* = .{
             .scale = scale,
-            .centered_on_pos = .{ centered_on_pos_0, centered_on_pos_1 },
+            .centered_on_pos = centered_on_pos,
         };
     }
 };
@@ -1001,7 +1000,7 @@ const Wires = ConnectionLayer(struct {
         return true; // TODO: based on wire type
     }
     pub fn serdes(comptime mode: util.SerializeDeserialize.Mode, sd: *mode.Value(), self: mode.In(*@This()), _: mode.Extra(GameSerializeExtra)) !mode.Out(@This()) {
-        const value = try sd.value(f64, if (comptime mode.in()) self.value);
+        const value = try sd.value(f64, "value", if (comptime mode.in()) self.value);
         if (comptime mode.out()) return .{ .value = value };
     }
 }, struct {
@@ -1051,10 +1050,11 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
 
         pub fn begin(
             sd: *mode.Value(),
+            name: []const u8,
             extra: mode.Extra(GameSerializeExtra),
             out: mode.In(*Pool),
         ) !PS {
-            const count = try sd.value(usize, if (comptime mode.in()) out.liveHandleCount());
+            const count = try sd.value(usize, name, if (comptime mode.in()) out.liveHandleCount());
             switch (mode) {
                 .count, .serialize => {
                     var result: PS = .{ .count = out.liveHandleCount(), .index = 0, .internal = .{ .handle_to_index_map = .empty } };
@@ -1085,11 +1085,12 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
         pub fn serdesHandle(
             self: *PS,
             sd: *mode.Value(),
+            name: []const u8,
             extra: mode.Extra(GameSerializeExtra),
             v: mode.In(Pool.Handle),
         ) !mode.Out(Pool.Handle) {
             _ = extra;
-            const index = try sd.value(u64, if (comptime mode.in()) blk: {
+            const index = try sd.value(u64, name, if (comptime mode.in()) blk: {
                 if (self.internal.handle_to_index_map.getIndex(v)) |idx| {
                     break :blk idx + 1;
                 } else {
@@ -1177,25 +1178,29 @@ const Map = struct {
         extra: mode.Extra(GameSerializeExtra),
     ) !void {
         if (comptime mode.out()) item.gpa = extra.gpa;
-        const size_int = try sd.value(math.vec2i32, if (comptime mode.in()) item.size_int);
-        const size_usize = try sd.value(math.vec2usize, if (comptime mode.in()) item.size_usize);
+        const size_int = try sd.value(math.vec2i32, "size_int", if (comptime mode.in()) item.size_int);
+        const size_usize = try sd.value(math.vec2usize, "size_usize", if (comptime mode.in()) item.size_usize);
 
-        var building_pool_handler: PoolSerdes(BuildingPool, mode) = try .begin(sd, extra, if (comptime mode.in()) &item.building_pool);
+        var building_pool_handler: PoolSerdes(BuildingPool, mode) = try .begin(sd, "building_pool", extra, if (comptime mode.in()) &item.building_pool);
         defer building_pool_handler.deinit(extra);
-        var priority_pool_handler: PoolSerdes(PriorityPool, mode) = try .begin(sd, extra, if (comptime mode.in()) &item.priority_pool);
+        var priority_pool_handler: PoolSerdes(PriorityPool, mode) = try .begin(sd, "building_pool", extra, if (comptime mode.in()) &item.priority_pool);
         defer priority_pool_handler.deinit(extra);
 
-        const materials_size = try sd.value(math.vec3usize, if (comptime mode.in()) item.materials.size);
-        const materials_slice = try sd.sliceAutoLen(Material, if (comptime mode.in()) item.materials.items);
+        const materials_size = try sd.value(math.vec3usize, "materials.size", if (comptime mode.in()) item.materials.size);
+        const materials_slice = try sd.sliceAutoLen(Material, "materials.items", if (comptime mode.in()) item.materials.items);
 
-        const tile_flags_size = try sd.value(math.vec2usize, if (comptime mode.in()) item.tile_flags.size);
-        const tile_flags_slice = try sd.sliceAutoLen(TileFlags, if (comptime mode.in()) item.tile_flags.items);
+        const tile_flags_size = try sd.value(math.vec2usize, "tile_flags.size", if (comptime mode.in()) item.tile_flags.size);
+        const tile_flags_slice = try sd.sliceAutoLen(TileFlags, "tile_flags.items", if (comptime mode.in()) item.tile_flags.items);
 
+        sd.begin("building_pool.data");
         while (building_pool_handler.serdesNext()) |handle| {
+            sd.begin("Building");
+            defer sd.end();
+
             const building = if (comptime mode.in()) item.building_pool.getColumnPtrAssumeLive(handle, .ptr);
-            const tag = try sd.value(buildings.BuildingTag, if (comptime mode.in()) building.tag);
-            const center = try sd.value(math.vec2i32, if (comptime mode.in()) building.center);
-            const energy_priority = try priority_pool_handler.serdesHandle(sd, extra, if (comptime mode.in()) building.energy_priority);
+            const tag = try sd.value(buildings.BuildingTag, "tag", if (comptime mode.in()) building.tag);
+            const center = try sd.value(math.vec2i32, "center", if (comptime mode.in()) building.center);
+            const energy_priority = try priority_pool_handler.serdesHandle(sd, "energy_priority", extra, if (comptime mode.in()) building.energy_priority);
 
             if (comptime mode.out()) building_pool_handler.set(handle, .{ .ptr = .{
                 .tag = tag,
@@ -1205,15 +1210,22 @@ const Map = struct {
                 .energy_priority = energy_priority,
             } }); // maybe we should call placeBuilding here?
         }
+        sd.end();
+
         const building_pool = try building_pool_handler.end();
 
+        sd.begin("priority_pool.data");
         while (priority_pool_handler.serdesNext()) |handle| {
-            const level = try sd.value(PriorityLevel, if (comptime mode.in()) item.getPriorityLevel(handle));
+            sd.begin("PriorityLevel");
+            defer sd.end();
+
+            const level = try sd.value(PriorityLevel, "level", if (comptime mode.in()) item.getPriorityLevel(handle));
             if (comptime mode.out()) priority_pool_handler.set(handle, .{
                 .ptr = .{ .name = "" },
                 .level = level,
             });
         }
+        sd.end();
         const priority_pool = try priority_pool_handler.end();
 
         const wires = try Wires.serdes(mode, sd, if (comptime mode.in()) &item.wires, extra.gpa);

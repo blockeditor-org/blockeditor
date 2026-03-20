@@ -284,13 +284,18 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
         }
 
         pub fn serdes(comptime mode: util.SerializeDeserialize.Mode, sd: *mode.Value(), v: mode.In(*@This()), gpa: std.mem.Allocator) !mode.Out(@This()) {
-            var pool: main.PoolSerdes(SegmentPool, mode) = try .begin(sd, &.{ .gpa = gpa }, if (comptime mode.in()) &v.segments);
+            var pool: main.PoolSerdes(SegmentPool, mode) = try .begin(sd, "segments", &.{ .gpa = gpa }, if (comptime mode.in()) &v.segments);
             defer pool.deinit(&.{ .gpa = gpa });
 
+            sd.begin("segments.items");
             while (pool.serdesNext()) |handle| {
+                sd.begin("Segment");
+                defer sd.end();
                 const value = if (comptime mode.in()) v.segments.getColumnPtrAssumeLive(handle, .ptr);
-                const sides = try sd.slice(vec.by2i32, 2, if (comptime mode.in()) &value.sides);
+                const sides = try sd.slice(vec.by2i32, "sides", 2, if (comptime mode.in()) &value.sides);
+                sd.begin("user");
                 const user = try User.serdes(mode, sd, if (comptime mode.in()) &value.user, &.{ .gpa = gpa });
+                sd.end();
                 if (comptime mode.out()) {
                     pool.set(handle, .{
                         .ptr = .{
@@ -300,6 +305,8 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                     });
                 }
             }
+            sd.end();
+
             const outcome = try pool.end();
             if (comptime mode.out()) {
                 var result: @This() = .{
