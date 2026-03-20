@@ -476,7 +476,7 @@ const Game = struct {
         errdefer gpa.free(serialized);
         {
             var sd: util.SerializeDeserialize.Value(.serialize) = .initSerializer(serialized);
-            try this.serdes(.serialize, &sd, {});
+            try this.serdes(.serialize, &sd, &.{ .gpa = this.map.gpa });
         }
         return serialized;
     }
