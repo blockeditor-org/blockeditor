@@ -231,6 +231,14 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             var iter = vec.Iterator(2, i32).minMaxInclusive(segment_in.sides[0], segment_in.sides[1]);
             while (iter.next()) |pos| try this.syncSegments(context, pos);
         }
+        pub fn deleteSegment(this: *@This(), context: Context, min: vec.by2i32, max: vec.by2i32) !void {
+            // - split at min
+            // - split at max
+            try this.trySplitSegments(context, min);
+            try this.trySplitSegments(context, max);
+            // - now iterate and remove
+            @compileError("TODO");
+        }
         pub fn syncSegments(this: *@This(), context: Context, pos: vec.by2i32) !void {
             try this.trySplitSegments(context, pos);
             try this.tryMergeSegments(context, pos);
