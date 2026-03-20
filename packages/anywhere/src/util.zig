@@ -433,7 +433,31 @@ pub const FixedTimestep = struct {
 };
 
 pub const SerializeDeserialize = struct {
-    pub const Mode = enum { count, serialize, deserialize };
+    pub const Mode = enum {
+        count,
+        serialize,
+        deserialize,
+        pub fn in(comptime self: Mode) bool {
+            return self != .deserialize;
+        }
+        pub fn out(comptime self: Mode) bool {
+            return self == .deserialize;
+        }
+        pub fn In(comptime self: Mode, comptime T: type) type {
+            if (self.in()) return T;
+            return void;
+        }
+        pub fn Out(comptime self: Mode, comptime T: type) type {
+            if (self.out()) return T;
+            return void;
+        }
+        pub fn Value(comptime self: Mode) type {
+            return SerializeDeserialize.Value(self);
+        }
+        pub fn Extra(comptime self: Mode, comptime ExtraValue: type) type {
+            return SerializeDeserialize.Extra(self, ExtraValue);
+        }
+    };
 
     pub fn Extra(comptime mode: Mode, comptime Child: type) type {
         return switch (mode) {
@@ -444,6 +468,8 @@ pub const SerializeDeserialize = struct {
     }
     pub fn Value(comptime mode: Mode) type {
         return struct {
+            // we can make multiple modes
+            // human-readable, binary, ...etc
             internal: switch (mode) {
                 .count => struct {
                     count: usize,
@@ -454,6 +480,7 @@ pub const SerializeDeserialize = struct {
                 },
                 .deserialize => struct {
                     src_txt: []const u8,
+                    arena: *std.heap.ArenaAllocator,
                 },
             },
 
@@ -463,13 +490,13 @@ pub const SerializeDeserialize = struct {
             pub fn initSerializer(out: []u8) Value(.serialize) {
                 return .{ .internal = .{ .res = out } };
             }
-            pub fn initDeserializer(src: []const u8) Value(.deserialize) {
-                return .{ .internal = .{ .src_txt = src } };
+            pub fn initDeserializer(src: []const u8, arena: *std.heap.ArenaAllocator) Value(.deserialize) {
+                return .{ .internal = .{ .src_txt = src, .arena = arena } };
             }
 
             pub const ErrorSet = switch (mode) {
                 .count, .serialize => error{},
-                .deserialize => error{DeserializeError},
+                .deserialize => error{ DeserializeError, OutOfMemory },
             };
 
             fn _set(self: *@This(), n: usize) []u8 {
@@ -498,30 +525,73 @@ pub const SerializeDeserialize = struct {
                 return res;
             }
 
-            fn hasUniqueRepresentation(comptime Type: type) bool {
+            fn canDumpBytes(comptime Type: type) bool {
                 if (@typeInfo(Type) == .float) return true;
+                if (@typeInfo(Type) == .pointer) return false;
                 return std.meta.hasUniqueRepresentation(Type);
+                // yikes, this will return true for struct { a: *T }.
+                // problem 1: structs don't have a defined layout unless they're 'extern'
+                // problem 2: certainly can't serialize a pointer
             }
 
+            // pub fn begin(name)
+            // pub fn end()
+            // pub fn value(name: ...)
+
             pub fn value(self: *@This(), comptime Type: type, v: switch (mode) {
-                .serialize => Type,
+                .count, .serialize => Type,
                 else => void,
             }) ErrorSet!switch (mode) {
                 .deserialize => Type,
                 else => void,
             } {
-                comptime std.debug.assert(hasUniqueRepresentation(Type));
-                const ret = try self.slice(Type, 1, if (mode == .serialize) (&v)[0..1]);
-                if (mode == .deserialize) return ret[0];
+                if (comptime !canDumpBytes(Type)) {
+                    switch (@typeInfo(Type)) {
+                        .vector => |info| {
+                            var result: Type = undefined;
+                            inline for (0..info.len) |i| {
+                                const item = try self.value(info.child, if (mode != .deserialize) v[i]);
+                                if (mode == .deserialize) result[i] = item;
+                            }
+                            return if (mode == .deserialize) result;
+                        },
+                        .@"struct" => |info| {
+                            if (info.layout == .@"packed") @compileLog("sizeof", @sizeOf(Type) * 8, "bitSizeOf", @bitSizeOf(Type), "forType", @typeName(Type));
+                            @compileLog("layout", @tagName(info.layout), "forStruct", @typeName(Type), "hua", canDumpBytes(Type));
+                        },
+                        .@"enum" => |info| {
+                            const item = try self.value(info.tag_type, if (mode != .deserialize) @as(info.tag_type, @intFromEnum(info)));
+                            return if (mode == .deserialize) std.meta.intToEnum(Type, item) catch return error.DeserializeError;
+                        },
+                        .int => |info| {
+                            const item = try self.value(@Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } }), if (mode != .deserialize) v);
+                            return if (mode == .deserialize) std.math.cast(Type, item) catch return error.DeserializeError;
+                        },
+                        else => {},
+                    }
+                    @compileError("!hasUniqueRepresentation: " ++ @typeName(Type) ++ " / because " ++ @tagName(@typeInfo(Type)));
+                }
+
+                const ret = try self.slice(Type, 1, if (mode != .deserialize) (&v)[0..1]);
+                return if (mode == .deserialize) ret[0];
             }
             pub fn slice(self: *@This(), comptime Entry: type, len: usize, v: switch (mode) {
-                .serialize => []const Entry,
+                .count, .serialize => []const Entry,
                 else => void,
             }) ErrorSet!switch (mode) {
                 .deserialize => []align(1) const Entry,
                 else => void,
             } {
-                comptime std.debug.assert(hasUniqueRepresentation(Entry));
+                if (!canDumpBytes(Entry)) {
+                    // need to do a manual array dump
+                    // for deserialize this also means allocating a temporary slice which is not ideal
+                    const result = if (mode == .deserialize) try self.internal.arena.allocator().alloc(Entry, len);
+                    for (0..len) |index| {
+                        const item = try self.value(Entry, if (mode != .deserialize) v[index]);
+                        if (mode == .deserialize) result[index] = item;
+                    }
+                    return result;
+                }
                 switch (mode) {
                     .count => {
                         self.internal.count += len * @sizeOf(Entry);
@@ -537,14 +607,14 @@ pub const SerializeDeserialize = struct {
                 }
             }
             pub fn sliceAutoLen(self: *@This(), comptime Entry: type, v: switch (mode) {
-                .serialize => []const Entry,
+                .serialize, .count => []const Entry,
                 else => void,
             }) ErrorSet!switch (mode) {
                 .deserialize => []align(1) const Entry,
                 else => void,
             } {
-                const len = self.value(usize, if (mode == .serialize) v.len);
-                return self.slice(Entry, len, v);
+                const len = try self.value(usize, if (mode != .deserialize) v.len);
+                return self.slice(Entry, if (mode == .deserialize) len else v.len, v);
             }
         };
     }
