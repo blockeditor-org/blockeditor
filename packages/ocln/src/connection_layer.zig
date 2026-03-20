@@ -7,6 +7,7 @@ const zpool = anywhere.util.zpool;
 const print = @import("print.zig");
 const loadimage = @import("loadimage");
 const vec = util.vec;
+const main = @import("main.zig");
 
 const segment_ref_count = 4;
 
@@ -22,7 +23,6 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             /// sides[0] <= sides[1]. sides[0] != sides[1]. (min[0] == max[0]) != (min[1] == max[1])
             sides: [2]vec.by2i32,
             user: User,
-            value: f64 = 0,
 
             pub fn direction(this: *const Segment) enum { x, y } {
                 const s1, const s2 = this.sides;
@@ -273,6 +273,46 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             if (lhs_ptr.sides[1][0] < rhs_ptr.sides[1][0]) return true;
             if (lhs_ptr.sides[1][0] > rhs_ptr.sides[1][0]) return false;
             unreachable; // there shouldn't be multiple identical segments in the list. uh oh!
+        }
+
+        pub fn serdes(comptime mode: util.SerializeDeserialize.Mode, sd: *mode.Value(), v: mode.In(*@This()), gpa: std.mem.Allocator) !mode.Out(@This()) {
+            var pool: main.PoolSerdes(SegmentPool, mode) = try .begin(sd, &.{ .gpa = gpa }, if (comptime mode.in()) &v.segments);
+            defer pool.deinit(&.{ .gpa = gpa });
+
+            while (pool.serdesNext()) |handle| {
+                const value = if (comptime mode.in()) v.segments.getColumnPtrAssumeLive(handle, .ptr);
+                const sides = try sd.slice(vec.by2i32, 2, if (comptime mode.in()) &value.sides);
+                const user = try User.serdes(mode, sd, if (comptime mode.in()) &value.user, &.{ .gpa = gpa });
+                if (comptime mode.out()) {
+                    pool.set(handle, .{
+                        .ptr = .{
+                            .sides = .{ sides[0], sides[1] },
+                            .user = user,
+                        },
+                    });
+                }
+            }
+            const outcome = try pool.end();
+            if (comptime mode.out()) {
+                var result: @This() = .{
+                    .gpa = gpa,
+                    .coordinate_to_segments_map = .empty,
+                    .segments = outcome,
+                };
+                // keep coordinate_to_segments_map synced
+                var iter = outcome.liveHandles();
+                while (iter.next()) |handle| {
+                    const seg: *Segment = outcome.getColumnPtrAssumeLive(handle, .ptr);
+                    try result.setSegmentRefRange(seg.sides[0], seg.sides[1], .nil, handle);
+                }
+                return result;
+            }
+            // serialize:
+            // - for segment of segments
+            //   - write(sides, value, userCb(User))
+            // deserialize:
+            // - for segment of segments
+            //   - createSegment(segment). TODO: do this safely
         }
     };
 }

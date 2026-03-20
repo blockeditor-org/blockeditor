@@ -226,7 +226,7 @@ const Renderer = struct {
             const loop_id = loop_id_outer.value(@src(), segment_handle);
             const segment: *Wires.Segment = game.map.wires.segments.getColumnPtrAssumeLive(segment_handle, .ptr);
             // render text halfway between the sides
-            const rounded = @round(segment.value * 100) / 100;
+            const rounded = @round(segment.user.value * 100) / 100;
             const arrow = switch (std.math.order(rounded, 0)) {
                 .lt => switch (segment.direction()) {
                     .x => "l", //"←",
@@ -725,7 +725,7 @@ const Game = struct {
 
             for (links.items(.link), links.items(.handle)) |*link, handle| {
                 const connection: *Wires.Segment = game.map.wires.segments.getColumnPtrAssumeLive(handle, .ptr);
-                connection.value = link.value;
+                connection.user.value = link.value;
             }
         }
     };
@@ -996,8 +996,13 @@ const TileFlags = packed struct(u32) {
 };
 
 const Wires = ConnectionLayer(struct {
+    value: f64 = 0,
     pub fn canMergeWith(_: *const @This(), _: *const @This()) bool {
-        return true; // TODO
+        return true; // TODO: based on wire type
+    }
+    pub fn serdes(comptime mode: util.SerializeDeserialize.Mode, sd: *mode.Value(), self: mode.In(*@This()), _: mode.Extra(GameSerializeExtra)) !mode.Out(@This()) {
+        const value = try sd.value(f64, if (comptime mode.in()) self.value);
+        if (comptime mode.out()) return .{ .value = value };
     }
 }, struct {
     map: *Map,
@@ -1028,7 +1033,7 @@ const Priority = struct {
 };
 const PriorityPool = zpool.Pool(16, 16, Priority, struct { ptr: Priority, level: PriorityLevel });
 
-fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode) type {
+pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode) type {
     return struct {
         const PS = @This();
         index: usize,
@@ -1040,6 +1045,7 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
             .deserialize => struct {
                 index_to_handle_map: std.ArrayListUnmanaged(Pool.Handle),
                 pool: Pool,
+                ended: bool = false,
             },
         },
 
@@ -1112,7 +1118,8 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
         pub fn end(self: *PS) !mode.Out(Pool) {
             std.debug.assert(self.index == self.count); // need to loop over serdesNext() before calling end
             if (comptime mode.out()) {
-                defer self.internal.pool = .init(self.internal.pool._allocator);
+                std.debug.assert(!self.internal.ended);
+                self.internal.ended = true;
                 return self.internal.pool;
             }
         }
@@ -1121,7 +1128,7 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
                 .count, .serialize => self.internal.handle_to_index_map.deinit(extra.gpa),
                 .deserialize => {
                     self.internal.index_to_handle_map.deinit(extra.gpa);
-                    self.internal.pool.deinit();
+                    if (!self.internal.ended) self.internal.pool.deinit();
                 },
             }
         }
@@ -1138,7 +1145,7 @@ const Map = struct {
     priority_pool: PriorityPool,
     pos_to_building: std.AutoArrayHashMapUnmanaged(vec.by2i32, BuildingPool.Handle),
     wires: Wires,
-    players: PlayerPool,
+    creatures: PlayerPool,
 
     pub fn init(this: *Map, gpa: std.mem.Allocator) void {
         this.* = .{
@@ -1148,7 +1155,7 @@ const Map = struct {
             .materials = .empty,
             .tile_flags = .empty,
             .wires = .init(gpa),
-            .players = .init(gpa),
+            .creatures = .init(gpa),
             .pos_to_building = .empty,
             .building_pool = .init(gpa),
             .priority_pool = .init(gpa),
@@ -1161,7 +1168,7 @@ const Map = struct {
         this.building_pool.deinit();
         this.priority_pool.deinit();
         this.wires.deinit();
-        this.players.deinit();
+        this.creatures.deinit();
     }
     pub fn serdes(
         item: *Map,
@@ -1209,6 +1216,8 @@ const Map = struct {
         }
         const priority_pool = try priority_pool_handler.end();
 
+        const wires = try Wires.serdes(mode, sd, if (comptime mode.in()) &item.wires, extra.gpa);
+
         // so for serializing those lists we will have to loop over the lists probably
         // and then for serializing the pools we have to decide:
         // - we can reindex them, by keeping a pool reindexer hashmap
@@ -1225,13 +1234,12 @@ const Map = struct {
             .tile_flags = .fromSizeSlice(tile_flags_size, try dupeMisaligned(extra.gpa, TileFlags, tile_flags_slice)),
             .priority_pool = priority_pool,
             .building_pool = building_pool,
+            .wires = wires,
 
             // TODO: generate this based on building_pool
             .pos_to_building = .empty,
-            // TODO: connection_layer serdes
-            .wires = .init(extra.gpa),
-            // TODO: connection_layer serdes
-            .players = .init(extra.gpa),
+            // TODO
+            .creatures = .init(extra.gpa),
         };
     }
     fn dupeMisaligned(allocator: std.mem.Allocator, comptime T: type, m: []align(1) const T) ![]T {
