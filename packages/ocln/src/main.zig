@@ -1046,10 +1046,7 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
         pub fn begin(
             sd: *mode.Value(),
             extra: mode.Extra(GameSerializeExtra),
-            out: switch (mode) {
-                .count, .serialize => *Pool,
-                .deserialize => void,
-            },
+            out: mode.In(*Pool),
         ) !PS {
             const count = try sd.value(usize, if (comptime mode.in()) out.liveHandleCount());
             switch (mode) {
@@ -1112,10 +1109,7 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
             comptime std.debug.assert(mode.out());
             self.internal.pool.setColumnsAssumeLive(handle, value);
         }
-        pub fn end(self: *PS) !switch (mode) {
-            .deserialize => Pool,
-            else => void,
-        } {
+        pub fn end(self: *PS) !mode.Out(Pool) {
             std.debug.assert(self.index == self.count); // need to loop over serdesNext() before calling end
             if (comptime mode.out()) {
                 defer self.internal.pool = .init(self.internal.pool._allocator);

@@ -542,13 +542,7 @@ pub const SerializeDeserialize = struct {
             // pub fn end()
             // pub fn value(name: ...)
 
-            pub fn value(self: *@This(), comptime Type: type, v: switch (mode) {
-                .count, .serialize => Type,
-                else => void,
-            }) ErrorSet!switch (mode) {
-                .deserialize => Type,
-                else => void,
-            } {
+            pub fn value(self: *@This(), comptime Type: type, v: mode.In(Type)) ErrorSet!mode.Out(Type) {
                 if (comptime !canDumpBytes(Type)) {
                     switch (@typeInfo(Type)) {
                         .vector => |info| {
@@ -579,13 +573,7 @@ pub const SerializeDeserialize = struct {
                 const ret = try self.slice(Type, 1, if (comptime mode.in()) (&v)[0..1]);
                 return if (comptime mode.out()) ret[0];
             }
-            pub fn slice(self: *@This(), comptime Entry: type, len: usize, v: switch (mode) {
-                .count, .serialize => []const Entry,
-                else => void,
-            }) ErrorSet!switch (mode) {
-                .deserialize => []align(1) const Entry,
-                else => void,
-            } {
+            pub fn slice(self: *@This(), comptime Entry: type, len: usize, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
                 if (!canDumpBytes(Entry)) {
                     // need to do a manual array dump
                     // for deserialize this also means allocating a temporary slice which is not ideal
@@ -610,13 +598,7 @@ pub const SerializeDeserialize = struct {
                     },
                 }
             }
-            pub fn sliceAutoLen(self: *@This(), comptime Entry: type, v: switch (mode) {
-                .serialize, .count => []const Entry,
-                else => void,
-            }) ErrorSet!switch (mode) {
-                .deserialize => []align(1) const Entry,
-                else => void,
-            } {
+            pub fn sliceAutoLen(self: *@This(), comptime Entry: type, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
                 const len = try self.value(usize, if (comptime mode.in()) v.len);
                 return self.slice(Entry, if (comptime mode.out()) len else v.len, v);
             }
