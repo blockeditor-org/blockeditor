@@ -438,10 +438,14 @@ pub const SerializeDeserialize = struct {
         serialize,
         deserialize,
         pub fn in(comptime self: Mode) bool {
-            return self != .deserialize;
+            comptime {
+                return self != .deserialize;
+            }
         }
         pub fn out(comptime self: Mode) bool {
-            return self == .deserialize;
+            comptime {
+                return self == .deserialize;
+            }
         }
         pub fn In(comptime self: Mode, comptime T: type) type {
             if (self.in()) return T;
@@ -550,30 +554,30 @@ pub const SerializeDeserialize = struct {
                         .vector => |info| {
                             var result: Type = undefined;
                             inline for (0..info.len) |i| {
-                                const item = try self.value(info.child, if (mode != .deserialize) v[i]);
-                                if (mode == .deserialize) result[i] = item;
+                                const item = try self.value(info.child, if (comptime mode.in()) v[i]);
+                                if (comptime mode.out()) result[i] = item;
                             }
-                            return if (mode == .deserialize) result;
+                            return if (comptime mode.out()) result;
                         },
                         .@"struct" => |info| {
                             if (info.layout == .@"packed") @compileLog("sizeof", @sizeOf(Type) * 8, "bitSizeOf", @bitSizeOf(Type), "forType", @typeName(Type));
                             @compileLog("layout", @tagName(info.layout), "forStruct", @typeName(Type), "hua", canDumpBytes(Type));
                         },
                         .@"enum" => |info| {
-                            const item = try self.value(info.tag_type, if (mode != .deserialize) @as(info.tag_type, @intFromEnum(info)));
-                            return if (mode == .deserialize) std.meta.intToEnum(Type, item) catch return error.DeserializeError;
+                            const item = try self.value(info.tag_type, if (comptime mode.in()) @as(info.tag_type, @intFromEnum(info)));
+                            return if (comptime mode.out()) std.meta.intToEnum(Type, item) catch return error.DeserializeError;
                         },
                         .int => |info| {
-                            const item = try self.value(@Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } }), if (mode != .deserialize) v);
-                            return if (mode == .deserialize) std.math.cast(Type, item) catch return error.DeserializeError;
+                            const item = try self.value(@Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } }), if (comptime mode.in()) v);
+                            return if (comptime mode.out()) std.math.cast(Type, item) catch return error.DeserializeError;
                         },
                         else => {},
                     }
                     @compileError("!hasUniqueRepresentation: " ++ @typeName(Type) ++ " / because " ++ @tagName(@typeInfo(Type)));
                 }
 
-                const ret = try self.slice(Type, 1, if (mode != .deserialize) (&v)[0..1]);
-                return if (mode == .deserialize) ret[0];
+                const ret = try self.slice(Type, 1, if (comptime mode.in()) (&v)[0..1]);
+                return if (comptime mode.out()) ret[0];
             }
             pub fn slice(self: *@This(), comptime Entry: type, len: usize, v: switch (mode) {
                 .count, .serialize => []const Entry,
@@ -585,10 +589,10 @@ pub const SerializeDeserialize = struct {
                 if (!canDumpBytes(Entry)) {
                     // need to do a manual array dump
                     // for deserialize this also means allocating a temporary slice which is not ideal
-                    const result = if (mode == .deserialize) try self.internal.arena.allocator().alloc(Entry, len);
+                    const result = if (comptime mode.out()) try self.internal.arena.allocator().alloc(Entry, len);
                     for (0..len) |index| {
-                        const item = try self.value(Entry, if (mode != .deserialize) v[index]);
-                        if (mode == .deserialize) result[index] = item;
+                        const item = try self.value(Entry, if (comptime mode.in()) v[index]);
+                        if (comptime mode.out()) result[index] = item;
                     }
                     return result;
                 }
@@ -613,8 +617,8 @@ pub const SerializeDeserialize = struct {
                 .deserialize => []align(1) const Entry,
                 else => void,
             } {
-                const len = try self.value(usize, if (mode != .deserialize) v.len);
-                return self.slice(Entry, if (mode == .deserialize) len else v.len, v);
+                const len = try self.value(usize, if (comptime mode.in()) v.len);
+                return self.slice(Entry, if (comptime mode.out()) len else v.len, v);
             }
         };
     }

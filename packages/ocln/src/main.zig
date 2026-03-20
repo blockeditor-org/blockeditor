@@ -365,10 +365,10 @@ const Camera = struct {
         extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
     ) !void {
         _ = extra;
-        const scale = try sd.value(f32, if (mode != .deserialize) item.scale);
-        const centered_on_pos_0 = try sd.value(f32, if (mode != .deserialize) item.centered_on_pos[0]);
-        const centered_on_pos_1 = try sd.value(f32, if (mode != .deserialize) item.centered_on_pos[1]);
-        if (mode == .deserialize) item.* = .{
+        const scale = try sd.value(f32, if (comptime mode.in()) item.scale);
+        const centered_on_pos_0 = try sd.value(f32, if (comptime mode.in()) item.centered_on_pos[0]);
+        const centered_on_pos_1 = try sd.value(f32, if (comptime mode.in()) item.centered_on_pos[1]);
+        if (comptime mode.out()) item.* = .{
             .scale = scale,
             .centered_on_pos = .{ centered_on_pos_0, centered_on_pos_1 },
         };
@@ -1051,7 +1051,7 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
                 .deserialize => void,
             },
         ) !PS {
-            const count = try sd.value(usize, if (mode != .deserialize) out.liveHandleCount());
+            const count = try sd.value(usize, if (comptime mode.in()) out.liveHandleCount());
             switch (mode) {
                 .count, .serialize => {
                     var result: PS = .{ .count = out.liveHandleCount(), .index = 0, .internal = .{ .handle_to_index_map = .empty } };
@@ -1086,14 +1086,14 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
             v: mode.In(Pool.Handle),
         ) !mode.Out(Pool.Handle) {
             _ = extra;
-            const index = try sd.value(u64, if (mode != .deserialize) blk: {
+            const index = try sd.value(u64, if (comptime mode.in()) blk: {
                 if (self.internal.handle_to_index_map.getIndex(v)) |idx| {
                     break :blk idx + 1;
                 } else {
                     break :blk 0;
                 }
             });
-            if (mode == .deserialize) {
+            if (comptime mode.out()) {
                 if (index == 0) return .nil;
                 if (self.internal.index_to_handle_map.items.len < index - 1) return error.DeserializeError;
                 return self.internal.index_to_handle_map.items[index - 1];
@@ -1109,7 +1109,7 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
             };
         }
         pub fn set(self: *PS, handle: Pool.Handle, value: Pool.Columns) void {
-            comptime std.debug.assert(mode == .deserialize);
+            comptime std.debug.assert(mode.out());
             self.internal.pool.setColumnsAssumeLive(handle, value);
         }
         pub fn end(self: *PS) !switch (mode) {
@@ -1117,7 +1117,7 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
             else => void,
         } {
             std.debug.assert(self.index == self.count); // need to loop over serdesNext() before calling end
-            if (mode == .deserialize) {
+            if (comptime mode.out()) {
                 defer self.internal.pool = .init(self.internal.pool._allocator);
                 return self.internal.pool;
             }
@@ -1175,28 +1175,28 @@ const Map = struct {
         sd: *util.SerializeDeserialize.Value(mode),
         extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
     ) !void {
-        if (mode == .deserialize) item.gpa = extra.gpa;
-        const size_int = try sd.value(math.vec2i32, if (mode != .deserialize) item.size_int);
-        const size_usize = try sd.value(math.vec2usize, if (mode != .deserialize) item.size_usize);
+        if (comptime mode.out()) item.gpa = extra.gpa;
+        const size_int = try sd.value(math.vec2i32, if (comptime mode.in()) item.size_int);
+        const size_usize = try sd.value(math.vec2usize, if (comptime mode.in()) item.size_usize);
 
-        var building_pool_handler: PoolSerdes(BuildingPool, mode) = try .begin(sd, extra, if (mode != .deserialize) &item.building_pool);
+        var building_pool_handler: PoolSerdes(BuildingPool, mode) = try .begin(sd, extra, if (comptime mode.in()) &item.building_pool);
         defer building_pool_handler.deinit(extra);
-        var priority_pool_handler: PoolSerdes(PriorityPool, mode) = try .begin(sd, extra, if (mode != .deserialize) &item.priority_pool);
+        var priority_pool_handler: PoolSerdes(PriorityPool, mode) = try .begin(sd, extra, if (comptime mode.in()) &item.priority_pool);
         defer priority_pool_handler.deinit(extra);
 
-        const materials_size = try sd.value(math.vec3usize, if (mode != .deserialize) item.materials.size);
-        const materials_slice = try sd.sliceAutoLen(Material, if (mode != .deserialize) item.materials.items);
+        const materials_size = try sd.value(math.vec3usize, if (comptime mode.in()) item.materials.size);
+        const materials_slice = try sd.sliceAutoLen(Material, if (comptime mode.in()) item.materials.items);
 
-        const tile_flags_size = try sd.value(math.vec2usize, if (mode != .deserialize) item.tile_flags.size);
-        const tile_flags_slice = try sd.sliceAutoLen(TileFlags, if (mode != .deserialize) item.tile_flags.items);
+        const tile_flags_size = try sd.value(math.vec2usize, if (comptime mode.in()) item.tile_flags.size);
+        const tile_flags_slice = try sd.sliceAutoLen(TileFlags, if (comptime mode.in()) item.tile_flags.items);
 
         while (building_pool_handler.serdesNext()) |handle| {
-            const building = if (mode != .deserialize) item.building_pool.getColumnPtrAssumeLive(handle, .ptr);
-            const tag = try sd.value(buildings.BuildingTag, if (mode != .deserialize) building.tag);
-            const center = try sd.value(math.vec2i32, if (mode != .deserialize) building.center);
-            const energy_priority = try priority_pool_handler.serdesHandle(sd, extra, if (mode != .deserialize) building.energy_priority);
+            const building = if (comptime mode.in()) item.building_pool.getColumnPtrAssumeLive(handle, .ptr);
+            const tag = try sd.value(buildings.BuildingTag, if (comptime mode.in()) building.tag);
+            const center = try sd.value(math.vec2i32, if (comptime mode.in()) building.center);
+            const energy_priority = try priority_pool_handler.serdesHandle(sd, extra, if (comptime mode.in()) building.energy_priority);
 
-            if (mode == .deserialize) building_pool_handler.set(handle, .{ .ptr = .{
+            if (comptime mode.out()) building_pool_handler.set(handle, .{ .ptr = .{
                 .tag = tag,
                 .center = center,
                 .data = null,
@@ -1207,8 +1207,8 @@ const Map = struct {
         const building_pool = try building_pool_handler.end();
 
         while (priority_pool_handler.serdesNext()) |handle| {
-            const level = try sd.value(PriorityLevel, if (mode != .deserialize) item.getPriorityLevel(handle));
-            if (mode == .deserialize) priority_pool_handler.set(handle, .{
+            const level = try sd.value(PriorityLevel, if (comptime mode.in()) item.getPriorityLevel(handle));
+            if (comptime mode.out()) priority_pool_handler.set(handle, .{
                 .ptr = .{ .name = "" },
                 .level = level,
             });
@@ -1223,7 +1223,7 @@ const Map = struct {
         //   - when we serialize a handle, we take the pool indexer struct. it says handle -> index, or index -> handle
         //   -
 
-        if (mode == .deserialize) item.* = .{
+        if (comptime mode.out()) item.* = .{
             .gpa = extra.gpa,
             .size_int = size_int,
             .size_usize = size_usize,
