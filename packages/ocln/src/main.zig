@@ -361,8 +361,8 @@ const Camera = struct {
     pub fn serdes(
         item: *Camera,
         comptime mode: util.SerializeDeserialize.Mode,
-        sd: *util.SerializeDeserialize.Value(mode),
-        extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+        sd: *mode.Value(),
+        extra: mode.Extra(GameSerializeExtra),
     ) !void {
         _ = extra;
         const scale = try sd.value(f32, if (comptime mode.in()) item.scale);
@@ -381,8 +381,8 @@ const Interface = struct {
     pub fn serdes(
         item: *Interface,
         comptime mode: util.SerializeDeserialize.Mode,
-        sd: *util.SerializeDeserialize.Value(mode),
-        extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+        sd: *mode.Value(),
+        extra: mode.Extra(GameSerializeExtra),
     ) !void {
         try item.camera.serdes(mode, sd, extra);
     }
@@ -425,8 +425,8 @@ const Game = struct {
     pub fn serdes(
         item: *Game,
         comptime mode: util.SerializeDeserialize.Mode,
-        value: *util.SerializeDeserialize.Value(mode),
-        extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+        value: *mode.Value(),
+        extra: mode.Extra(GameSerializeExtra),
     ) !void {
         try item.interface.serdes(mode, value, extra);
         try item.map.serdes(mode, value, extra);
@@ -1044,8 +1044,8 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
         },
 
         pub fn begin(
-            sd: *util.SerializeDeserialize.Value(mode),
-            extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+            sd: *mode.Value(),
+            extra: mode.Extra(GameSerializeExtra),
             out: switch (mode) {
                 .count, .serialize => *Pool,
                 .deserialize => void,
@@ -1081,8 +1081,8 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
         }
         pub fn serdesHandle(
             self: *PS,
-            sd: *util.SerializeDeserialize.Value(mode),
-            extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+            sd: *mode.Value(),
+            extra: mode.Extra(GameSerializeExtra),
             v: mode.In(Pool.Handle),
         ) !mode.Out(Pool.Handle) {
             _ = extra;
@@ -1122,7 +1122,7 @@ fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode
                 return self.internal.pool;
             }
         }
-        pub fn deinit(self: *PS, extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra)) void {
+        pub fn deinit(self: *PS, extra: mode.Extra(GameSerializeExtra)) void {
             switch (mode) {
                 .count, .serialize => self.internal.handle_to_index_map.deinit(extra.gpa),
                 .deserialize => {
@@ -1172,8 +1172,8 @@ const Map = struct {
     pub fn serdes(
         item: *Map,
         comptime mode: util.SerializeDeserialize.Mode,
-        sd: *util.SerializeDeserialize.Value(mode),
-        extra: util.SerializeDeserialize.Extra(mode, GameSerializeExtra),
+        sd: *mode.Value(),
+        extra: mode.Extra(GameSerializeExtra),
     ) !void {
         if (comptime mode.out()) item.gpa = extra.gpa;
         const size_int = try sd.value(math.vec2i32, if (comptime mode.in()) item.size_int);
