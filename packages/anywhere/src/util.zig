@@ -472,6 +472,11 @@ pub const SerializeDeserialize = struct {
     }
     pub fn Value(comptime mode: Mode) type {
         return struct {
+            const style: enum {
+                binary,
+                readable,
+            } = .readable;
+
             // we can make multiple modes
             // human-readable, binary, ...etc
             internal: switch (mode) {
@@ -487,15 +492,19 @@ pub const SerializeDeserialize = struct {
                     arena: *std.heap.ArenaAllocator,
                 },
             },
+            readable: struct {
+                indent: usize,
+                any_contents: bool,
+            },
 
             pub fn initCounter() Value(.count) {
-                return .{ .internal = .{ .count = 0 } };
+                return .{ .internal = .{ .count = 0 }, .readable = .{ .indent = 0, .any_contents = false } };
             }
             pub fn initSerializer(out: []u8) Value(.serialize) {
-                return .{ .internal = .{ .res = out } };
+                return .{ .internal = .{ .res = out }, .readable = .{ .indent = 0, .any_contents = false } };
             }
             pub fn initDeserializer(src: []const u8, arena: *std.heap.ArenaAllocator) Value(.deserialize) {
-                return .{ .internal = .{ .src_txt = src, .arena = arena } };
+                return .{ .internal = .{ .src_txt = src, .arena = arena }, .readable = .{ .indent = 0, .any_contents = false } };
             }
 
             pub const ErrorSet = switch (mode) {
@@ -538,26 +547,49 @@ pub const SerializeDeserialize = struct {
                 // problem 2: certainly can't serialize a pointer
             }
 
-            pub fn begin(self: *@This(), name: []const u8) void {
-                _ = self;
-                _ = name;
+            fn rawString(self: *@This(), str: []const u8) ErrorSet!void {
+                switch (mode) {
+                    .count => self.internal.count += str.len,
+                    .serialize => @memcpy(self._set(str.len), str),
+                    .deserialize => {
+                        const val = try self._get(str.len);
+                        if (!std.mem.eql(u8, str, val)) return error.DeserializeError;
+                    },
+                }
             }
-            pub fn end(self: *@This()) void {
-                _ = self;
+            pub fn begin(self: *@This(), name: []const u8) ErrorSet!void {
+                if (style == .binary) return;
+                try self.rawString("\n");
+                for (0..self.readable.indent) |_| try self.rawString("  ");
+                try self.rawString(name);
+                try self.rawString(":");
+                self.readable.indent += 1;
+                self.readable.any_contents = false;
+            }
+            pub fn end(self: *@This()) !void {
+                if (style == .binary) return;
+                if (!self.readable.any_contents) {
+                    try self.rawString("\n");
+                    for (0..self.readable.indent) |_| try self.rawString("  ");
+                    try self.rawString("(no items)");
+                }
+                self.readable.indent -= 1;
+                self.readable.any_contents = true;
             }
 
             pub fn value(self: *@This(), comptime Type: type, name: []const u8, v: mode.In(Type)) ErrorSet!mode.Out(Type) {
-                if (comptime !canDumpBytes(Type)) {
+                if (comptime (style == .binary and !canDumpBytes(Type))) {
                     switch (@typeInfo(Type)) {
                         .vector => |info| {
-                            self.begin(name);
-                            defer self.end();
+                            try self.begin(name);
 
                             var result: Type = undefined;
                             inline for (0..info.len) |i| {
                                 const item = try self.value(info.child, std.fmt.comptimePrint("{d}", .{i}), if (comptime mode.in()) v[i]);
                                 if (comptime mode.out()) result[i] = item;
                             }
+
+                            try self.end();
                             return if (comptime mode.out()) result;
                         },
                         .@"enum" => |info| {
@@ -573,24 +605,62 @@ pub const SerializeDeserialize = struct {
                     @compileError("!hasUniqueRepresentation: " ++ @typeName(Type) ++ " / because " ++ @tagName(@typeInfo(Type)));
                 }
 
-                self.begin(name);
-                defer self.end();
+                if (style == .readable) {
+                    try self.begin(name);
 
+                    self.readable.any_contents = true;
+                    try self.rawString(" "); // seperate adjacent json values
+
+                    const res = switch (mode) {
+                        .count => {
+                            var buf: [512]u8 = undefined;
+                            var w: std.Io.Writer.Discarding = .init(&buf);
+                            var jw: std.json.Stringify = .{ .writer = &w.writer, .options = .{ .whitespace = .minified } };
+                            jw.write(v) catch @panic("write error 1");
+                            self.internal.count += w.fullCount();
+                        },
+                        .serialize => {
+                            var w: std.Io.Writer = .fixed(self.internal.res);
+                            var jw: std.json.Stringify = .{ .writer = &w, .options = .{ .whitespace = .minified } };
+                            jw.write(v) catch @panic("write error 2");
+                            self.internal.res = w.unusedCapacitySlice();
+                        },
+                        .deserialize => blk: {
+                            var buf: [512]u8 = undefined;
+                            var alloc = std.heap.FixedBufferAllocator.init(&buf);
+                            var scanner = std.json.Scanner.initCompleteInput(alloc.allocator(), self.internal.src_txt);
+                            const parsed = std.json.innerParse(Type, alloc.allocator(), &scanner, .{
+                                .max_value_len = self.internal.src_txt.len,
+                            }) catch return error.DeserializeError;
+                            self.internal.src_txt = scanner.input[scanner.cursor..];
+                            break :blk parsed;
+                        },
+                    };
+
+                    try self.end();
+                    return res;
+                }
+
+                try self.begin(name);
                 const ret = try self.slice(Type, "value", 1, if (comptime mode.in()) (&v)[0..1]);
+                try self.end();
                 return if (comptime mode.out()) ret[0];
             }
             pub fn slice(self: *@This(), comptime Entry: type, name: []const u8, len: usize, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
-                self.begin(name);
-                defer self.end();
+                if (comptime (style == .readable or !canDumpBytes(Entry))) {
+                    try self.begin(name);
 
-                if (!canDumpBytes(Entry)) {
                     // need to do a manual array dump
                     // for deserialize this also means allocating a temporary slice which is not ideal
                     const result = if (comptime mode.out()) try self.internal.arena.allocator().alloc(Entry, len);
                     for (0..len) |index| {
-                        const item = try self.value(Entry, "{d}", if (comptime mode.in()) v[index]);
+                        var buf: [32]u8 = undefined;
+                        const buflen: usize = if (style == .readable) std.fmt.printInt(&buf, index, 10, .lower, .{}) else 0;
+                        const item = try self.value(Entry, buf[0..buflen], if (comptime mode.in()) v[index]);
                         if (comptime mode.out()) result[index] = item;
                     }
+
+                    try self.end();
                     return result;
                 }
                 switch (mode) {
@@ -608,11 +678,11 @@ pub const SerializeDeserialize = struct {
                 }
             }
             pub fn sliceAutoLen(self: *@This(), comptime Entry: type, name: []const u8, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
-                self.begin(name);
-                defer self.end();
-
+                try self.begin(name);
                 const len = try self.value(usize, "len", if (comptime mode.in()) v.len);
-                return self.slice(Entry, "ptr", if (comptime mode.out()) len else v.len, v);
+                const res = self.slice(Entry, "ptr", if (comptime mode.out()) len else v.len, v);
+                try self.end();
+                return res;
             }
         };
     }

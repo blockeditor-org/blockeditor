@@ -491,6 +491,8 @@ const Game = struct {
         const ser1 = try dsr0.serializeAlloc(gpa);
         defer gpa.free(ser1);
 
+        std.log.info("srlz: {s}", .{ser1});
+
         var dsr1: Game = undefined;
         try dsr1.deserialize(gpa, ser1);
         defer dsr1.deinit();
@@ -1189,13 +1191,13 @@ const Map = struct {
         const materials_size = try sd.value(math.vec3usize, "materials.size", if (comptime mode.in()) item.materials.size);
         const materials_slice = try sd.sliceAutoLen(Material, "materials.items", if (comptime mode.in()) item.materials.items);
 
+        // note that we can recreate tile_flags instead of saving it
         const tile_flags_size = try sd.value(math.vec2usize, "tile_flags.size", if (comptime mode.in()) item.tile_flags.size);
         const tile_flags_slice = try sd.sliceAutoLen(TileFlags, "tile_flags.items", if (comptime mode.in()) item.tile_flags.items);
 
-        sd.begin("building_pool.data");
+        try sd.begin("building_pool.data");
         while (building_pool_handler.serdesNext()) |handle| {
-            sd.begin("Building");
-            defer sd.end();
+            try sd.begin("Building");
 
             const building = if (comptime mode.in()) item.building_pool.getColumnPtrAssumeLive(handle, .ptr);
             const tag = try sd.value(buildings.BuildingTag, "tag", if (comptime mode.in()) building.tag);
@@ -1209,23 +1211,25 @@ const Map = struct {
 
                 .energy_priority = energy_priority,
             } }); // maybe we should call placeBuilding here?
+            try sd.end();
         }
-        sd.end();
+        try sd.end();
 
         const building_pool = try building_pool_handler.end();
 
-        sd.begin("priority_pool.data");
+        try sd.begin("priority_pool.data");
         while (priority_pool_handler.serdesNext()) |handle| {
-            sd.begin("PriorityLevel");
-            defer sd.end();
+            try sd.begin("PriorityLevel");
 
             const level = try sd.value(PriorityLevel, "level", if (comptime mode.in()) item.getPriorityLevel(handle));
             if (comptime mode.out()) priority_pool_handler.set(handle, .{
                 .ptr = .{ .name = "" },
                 .level = level,
             });
+
+            try sd.end();
         }
-        sd.end();
+        try sd.end();
         const priority_pool = try priority_pool_handler.end();
 
         const wires = try Wires.serdes(mode, sd, if (comptime mode.in()) &item.wires, extra.gpa);

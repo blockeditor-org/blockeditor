@@ -287,15 +287,15 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             var pool: main.PoolSerdes(SegmentPool, mode) = try .begin(sd, "segments", &.{ .gpa = gpa }, if (comptime mode.in()) &v.segments);
             defer pool.deinit(&.{ .gpa = gpa });
 
-            sd.begin("segments.items");
+            try sd.begin("segments.items");
             while (pool.serdesNext()) |handle| {
-                sd.begin("Segment");
-                defer sd.end();
+                try sd.begin("Segment");
                 const value = if (comptime mode.in()) v.segments.getColumnPtrAssumeLive(handle, .ptr);
                 const sides = try sd.slice(vec.by2i32, "sides", 2, if (comptime mode.in()) &value.sides);
-                sd.begin("user");
+                try sd.begin("user");
                 const user = try User.serdes(mode, sd, if (comptime mode.in()) &value.user, &.{ .gpa = gpa });
-                sd.end();
+                try sd.end();
+                try sd.end();
                 if (comptime mode.out()) {
                     pool.set(handle, .{
                         .ptr = .{
@@ -305,7 +305,7 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
                     });
                 }
             }
-            sd.end();
+            try sd.end();
 
             const outcome = try pool.end();
             if (comptime mode.out()) {
