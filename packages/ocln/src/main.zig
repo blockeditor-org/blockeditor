@@ -1470,7 +1470,8 @@ test Map {
 
     try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
-        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
+        \\ { 10, 10 } <--> { 10, 15 }: struct:
+        \\  value: 0
     );
 
     // extend the wire
@@ -1484,7 +1485,8 @@ test Map {
 
     try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
-        \\ { 10, 10 } <--> { 10, 20 }: struct: (no fields)
+        \\ { 10, 10 } <--> { 10, 20 }: struct:
+        \\  value: 0
     );
 
     // split the wire
@@ -1498,9 +1500,12 @@ test Map {
 
     try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
-        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 30, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
+        \\ { 10, 10 } <--> { 10, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 30, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 10, 20 }: struct:
+        \\  value: 0
     );
 
     // don't merge with power port
@@ -1515,10 +1520,14 @@ test Map {
 
     try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
-        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 30, 15 }: struct: (no fields)
-        \\ { 30, 15 } <--> { 45, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
+        \\ { 10, 10 } <--> { 10, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 30, 15 }: struct:
+        \\  value: 0
+        \\ { 30, 15 } <--> { 45, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 10, 20 }: struct:
+        \\  value: 0
     );
 
     // merge when the power port is removed
@@ -1527,9 +1536,12 @@ test Map {
 
     try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
-        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
+        \\ { 10, 10 } <--> { 10, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 45, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 10, 20 }: struct:
+        \\  value: 0
     );
 
     // add a wire that goes through the end point of another wire (it should split)
@@ -1541,11 +1553,16 @@ test Map {
     // add a wire that intersects the end point of the left-right wire. it should split in half.
     try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
-        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
-        \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
-        \\ { 45, 15 } <--> { 45, 20 }: struct: (no fields)
+        \\ { 10, 10 } <--> { 10, 15 }: struct:
+        \\  value: 0
+        \\ { 45, 10 } <--> { 45, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 45, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 10, 20 }: struct:
+        \\  value: 0
+        \\ { 45, 15 } <--> { 45, 20 }: struct:
+        \\  value: 0
     );
 
     // can place but missing tile
@@ -1576,12 +1593,18 @@ test Map {
     // placing the building should have split the layer in half
     try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
-        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
-        \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 31, 15 }: struct: (no fields)
-        \\ { 31, 15 } <--> { 45, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
-        \\ { 45, 15 } <--> { 45, 20 }: struct: (no fields)
+        \\ { 10, 10 } <--> { 10, 15 }: struct:
+        \\  value: 0
+        \\ { 45, 10 } <--> { 45, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 31, 15 }: struct:
+        \\  value: 0
+        \\ { 31, 15 } <--> { 45, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 10, 20 }: struct:
+        \\  value: 0
+        \\ { 45, 15 } <--> { 45, 20 }: struct:
+        \\  value: 0
     );
 
     try map.removeBuilding(placed);
@@ -1589,11 +1612,16 @@ test Map {
     // un-split
     try print.snapshotPrint(&map.wires).snap(@src(),
         \\*: ConnectionLayer:
-        \\ { 10, 10 } <--> { 10, 15 }: struct: (no fields)
-        \\ { 45, 10 } <--> { 45, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 45, 15 }: struct: (no fields)
-        \\ { 10, 15 } <--> { 10, 20 }: struct: (no fields)
-        \\ { 45, 15 } <--> { 45, 20 }: struct: (no fields)
+        \\ { 10, 10 } <--> { 10, 15 }: struct:
+        \\  value: 0
+        \\ { 45, 10 } <--> { 45, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 45, 15 }: struct:
+        \\  value: 0
+        \\ { 10, 15 } <--> { 10, 20 }: struct:
+        \\  value: 0
+        \\ { 45, 15 } <--> { 45, 20 }: struct:
+        \\  value: 0
     );
 
     // can place again
