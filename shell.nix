@@ -5,6 +5,8 @@ in
 
 pkgs.mkShellNoCC {
   packages = with pkgs; [
+    # include vscode here?
+
     git
     zig
     rr
