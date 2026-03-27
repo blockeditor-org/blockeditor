@@ -471,7 +471,7 @@ const Game = struct {
             try this.serdes(.count, &sd, &.{ .gpa = this.map.gpa });
             break :blk sd.internal.count;
         };
-        const serialized = gpa.alloc(u8, count) catch @panic("oom");
+        const serialized = gpa.alloc(u8, @intCast(count)) catch @panic("oom");
         errdefer gpa.free(serialized);
         {
             var sd: util.SerializeDeserialize.Value(.serialize) = .initSerializer(serialized);
@@ -1092,7 +1092,7 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
             v: mode.In(Pool.Handle),
         ) !mode.Out(Pool.Handle) {
             _ = extra;
-            const index = try sd.value(u64, name, if (comptime mode.in()) blk: {
+            const index_raw = try sd.value(u64, name, if (comptime mode.in()) blk: {
                 if (self.internal.handle_to_index_map.getIndex(v)) |idx| {
                     break :blk idx + 1;
                 } else {
@@ -1100,6 +1100,7 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
                 }
             });
             if (comptime mode.out()) {
+                const index: usize = std.math.cast(usize, index_raw) orelse return error.DeserializeError;
                 if (index == 0) return .nil;
                 if (self.internal.index_to_handle_map.items.len < index - 1) return error.DeserializeError;
                 return self.internal.index_to_handle_map.items[index - 1];

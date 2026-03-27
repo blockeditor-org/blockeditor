@@ -481,7 +481,7 @@ pub const SerializeDeserialize = struct {
             // human-readable, binary, ...etc
             internal: switch (mode) {
                 .count => struct {
-                    count: usize,
+                    count: u64,
                 },
                 .serialize => struct {
                     res: []u8,
@@ -493,7 +493,7 @@ pub const SerializeDeserialize = struct {
                 },
             },
             readable: struct {
-                indent: usize,
+                indent: u32,
                 any_contents: bool,
             },
 
