@@ -507,7 +507,7 @@ pub const SerializeDeserialize = struct {
                 return .{ .internal = .{ .writer = writer }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
             }
             pub fn initDeserializer(reader: *std.Io.Reader, arena: *std.heap.ArenaAllocator) Value(.deserialize) {
-                return .{ .internal = .{ .reader = reader, .arena = arena, .empty_file = false }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
+                return .{ .internal = .{ .reader = reader, .arena = arena }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
             }
 
             pub const ErrorSet = switch (mode) {
@@ -517,6 +517,7 @@ pub const SerializeDeserialize = struct {
             };
 
             fn canDumpBytes(comptime Type: type) bool {
+                if (style != .binary) return false;
                 if (@typeInfo(Type) == .float) return true;
                 if (@typeInfo(Type) == .pointer) return false;
                 return std.meta.hasUniqueRepresentation(Type);
@@ -585,22 +586,26 @@ pub const SerializeDeserialize = struct {
                         .vector => |info| {
                             try self.begin(name);
 
-                            var result: Type = undefined;
+                            if (comptime mode.out()) v.* = @splat(undefined);
                             inline for (0..info.len) |i| {
-                                const item = try self.value(info.child, std.fmt.comptimePrint("{d}", .{i}), if (comptime mode.in()) v[i]);
-                                if (comptime mode.out()) result[i] = item;
+                                try self.value2(std.fmt.comptimePrint("{d}", .{i}), &v[i]);
                             }
 
                             try self.end();
-                            return if (comptime mode.out()) result;
+                            return;
                         },
                         .@"enum" => |info| {
-                            const item = try self.value(info.tag_type, name, if (comptime mode.in()) @as(info.tag_type, @intFromEnum(info)));
-                            return if (comptime mode.out()) std.meta.intToEnum(Type, item) catch return self.deserializeError("intToEnum bad int: int={d},enum={s}", .{ item, @typeName(Type) });
+                            var result: info.tag_type = if (comptime mode.in()) @as(info.tag_type, @intFromEnum(info)) else undefined;
+                            try self.value2(name, &result);
+                            if (comptime mode.out()) v.* = std.meta.intToEnum(Type, result) catch return self.deserializeError("intToEnum bad int: int={d},enum={s}", .{ result, @typeName(Type) });
+                            return;
                         },
                         .int => |info| {
-                            const item = try self.value(@Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } }), name, if (comptime mode.in()) v);
-                            return if (comptime mode.out()) std.math.cast(Type, item) catch return self.deserializeError("int out of range: int={d},into={d}", .{ item, @typeName(Type) });
+                            const ParentInt = @Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } });
+                            var result: ParentInt = if (comptime mode.in()) v.* else undefined;
+                            try self.value2(name, &result);
+                            if (comptime mode.out()) v.* = std.math.cast(Type, result) catch return self.deserializeError("int out of range: int={d},into={d}", .{ result, @typeName(Type) });
+                            return;
                         },
                         else => {},
                     }
@@ -648,7 +653,7 @@ pub const SerializeDeserialize = struct {
                 }
 
                 try self.begin(name);
-                try self.raw(Type, v[0..1]);
+                try self.raw(Type, @as(*[1]Type, v));
                 try self.end();
             }
             pub fn slice2(self: *@This(), name: []const u8, gpa: std.mem.Allocator, len: usize, v: anytype) ErrorSet!void {
@@ -664,7 +669,7 @@ pub const SerializeDeserialize = struct {
                 try self.end();
             }
             fn raw(self: *@This(), comptime Entry: type, v: []Entry) ErrorSet!void {
-                if (comptime (style == .readable or !canDumpBytes(Entry))) {
+                if (comptime !canDumpBytes(Entry)) {
                     for (v, 0..) |*entry, index| {
                         var buf: [32]u8 = undefined;
                         const buflen: usize = if (style == .readable) std.fmt.printInt(&buf, index, 10, .lower, .{}) else 0;
@@ -678,7 +683,10 @@ pub const SerializeDeserialize = struct {
                 switch (mode) {
                     .count => self.internal.count += v.len * @sizeOf(Entry),
                     .serialize => try self.internal.writer.writeAll(std.mem.sliceAsBytes(v)),
-                    .deserialize => try self.internal.reader.readSliceAll(std.mem.sliceAsBytes(v)),
+                    .deserialize => self.internal.reader.readSliceAll(std.mem.sliceAsBytes(v)) catch |err| switch (err) {
+                        error.EndOfStream => return self.deserializeError("end of stream", .{}),
+                        else => |ee| return ee,
+                    },
                 }
             }
         };
