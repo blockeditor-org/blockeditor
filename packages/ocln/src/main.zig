@@ -365,12 +365,12 @@ const Camera = struct {
         extra: mode.Extra(GameSerializeExtra),
     ) !void {
         _ = extra;
-        const scale = try sd.value(f32, "scale", if (comptime mode.in()) item.scale);
-        const centered_on_pos = try sd.value(math.vec2f32, "centered_on_pos", if (comptime mode.in()) item.centered_on_pos);
         if (comptime mode.out()) item.* = .{
-            .scale = scale,
-            .centered_on_pos = centered_on_pos,
+            .scale = undefined,
+            .centered_on_pos = undefined,
         };
+        try sd.value2("scale", &item.scale);
+        try sd.value2("centered_on_pos", &item.centered_on_pos);
     }
 };
 const Interface = struct {
@@ -999,9 +999,9 @@ const Wires = ConnectionLayer(struct {
     pub fn canMergeWith(_: *const @This(), _: *const @This()) bool {
         return true; // TODO: based on wire type
     }
-    pub fn serdes(comptime mode: util.SerializeDeserialize.Mode, sd: *mode.Value(), self: mode.In(*@This()), _: mode.Extra(GameSerializeExtra)) !mode.Out(@This()) {
-        const value = try sd.value(f64, "value", if (comptime mode.in()) self.value);
-        if (comptime mode.out()) return .{ .value = value };
+    pub fn serdes(comptime mode: util.SerializeDeserialize.Mode, sd: *mode.Value(), self: *@This(), _: mode.Extra(GameSerializeExtra)) !void {
+        if (comptime mode.out()) self.* = .{ .value = undefined };
+        try sd.value2("value", &self.value);
     }
 }, struct {
     map: *Map,
@@ -1035,6 +1035,8 @@ const PriorityPool = zpool.Pool(16, 16, Priority, struct { ptr: Priority, level:
 pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.Mode) type {
     return struct {
         const PS = @This();
+        // note: we could consider serializing the exact pool order and handles including tombstones
+        // in which case we could simplify handle handling
         index: usize,
         count: usize,
         internal: switch (mode) {
@@ -1043,8 +1045,7 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
             },
             .deserialize => struct {
                 index_to_handle_map: std.ArrayListUnmanaged(Pool.Handle),
-                pool: Pool,
-                ended: bool = false,
+                pool: *Pool,
             },
         },
 
@@ -1052,12 +1053,13 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
             sd: *mode.Value(),
             name: []const u8,
             extra: mode.Extra(GameSerializeExtra),
-            out: mode.In(*Pool),
+            out: *Pool,
         ) !PS {
-            const count = try sd.value(usize, name, if (comptime mode.in()) out.liveHandleCount());
+            var count: u64 = if (comptime mode.in()) out.liveHandleCount() else 0;
+            try sd.value2(name, &count);
             switch (mode) {
                 .count, .serialize => {
-                    var result: PS = .{ .count = out.liveHandleCount(), .index = 0, .internal = .{ .handle_to_index_map = .empty } };
+                    var result: PS = .{ .count = count, .index = 0, .internal = .{ .handle_to_index_map = .empty } };
                     errdefer result.internal.handle_to_index_map.deinit(extra.gpa);
                     // iterate over pool, add to handle_to_index_map
                     var iter = out.liveHandles();
@@ -1067,10 +1069,10 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
                     return result;
                 },
                 .deserialize => {
-                    var result: PS = .{ .count = count, .index = 0, .internal = .{ .index_to_handle_map = .empty, .pool = undefined } };
+                    var result: PS = .{ .count = count, .index = 0, .internal = .{ .index_to_handle_map = .empty, .pool = out } };
                     errdefer result.internal.index_to_handle_map.deinit(extra.gpa);
                     // initialize pool
-                    result.internal.pool = try .initCapacity(extra.gpa, count);
+                    out.* = try .initCapacity(extra.gpa, count);
                     errdefer result.internal.pool.deinit();
                     // fill index_to_handle_map
                     for (0..count) |index| {
@@ -1086,22 +1088,21 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
             self: *PS,
             sd: *mode.Value(),
             name: []const u8,
-            extra: mode.Extra(GameSerializeExtra),
-            v: mode.In(Pool.Handle),
-        ) !mode.Out(Pool.Handle) {
-            _ = extra;
-            const index_raw = try sd.value(u64, name, if (comptime mode.in()) blk: {
-                if (self.internal.handle_to_index_map.getIndex(v)) |idx| {
-                    break :blk idx + 1;
-                } else {
-                    break :blk 0;
-                }
-            });
+            v: *Pool.Handle,
+        ) !void {
+            var index_raw: u64 = 0;
+            if (comptime mode.in()) if (self.internal.handle_to_index_map.getIndex(v.*)) |idx| {
+                index_raw = idx + 1;
+            };
+            try sd.value2(name, &index_raw);
             if (comptime mode.out()) {
-                const index: usize = std.math.cast(usize, index_raw) orelse return error.DeserializeError;
-                if (index == 0) return .nil;
-                if (self.internal.index_to_handle_map.items.len < index - 1) return error.DeserializeError;
-                return self.internal.index_to_handle_map.items[index - 1];
+                if (index_raw == 0) {
+                    v.* = .nil;
+                    return;
+                }
+                const index = std.math.cast(usize, index_raw) orelse return sd.deserializeError("handle index out of usize range", .{});
+                if (self.internal.index_to_handle_map.items.len < index - 1) return sd.deserializeError("handle index out of range", .{});
+                v.* = self.internal.index_to_handle_map.items[index - 1];
             }
         }
         // TODO: we could have this accept a column and return *Child that you either use or mutate
@@ -1117,21 +1118,10 @@ pub fn PoolSerdes(comptime Pool: type, comptime mode: util.SerializeDeserialize.
             comptime std.debug.assert(mode.out());
             self.internal.pool.setColumnsAssumeLive(handle, value);
         }
-        pub fn end(self: *PS) !mode.Out(Pool) {
-            std.debug.assert(self.index == self.count); // need to loop over serdesNext() before calling end
-            if (comptime mode.out()) {
-                std.debug.assert(!self.internal.ended);
-                self.internal.ended = true;
-                return self.internal.pool;
-            }
-        }
         pub fn deinit(self: *PS, extra: mode.Extra(GameSerializeExtra)) void {
             switch (mode) {
                 .count, .serialize => self.internal.handle_to_index_map.deinit(extra.gpa),
-                .deserialize => {
-                    self.internal.index_to_handle_map.deinit(extra.gpa);
-                    if (!self.internal.ended) self.internal.pool.deinit();
-                },
+                .deserialize => self.internal.index_to_handle_map.deinit(extra.gpa),
             }
         }
     };
@@ -1178,43 +1168,58 @@ const Map = struct {
         sd: *mode.Value(),
         extra: mode.Extra(GameSerializeExtra),
     ) !void {
-        if (comptime mode.out()) item.gpa = extra.gpa;
-        const size_int = try sd.value(math.vec2i32, "size_int", if (comptime mode.in()) item.size_int);
-        const size_usize = try sd.value(math.vec2usize, "size_usize", if (comptime mode.in()) item.size_usize);
+        if (comptime mode.out()) item.* = .{
+            .gpa = extra.gpa,
+            .size_int = undefined,
+            .size_usize = undefined,
+            .materials = undefined,
+            .tile_flags = undefined,
+            .priority_pool = undefined,
+            .building_pool = undefined,
+            .wires = undefined,
 
-        var building_pool_handler: PoolSerdes(BuildingPool, mode) = try .begin(sd, "building_pool", extra, if (comptime mode.in()) &item.building_pool);
+            // TODO: generate this based on building_pool
+            .pos_to_building = .empty,
+            // TODO
+            .creatures = .init(extra.gpa),
+        };
+
+        try sd.value2("size_int", &item.size_int);
+        try sd.value2("size_usize", &item.size_usize);
+
+        var building_pool_handler: PoolSerdes(BuildingPool, mode) = try .begin(sd, "building_pool", extra, &item.building_pool);
         defer building_pool_handler.deinit(extra);
-        var priority_pool_handler: PoolSerdes(PriorityPool, mode) = try .begin(sd, "building_pool", extra, if (comptime mode.in()) &item.priority_pool);
+        var priority_pool_handler: PoolSerdes(PriorityPool, mode) = try .begin(sd, "priority_pool", extra, &item.priority_pool);
         defer priority_pool_handler.deinit(extra);
 
-        const materials_size = try sd.value(math.vec3usize, "materials.size", if (comptime mode.in()) item.materials.size);
-        const materials_slice = try sd.sliceAutoLen(Material, "materials.items", if (comptime mode.in()) item.materials.items);
+        if (comptime mode.out()) item.materials = .{ .items = undefined, .size = undefined };
+        try sd.value2("materials.size", &item.materials.size);
+        try sd.sliceAutoLen2("materials.items", extra.gpa, &item.materials.items);
 
         // note that we can recreate tile_flags instead of saving it
-        const tile_flags_size = try sd.value(math.vec2usize, "tile_flags.size", if (comptime mode.in()) item.tile_flags.size);
-        const tile_flags_slice = try sd.sliceAutoLen(TileFlags, "tile_flags.items", if (comptime mode.in()) item.tile_flags.items);
+        if (comptime mode.out()) item.tile_flags = .{ .items = undefined, .size = undefined };
+        try sd.value2("tile_flags.size", &item.tile_flags.size);
+        try sd.sliceAutoLen2("tile_flags.items", extra.gpa, &item.tile_flags.items);
 
         try sd.begin("building_pool.data");
         while (building_pool_handler.serdesNext()) |handle| {
             try sd.begin("Building");
 
-            const building = if (comptime mode.in()) item.building_pool.getColumnPtrAssumeLive(handle, .ptr);
-            const tag = try sd.value(buildings.BuildingTag, "tag", if (comptime mode.in()) building.tag);
-            const center = try sd.value(math.vec2i32, "center", if (comptime mode.in()) building.center);
-            const energy_priority = try priority_pool_handler.serdesHandle(sd, "energy_priority", extra, if (comptime mode.in()) building.energy_priority);
-
-            if (comptime mode.out()) building_pool_handler.set(handle, .{ .ptr = .{
-                .tag = tag,
-                .center = center,
+            const building = item.building_pool.getColumnPtrAssumeLive(handle, .ptr);
+            if (comptime mode.out()) building.* = .{
+                .tag = undefined,
+                .center = undefined,
                 .data = null,
 
-                .energy_priority = energy_priority,
-            } }); // maybe we should call placeBuilding here?
+                .energy_priority = undefined,
+            };
+            try sd.value2("tag", &building.tag);
+            try sd.value2("center", &building.center);
+            try priority_pool_handler.serdesHandle(sd, "energy_priority", &building.energy_priority);
+
             try sd.end();
         }
         try sd.end();
-
-        const building_pool = try building_pool_handler.end();
 
         try sd.begin("priority_pool.data");
         while (priority_pool_handler.serdesNext()) |handle| {
@@ -1229,38 +1234,14 @@ const Map = struct {
             try sd.end();
         }
         try sd.end();
-        const priority_pool = try priority_pool_handler.end();
 
-        const wires = try Wires.serdes(mode, sd, if (comptime mode.in()) &item.wires, extra.gpa);
+        try Wires.serdes(mode, sd, &item.wires, extra.gpa);
 
-        // so for serializing those lists we will have to loop over the lists probably
-        // and then for serializing the pools we have to decide:
-        // - we can reindex them, by keeping a pool reindexer hashmap
-        // - step 1: first, we iterate the pool to assign indices to every pool handle in order. it returns a pool indexer struct.
-        // - step 2:
-        //   - when we serialize a handle, we take the pool indexer struct. it says handle -> index, or index -> handle
-        //   -
-
-        if (comptime mode.out()) item.* = .{
-            .gpa = extra.gpa,
-            .size_int = size_int,
-            .size_usize = size_usize,
-            .materials = .fromSizeSlice(materials_size, try dupeMisaligned(extra.gpa, Material, materials_slice)),
-            .tile_flags = .fromSizeSlice(tile_flags_size, try dupeMisaligned(extra.gpa, TileFlags, tile_flags_slice)),
-            .priority_pool = priority_pool,
-            .building_pool = building_pool,
-            .wires = wires,
-
+        if (comptime mode.out()) {
             // TODO: generate this based on building_pool
-            .pos_to_building = .empty,
-            // TODO
-            .creatures = .init(extra.gpa),
-        };
-    }
-    fn dupeMisaligned(allocator: std.mem.Allocator, comptime T: type, m: []align(1) const T) ![]T {
-        const res = try allocator.alloc(T, m.len);
-        @memcpy(res, m);
-        return res;
+            item.pos_to_building = .empty;
+            item.creatures = .init(extra.gpa);
+        }
     }
     pub fn getPriorityLevel(this: *Map, priority: PriorityPool.Handle) PriorityLevel {
         return this.priority_pool.getColumn(priority, .level) catch return .default;

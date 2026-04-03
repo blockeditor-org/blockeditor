@@ -470,9 +470,17 @@ pub const SerializeDeserialize = struct {
             .deserialize => Child.Deserialize,
         };
     }
+    pub const Version = extern struct {
+        actual: u64,
+        pub fn has(self: Version, target: u64) bool {
+            return self.actual >= target;
+        }
+    };
     pub fn Value(comptime mode: Mode) type {
         return struct {
             const style: enum {
+                // instead of a seperate readable style, we could output binary
+                // and a second map file that tells you the names of things?
                 binary,
                 readable,
             } = .readable;
@@ -490,6 +498,7 @@ pub const SerializeDeserialize = struct {
                 .deserialize => struct {
                     reader: *std.Io.Reader,
                     arena: *std.heap.ArenaAllocator,
+                    empty_file: bool,
                 },
             },
             readable: struct {
@@ -505,7 +514,7 @@ pub const SerializeDeserialize = struct {
                 return .{ .internal = .{ .writer = writer }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
             }
             pub fn initDeserializer(reader: *std.Io.Reader, arena: *std.heap.ArenaAllocator) Value(.deserialize) {
-                return .{ .internal = .{ .reader = reader, .arena = arena }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
+                return .{ .internal = .{ .reader = reader, .arena = arena, .empty_file = false }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
             }
 
             pub const ErrorSet = switch (mode) {
@@ -523,7 +532,7 @@ pub const SerializeDeserialize = struct {
                 // problem 2: certainly can't serialize a pointer
             }
 
-            fn deserializeError(self: *@This(), comptime msg: []const u8, fmt: anytype) ErrorSet {
+            pub fn deserializeError(self: *@This(), comptime msg: []const u8, fmt: anytype) ErrorSet {
                 if (self.diag) |diag| {
                     const msg_alloc = try std.fmt.allocPrint(self.internal.arena.allocator(), msg, fmt);
                     diag.* = msg_alloc;
@@ -567,6 +576,35 @@ pub const SerializeDeserialize = struct {
                 }
                 self.readable.indent -= 1;
                 self.readable.any_contents = true;
+            }
+
+            pub fn version(self: *@This(), name: []const u8, max: u64) Version {
+                std.debug.assert(max > 0); // the first version is 1. version 0 indicates an empty file.
+                if ((comptime mode.out()) and self.internal.empty_file) return .{ .actual = 0 };
+                const pv = self.value(Version, name, if (comptime mode.in()) .{ .actual = max });
+                if (comptime mode.in()) return .{ .actual = max };
+                return .{ .actual = pv };
+            }
+
+            pub fn value2(self: *@This(), name: []const u8, v: anytype) ErrorSet!void {
+                const r = try self.value(@typeInfo(@TypeOf(v)).pointer.child, name, if (comptime mode.in()) v.*);
+                if (comptime mode.out()) v.* = r;
+            }
+            pub fn slice2(self: *@This(), name: []const u8, gpa: std.mem.Allocator, len: usize, v: anytype) ErrorSet!void {
+                const Ch = @typeInfo(@TypeOf(v)).pointer.child;
+                const Ch2 = @typeInfo(Ch).pointer.child;
+                const r = try self.slice(Ch2, name, len, if (comptime mode.in()) v.*);
+                if (comptime mode.out()) {
+                    const res = try gpa.alloc(Ch2, r.len);
+                    @memcpy(res, r);
+                    v.* = res;
+                }
+            }
+            pub fn sliceAutoLen2(self: *@This(), name: []const u8, gpa: std.mem.Allocator, v: anytype) ErrorSet!void {
+                try self.begin(name);
+                try self.value2("len", &v.len);
+                try self.slice2("ptr", gpa, v.len, v);
+                try self.end();
             }
 
             pub fn value(self: *@This(), comptime Type: type, name: []const u8, v: mode.In(Type)) ErrorSet!mode.Out(Type) {
@@ -672,13 +710,6 @@ pub const SerializeDeserialize = struct {
                         return std.mem.bytesAsSlice(Entry, try self._get(len * @sizeOf(Entry)));
                     },
                 }
-            }
-            pub fn sliceAutoLen(self: *@This(), comptime Entry: type, name: []const u8, v: mode.In([]const Entry)) ErrorSet!mode.Out([]align(1) const Entry) {
-                try self.begin(name);
-                const len = try self.value(usize, "len", if (comptime mode.in()) v.len);
-                const res = self.slice(Entry, "ptr", if (comptime mode.out()) len else v.len, v);
-                try self.end();
-                return res;
             }
         };
     }

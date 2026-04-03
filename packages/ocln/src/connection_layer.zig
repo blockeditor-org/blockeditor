@@ -283,51 +283,43 @@ pub fn ConnectionLayer(comptime User: type, comptime Context: type) type {
             unreachable; // there shouldn't be multiple identical segments in the list. uh oh!
         }
 
-        pub fn serdes(comptime mode: util.SerializeDeserialize.Mode, sd: *mode.Value(), v: mode.In(*@This()), gpa: std.mem.Allocator) !mode.Out(@This()) {
-            var pool: main.PoolSerdes(SegmentPool, mode) = try .begin(sd, "segments", &.{ .gpa = gpa }, if (comptime mode.in()) &v.segments);
+        pub fn serdes(comptime mode: util.SerializeDeserialize.Mode, sd: *mode.Value(), v: *@This(), gpa: std.mem.Allocator) !void {
+            if (comptime mode.out()) v.* = .{
+                .coordinate_to_segments_map = .empty,
+                .segments = undefined,
+                .gpa = gpa,
+            };
+
+            var pool: main.PoolSerdes(SegmentPool, mode) = try .begin(sd, "segments", &.{ .gpa = gpa }, &v.segments);
             defer pool.deinit(&.{ .gpa = gpa });
 
             try sd.begin("segments.items");
             while (pool.serdesNext()) |handle| {
                 try sd.begin("Segment");
-                const value = if (comptime mode.in()) v.segments.getColumnPtrAssumeLive(handle, .ptr);
-                const sides = try sd.slice(vec.by2i32, "sides", 2, if (comptime mode.in()) &value.sides);
+                const value = v.segments.getColumnPtrAssumeLive(handle, .ptr);
+                if (comptime mode.out()) value.* = .{
+                    .sides = undefined,
+                    .user = undefined,
+                };
+                try sd.value2("sides", &value.sides);
                 try sd.begin("user");
-                const user = try User.serdes(mode, sd, if (comptime mode.in()) &value.user, &.{ .gpa = gpa });
+                try User.serdes(mode, sd, &value.user, &.{ .gpa = gpa });
                 try sd.end();
                 try sd.end();
-                if (comptime mode.out()) {
-                    pool.set(handle, .{
-                        .ptr = .{
-                            .sides = .{ sides[0], sides[1] },
-                            .user = user,
-                        },
-                    });
-                }
             }
             try sd.end();
 
-            const outcome = try pool.end();
             if (comptime mode.out()) {
-                var result: @This() = .{
-                    .gpa = gpa,
-                    .coordinate_to_segments_map = .empty,
-                    .segments = outcome,
-                };
                 // keep coordinate_to_segments_map synced
-                var iter = outcome.liveHandles();
+                var iter = v.segments.liveHandles();
                 while (iter.next()) |handle| {
-                    const seg: *Segment = outcome.getColumnPtrAssumeLive(handle, .ptr);
-                    try result.setSegmentRefRange(seg.sides[0], seg.sides[1], .nil, handle);
+                    const seg: *Segment = v.segments.getColumnPtrAssumeLive(handle, .ptr);
+                    try v.setSegmentRefRange(seg.sides[0], seg.sides[1], .nil, handle);
                 }
-                return result;
             }
-            // serialize:
-            // - for segment of segments
-            //   - write(sides, value, userCb(User))
-            // deserialize:
-            // - for segment of segments
-            //   - createSegment(segment). TODO: do this safely
+            // TODO: validate that the connection layer adheres to the requirements
+            // - maybe instead of using the segment PoolSerdes, we could iterate over segments
+            //   and create them during deserialization
         }
     };
 }
