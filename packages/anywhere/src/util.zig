@@ -470,12 +470,6 @@ pub const SerializeDeserialize = struct {
             .deserialize => Child.Deserialize,
         };
     }
-    pub const Version = extern struct {
-        actual: u64,
-        pub fn has(self: Version, target: u64) bool {
-            return self.actual >= target;
-        }
-    };
     pub fn Value(comptime mode: Mode) type {
         return struct {
             const style: enum {
@@ -498,7 +492,6 @@ pub const SerializeDeserialize = struct {
                 .deserialize => struct {
                     reader: *std.Io.Reader,
                     arena: *std.heap.ArenaAllocator,
-                    empty_file: bool,
                 },
             },
             readable: struct {
@@ -576,14 +569,6 @@ pub const SerializeDeserialize = struct {
                 }
                 self.readable.indent -= 1;
                 self.readable.any_contents = true;
-            }
-
-            pub fn version(self: *@This(), name: []const u8, max: u64) Version {
-                std.debug.assert(max > 0); // the first version is 1. version 0 indicates an empty file.
-                if ((comptime mode.out()) and self.internal.empty_file) return .{ .actual = 0 };
-                const pv = self.value(Version, name, if (comptime mode.in()) .{ .actual = max });
-                if (comptime mode.in()) return .{ .actual = max };
-                return .{ .actual = pv };
             }
 
             pub fn sliceAutoLen2(self: *@This(), name: []const u8, gpa: std.mem.Allocator, v: anytype) ErrorSet!void {
