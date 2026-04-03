@@ -483,8 +483,9 @@ const Game = struct {
     pub fn deserialize(this: *Game, gpa: std.mem.Allocator, src: []u8) !void {
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
-        var sd: util.SerializeDeserialize.Value(.deserialize) = .initDeserializer(src, &arena);
-        this.serdes(.deserialize, &sd, &.{ .gpa = gpa }) catch @panic("deserfail");
+        var reader: std.Io.Reader = .fixed(src);
+        var sd: util.SerializeDeserialize.Value(.deserialize) = .initDeserializer(&reader, &arena);
+        this.serdes(.deserialize, &sd, &.{ .gpa = gpa }) catch |e| std.debug.panic("deserfail: {s}", .{@errorName(e)});
     }
     pub fn validateSerdes(dsr0: *Game) !void {
         const gpa = dsr0.map.gpa;

@@ -488,7 +488,7 @@ pub const SerializeDeserialize = struct {
                     // alternatively, we could enable serializing to a Writer and from a Reader
                 },
                 .deserialize => struct {
-                    src_txt: []const u8,
+                    reader: *std.Io.Reader,
                     arena: *std.heap.ArenaAllocator,
                 },
             },
@@ -496,35 +496,23 @@ pub const SerializeDeserialize = struct {
                 indent: u32,
                 any_contents: bool,
             },
+            diag: ?*?[]const u8,
 
             pub fn initCounter() Value(.count) {
-                return .{ .internal = .{ .count = 0 }, .readable = .{ .indent = 0, .any_contents = false } };
+                return .{ .internal = .{ .count = 0 }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
             }
-            pub fn initSerializer(out: *std.Io.Writer) Value(.serialize) {
-                return .{ .internal = .{ .writer = out }, .readable = .{ .indent = 0, .any_contents = false } };
+            pub fn initSerializer(writer: *std.Io.Writer) Value(.serialize) {
+                return .{ .internal = .{ .writer = writer }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
             }
-            pub fn initDeserializer(src: []const u8, arena: *std.heap.ArenaAllocator) Value(.deserialize) {
-                return .{ .internal = .{ .src_txt = src, .arena = arena }, .readable = .{ .indent = 0, .any_contents = false } };
+            pub fn initDeserializer(reader: *std.Io.Reader, arena: *std.heap.ArenaAllocator) Value(.deserialize) {
+                return .{ .internal = .{ .reader = reader, .arena = arena }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
             }
 
             pub const ErrorSet = switch (mode) {
                 .count => error{},
                 .serialize => error{WriteFailed},
-                .deserialize => error{ DeserializeError, OutOfMemory },
+                .deserialize => error{ ReadFailed, DeserializeError, OutOfMemory },
             };
-
-            fn _get(self: *@This(), n: usize) ![]const u8 {
-                if (self.internal.src_txt.len < n) return error.DeserializeError;
-                const res = self.internal.src_txt[0..n];
-                self.internal.src_txt = self.internal.src_txt[n..];
-                return res;
-            }
-            fn _getC(self: *@This(), comptime n: usize) !*const [n]u8 {
-                if (self.internal.src_txt.len < n) return error.DeserializeError;
-                const res = self.internal.src_txt[0..n];
-                self.internal.src_txt = self.internal.src_txt[n..];
-                return res;
-            }
 
             fn canDumpBytes(comptime Type: type) bool {
                 if (@typeInfo(Type) == .float) return true;
@@ -535,13 +523,29 @@ pub const SerializeDeserialize = struct {
                 // problem 2: certainly can't serialize a pointer
             }
 
+            fn deserializeError(self: *@This(), comptime msg: []const u8, fmt: anytype) ErrorSet {
+                if (self.diag) |diag| {
+                    const msg_alloc = try std.fmt.allocPrint(self.internal.arena.allocator(), msg, fmt);
+                    diag.* = msg_alloc;
+                }
+                return error.DeserializeError;
+            }
+
             fn rawString(self: *@This(), str: []const u8) ErrorSet!void {
                 switch (mode) {
                     .count => self.internal.count += str.len,
                     .serialize => try self.internal.writer.writeAll(str),
                     .deserialize => {
-                        const val = try self._get(str.len);
-                        if (!std.mem.eql(u8, str, val)) return error.DeserializeError;
+                        const val = self.internal.reader.readAlloc(self.internal.arena.child_allocator, str.len) catch |e| return switch (e) {
+                            error.EndOfStream => {
+                                return self.deserializeError("expected \"{f}\", got EndOfStream", .{std.zig.fmtString(str)});
+                            },
+                            else => |ee| return ee,
+                        };
+                        defer self.internal.arena.child_allocator.free(val);
+                        if (!std.mem.eql(u8, str, val)) {
+                            return self.deserializeError("expected \"{f}\", got \"{f}\"", .{ std.zig.fmtString(str), std.zig.fmtString(val) });
+                        }
                     },
                 }
             }
@@ -582,11 +586,11 @@ pub const SerializeDeserialize = struct {
                         },
                         .@"enum" => |info| {
                             const item = try self.value(info.tag_type, name, if (comptime mode.in()) @as(info.tag_type, @intFromEnum(info)));
-                            return if (comptime mode.out()) std.meta.intToEnum(Type, item) catch return error.DeserializeError;
+                            return if (comptime mode.out()) std.meta.intToEnum(Type, item) catch return self.deserializeError("intToEnum bad int: int={d},enum={s}", .{ item, @typeName(Type) });
                         },
                         .int => |info| {
                             const item = try self.value(@Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } }), name, if (comptime mode.in()) v);
-                            return if (comptime mode.out()) std.math.cast(Type, item) catch return error.DeserializeError;
+                            return if (comptime mode.out()) std.math.cast(Type, item) catch return self.deserializeError("int out of range: int={d},into={d}", .{ item, @typeName(Type) });
                         },
                         else => {},
                     }
@@ -614,11 +618,18 @@ pub const SerializeDeserialize = struct {
                         .deserialize => blk: {
                             var buf: [512]u8 = undefined;
                             var alloc = std.heap.FixedBufferAllocator.init(&buf);
-                            var scanner = std.json.Scanner.initCompleteInput(alloc.allocator(), self.internal.src_txt);
-                            const parsed = std.json.innerParse(Type, alloc.allocator(), &scanner, .{
-                                .max_value_len = self.internal.src_txt.len,
-                            }) catch return error.DeserializeError;
-                            self.internal.src_txt = scanner.input[scanner.cursor..];
+                            var reader = std.json.Reader.init(self.internal.arena.child_allocator, self.internal.reader);
+                            defer reader.deinit();
+                            var diagnostics: std.json.Diagnostics = .{};
+                            if (self.diag != null) reader.enableDiagnostics(&diagnostics);
+                            const parsed = std.json.innerParse(Type, alloc.allocator(), &reader, .{
+                                .max_value_len = std.json.default_max_value_len,
+                            }) catch |e| {
+                                reader.reader.seek -= reader.scanner.input.len - reader.scanner.cursor;
+                                if (self.diag != null) return self.deserializeError("json parse failure: {s} / {d}:{d}", .{ @errorName(e), diagnostics.getLine(), diagnostics.getColumn() });
+                                return self.deserializeError("json parse failure: {s}", .{@errorName(e)});
+                            };
+                            reader.reader.seek -= reader.scanner.input.len - reader.scanner.cursor; // return unused bytes to the reader
                             break :blk parsed;
                         },
                     };
