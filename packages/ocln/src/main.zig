@@ -1225,11 +1225,14 @@ const Map = struct {
         while (priority_pool_handler.serdesNext()) |handle| {
             try sd.begin("PriorityLevel");
 
-            const level = try sd.value(PriorityLevel, "level", if (comptime mode.in()) item.getPriorityLevel(handle));
-            if (comptime mode.out()) priority_pool_handler.set(handle, .{
-                .ptr = .{ .name = "" },
-                .level = level,
-            });
+            const ptr = item.priority_pool.getColumnPtrAssumeLive(handle, .ptr);
+            const level = item.priority_pool.getColumnPtrAssumeLive(handle, .level);
+
+            if (comptime mode.out()) {
+                ptr.* = .{ .name = "" };
+                level.* = undefined;
+            }
+            try sd.value2("level", level);
 
             try sd.end();
         }
