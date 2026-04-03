@@ -401,17 +401,13 @@ const Game = struct {
     map: Map,
     interface: Interface,
     pub fn init(game: *Game, gpa: std.mem.Allocator) void {
-        // ser/des validation: TODO
-        if (false) {
-            var t: Game = undefined;
-            t.initUnvalidated(gpa);
-            defer t.deinit();
+        var t: Game = undefined;
+        t.initUnvalidated(gpa);
+        defer t.deinit();
 
-            const serialized = t.serializeAlloc(gpa) catch @panic("oom");
-            game.deserialize(gpa, serialized) catch @panic("deserialize failure");
-        } else {
-            game.initUnvalidated(gpa);
-        }
+        const serialized = t.serializeAlloc(gpa) catch @panic("oom");
+        defer gpa.free(serialized);
+        game.deserialize(gpa, serialized) catch @panic("deserialize failure");
     }
     fn initUnvalidated(game: *Game, gpa: std.mem.Allocator) void {
         game.* = .{ .map = undefined, .interface = .{} };
