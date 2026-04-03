@@ -474,7 +474,8 @@ const Game = struct {
         const serialized = gpa.alloc(u8, @intCast(count)) catch @panic("oom");
         errdefer gpa.free(serialized);
         {
-            var sd: util.SerializeDeserialize.Value(.serialize) = .initSerializer(serialized);
+            var w: std.Io.Writer = .fixed(serialized);
+            var sd: util.SerializeDeserialize.Value(.serialize) = .initSerializer(&w);
             try this.serdes(.serialize, &sd, &.{ .gpa = this.map.gpa });
         }
         return serialized;

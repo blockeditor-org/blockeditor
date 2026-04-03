@@ -484,7 +484,7 @@ pub const SerializeDeserialize = struct {
                     count: u64,
                 },
                 .serialize => struct {
-                    res: []u8,
+                    writer: *std.Io.Writer,
                     // alternatively, we could enable serializing to a Writer and from a Reader
                 },
                 .deserialize => struct {
@@ -500,30 +500,18 @@ pub const SerializeDeserialize = struct {
             pub fn initCounter() Value(.count) {
                 return .{ .internal = .{ .count = 0 }, .readable = .{ .indent = 0, .any_contents = false } };
             }
-            pub fn initSerializer(out: []u8) Value(.serialize) {
-                return .{ .internal = .{ .res = out }, .readable = .{ .indent = 0, .any_contents = false } };
+            pub fn initSerializer(out: *std.Io.Writer) Value(.serialize) {
+                return .{ .internal = .{ .writer = out }, .readable = .{ .indent = 0, .any_contents = false } };
             }
             pub fn initDeserializer(src: []const u8, arena: *std.heap.ArenaAllocator) Value(.deserialize) {
                 return .{ .internal = .{ .src_txt = src, .arena = arena }, .readable = .{ .indent = 0, .any_contents = false } };
             }
 
             pub const ErrorSet = switch (mode) {
-                .count, .serialize => error{},
+                .count => error{},
+                .serialize => error{WriteFailed},
                 .deserialize => error{ DeserializeError, OutOfMemory },
             };
-
-            fn _set(self: *@This(), n: usize) []u8 {
-                if (self.internal.res.len < n) unreachable;
-                const res = self.internal.res[0..n];
-                self.internal.res = self.internal.res[n..];
-                return res;
-            }
-            fn _setC(self: *@This(), comptime n: usize) *[n]u8 {
-                if (self.internal.res.len < n) unreachable;
-                const res = self.internal.res[0..n];
-                self.internal.res = self.internal.res[n..];
-                return res;
-            }
 
             fn _get(self: *@This(), n: usize) ![]const u8 {
                 if (self.internal.src_txt.len < n) return error.DeserializeError;
@@ -550,7 +538,7 @@ pub const SerializeDeserialize = struct {
             fn rawString(self: *@This(), str: []const u8) ErrorSet!void {
                 switch (mode) {
                     .count => self.internal.count += str.len,
-                    .serialize => @memcpy(self._set(str.len), str),
+                    .serialize => try self.internal.writer.writeAll(str),
                     .deserialize => {
                         const val = try self._get(str.len);
                         if (!std.mem.eql(u8, str, val)) return error.DeserializeError;
@@ -620,10 +608,8 @@ pub const SerializeDeserialize = struct {
                             self.internal.count += w.fullCount();
                         },
                         .serialize => {
-                            var w: std.Io.Writer = .fixed(self.internal.res);
-                            var jw: std.json.Stringify = .{ .writer = &w, .options = .{ .whitespace = .minified } };
+                            var jw: std.json.Stringify = .{ .writer = self.internal.writer, .options = .{ .whitespace = .minified } };
                             jw.write(v) catch @panic("write error 2");
-                            self.internal.res = w.unusedCapacitySlice();
                         },
                         .deserialize => blk: {
                             var buf: [512]u8 = undefined;
@@ -669,8 +655,7 @@ pub const SerializeDeserialize = struct {
                     },
                     .serialize => {
                         std.debug.assert(len == v.len);
-                        const res = self._set(v.len * @sizeOf(Entry));
-                        @memcpy(res, std.mem.sliceAsBytes(v));
+                        try self.internal.writer.writeAll(std.mem.sliceAsBytes(v));
                     },
                     .deserialize => {
                         return std.mem.bytesAsSlice(Entry, try self._get(len * @sizeOf(Entry)));
