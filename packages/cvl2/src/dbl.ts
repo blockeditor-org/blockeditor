@@ -634,6 +634,8 @@ initDb({
       x: "u8",
       y: "u8",
       value: "u8",
+      // has_building: Computed( buildings.find(v >= x >= v2).one() => |b| b.descriptor.flags[b.descriptor.tiles[b.descriptor.offset + b.offset]]
+      // ^ somehow this should update pixels when the building is added/removed, and only need to search when a pixel is added
     },
   },
   // we could define mappings manually instead of inferring them from queries
