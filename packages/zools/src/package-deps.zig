@@ -166,7 +166,7 @@ const Opts = struct {
     compression_level: CompressionLevel,
     verbose_compression: bool,
 
-    const CompressionLevel = std.meta.DeclEnum(@import("vendor/Compress.zig").Options);
+    const CompressionLevel = std.meta.DeclEnum(std.compress.flate.Compress.Options);
     const CommandType = union(enum) {
         bundle: struct {
             dst_dir: []const u8,
@@ -327,15 +327,19 @@ fn tryEat(str: []const u8, takeoff: []const u8) ?[]const u8 {
     return null;
 }
 
-pub fn exec(gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const []const u8) ![:0]const u8 {
-    var zig_env_proc = std.process.Child.init(args, gpa);
-    zig_env_proc.stdout_behavior = .Pipe;
-    zig_env_proc.progress_node = progress; // TODO: looks like this doesn't work on windows in 0.15 but will in 0.16
-    try zig_env_proc.spawn();
-    const zig_env_output = try zig_env_proc.stdout.?.readToEndAllocOptions(gpa, std.math.maxInt(usize), null, .of(u8), 0);
+pub fn exec(io: std.Io, gpa: std.mem.Allocator, progress: std.Progress.Node, args: []const []const u8) ![:0]const u8 {
+    var zig_env_proc = try std.process.spawn(io, .{
+        .argv = args,
+        .stdin = .inherit,
+        .stdout = .pipe,
+        .stderr = .inherit,
+        .progress_node = progress,
+    });
+    var file_reader = zig_env_proc.stdout.?.reader(io, &.{});
+    const zig_env_output = try file_reader.interface.allocRemainingAlignedSentinel(gpa, .unlimited, .of(u8), 0);
     errdefer gpa.free(zig_env_output);
-    const zig_env_proc_term = try zig_env_proc.wait();
-    if (zig_env_proc_term != .Exited or zig_env_proc_term.Exited != 0) {
+    const zig_env_proc_term = try zig_env_proc.wait(io);
+    if (zig_env_proc_term != .exited or zig_env_proc_term.exited != 0) {
         return printError("zig_env_proc_term {any}", .{zig_env_proc_term});
     }
     return zig_env_output;
@@ -352,13 +356,13 @@ const Context = struct {
     update_root: []const u8,
 };
 
-pub fn main() !u8 {
-    return main2() catch |e| switch (e) {
+pub fn main(init: std.process.Init) !u8 {
+    return main2(init) catch |e| switch (e) {
         error.Errored => return 1,
         else => return e,
     };
 }
-pub fn main2() !u8 {
+pub fn main2(init: std.process.Init) !u8 {
     var gpa_backing = std.heap.DebugAllocator(.{}).init;
     defer std.debug.assert(gpa_backing.deinit() == .ok);
     const gpa = gpa_backing.allocator();
@@ -366,31 +370,33 @@ pub fn main2() !u8 {
     defer arena_backing.deinit();
     const arena = arena_backing.allocator();
 
-    const args = try std.process.argsAlloc(gpa);
-    defer std.process.argsFree(gpa, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const io = init.io;
 
     var opts = try Opts.parse(gpa, args);
     defer opts.deinit(gpa);
 
-    var progress = std.Progress.start(.{ .estimated_total_items = 4 });
+    var progress = std.Progress.start(io, .{ .estimated_total_items = 4 });
     defer progress.end();
 
-    const zig_env_output = try exec(gpa, progress, &.{ opts.zig_bin, "env" });
+    const zig_env_output = try exec(io, gpa, progress, &.{ opts.zig_bin, "env" });
     defer gpa.free(zig_env_output);
 
-    const zig_env_parsed = try std.zon.parse.fromSlice(struct {
+    const zig_env_parsed = try std.zon.parse.fromSliceAlloc(struct {
         global_cache_dir: []const u8,
         version: []const u8,
     }, arena, zig_env_output, null, .{ .free_on_error = false, .ignore_unknown_fields = true });
     if (!std.mem.eql(u8, zig_env_parsed.version, @import("builtin").zig_version_string)) {
-        return printError("expected zig version {s}, got version {s}", .{ @import("builtin").zig_version_string, zig_env_parsed.version });
+        return printError("running `{s}` binary:\n  expected zig version {s}, got version {s}\n  to override the zig binary, pass `--zig-bin`", .{ opts.zig_bin, @import("builtin").zig_version_string, zig_env_parsed.version });
     }
 
-    const update_root = try std.fs.cwd().realpathAlloc(gpa, opts.update_root);
+    const update_root = try std.Io.Dir.cwd().realPathFileAlloc(io, opts.update_root, gpa);
     defer gpa.free(update_root);
 
+    const rng_impl: std.Random.IoSource = .{ .io = io };
+    const rng = rng_impl.interface();
     var context: Context = .{
-        .tmp_global_cache_dir_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(std.crypto.random.int(u64)),
+        .tmp_global_cache_dir_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(rng.int(u64)),
         .global_cache_dir = switch (opts.include_global_packages) {
             true => opts.override_global_packages_dir orelse zig_env_parsed.global_cache_dir,
             false => null,
@@ -410,7 +416,7 @@ pub fn main2() !u8 {
             const find_one_root = find_root.start(src_pkg, 0);
             defer find_one_root.end();
 
-            const fullpath = try std.fs.cwd().realpathAlloc(arena, src_pkg);
+            const fullpath = try std.Io.Dir.cwd().realPathFileAlloc(io, src_pkg, arena);
             _ = try deps.addAbsolutePath(fullpath);
         }
     }
@@ -424,7 +430,7 @@ pub fn main2() !u8 {
             const queue_sub_node = queue_node.start(package_abs_path, 0);
             defer queue_sub_node.end();
 
-            fillDependency(gpa, arena, @enumFromInt(queue_idx), &deps, &context) catch |e| {
+            fillDependency(io, gpa, arena, @enumFromInt(queue_idx), &deps, &context) catch |e| {
                 context.has_error = true;
                 std.log.err("{s}: error: {s}", .{ package_abs_path, @errorName(e) });
                 continue;
@@ -437,8 +443,7 @@ pub fn main2() !u8 {
 
     const bundle = switch (opts.command_type) {
         .why => |*why| {
-            const cwd = std.fs.cwd();
-            const why_path = cwd.realpathAlloc(gpa, why.pkg) catch |e| {
+            const why_path = std.Io.Dir.cwd().realPathFileAlloc(io, why.pkg, gpa) catch |e| {
                 return printError("could not resolve path '{s}': {s}", .{ why.pkg, @errorName(e) });
             };
             defer gpa.free(why_path);
@@ -448,15 +453,15 @@ pub fn main2() !u8 {
         .bundle => |*bundle| bundle,
     };
 
-    std.fs.cwd().makeDir(".zig-cache") catch {};
-    std.fs.cwd().makeDir(".zig-cache/tmp") catch {};
-    std.fs.cwd().makeDir(context.tmp_global_cache_dir_name) catch {};
-    std.fs.cwd().makeDir(bundle.dst_dir) catch {};
+    std.Io.Dir.cwd().createDir(io, ".zig-cache", .default_dir) catch {};
+    std.Io.Dir.cwd().createDir(io, ".zig-cache/tmp", .default_dir) catch {};
+    std.Io.Dir.cwd().createDir(io, context.tmp_global_cache_dir_name, .default_dir) catch {};
+    std.Io.Dir.cwd().createDir(io, bundle.dst_dir, .default_dir) catch {};
 
     defer {
         const cleanup = progress.start("clean up", 1);
         defer cleanup.end();
-        std.fs.cwd().deleteTree(context.tmp_global_cache_dir_name) catch |e| {
+        std.Io.Dir.cwd().deleteTree(io, context.tmp_global_cache_dir_name) catch |e| {
             std.log.err("error while deleting global cache dir: {s}", .{@errorName(e)});
         };
     }
@@ -467,21 +472,21 @@ pub fn main2() !u8 {
         const generate_output_node = progress.start("generate output", df.abspaths.len());
         defer generate_output_node.end();
 
-        var pool: std.Thread.Pool = undefined;
-        try pool.init(.{ .allocator = gpa });
-        defer pool.deinit();
+        var group: std.Io.Group = .init;
+        errdefer group.cancel(io);
 
         const efo: EmitFileOpts = .{
             .df = &df,
             .generate_output_node = generate_output_node,
             .opts = &opts,
-            .pool = &pool,
+            .group = &group,
             .context = &context,
         };
 
         for (df.root_dependencies.view(&df.dependents)) |dependent| {
-            try pool.spawn(emitFile, .{ dependent, &efo });
+            group.async(io, emitFile, .{ io, dependent, &efo });
         }
+        try group.await(io);
     }
 
     if (context.has_error) return 1;
@@ -492,27 +497,30 @@ const EmitFileOpts = struct {
     df: *PackageList,
     generate_output_node: std.Progress.Node,
     opts: *const Opts,
-    pool: *std.Thread.Pool,
+    group: *std.Io.Group,
     context: *Context,
 };
 fn emitFile(
+    io: std.Io,
     dep: PackageID,
     efo: *const EmitFileOpts,
-) void {
-    emitFileInternal(dep, efo) catch |e| {
+) std.Io.Cancelable!void {
+    emitFileInternal(io, dep, efo) catch |e| {
+        if (e == error.Canceled) return error.Canceled;
         std.log.err("emitFileInternal failed: {s}", .{@errorName(e)});
         efo.context.has_error = true;
         return;
     };
 }
 fn emitFileInternal(
+    io: std.Io,
     dep: PackageID,
     efo: *const EmitFileOpts,
 ) !void {
     const df = efo.df;
     const generate_output_node = efo.generate_output_node;
     const opts = efo.opts;
-    const pool = efo.pool;
+    const group = efo.group;
 
     const gpa = df.gpa;
     const dep_abspath = df.abspaths.get(dep);
@@ -529,28 +537,23 @@ fn emitFileInternal(
     // -> which will write to the output file
 
     if (!opts.exclude_local_packages or !dep_bzz.is_local) {
-        const rand_int = std.crypto.random.int(u64);
+        const rng_impl: std.Random.IoSource = .{ .io = io };
+        const rng = rng_impl.interface();
+        const rand_int = rng.int(u64);
         const tmp_name = ".zig-cache/tmp/package-deps-" ++ std.fmt.hex(rand_int) ++ ".tar.gz";
         {
-            var out_file = try std.fs.cwd().createFile(tmp_name, .{});
-            defer out_file.close();
+            var out_file = try std.Io.Dir.cwd().createFile(io, tmp_name, .{});
+            defer out_file.close(io);
             var out_file_buf: [1024]u8 = undefined;
-            var out_file_writer = out_file.writer(&out_file_buf);
+            var out_file_writer = out_file.writer(io, &out_file_buf);
             var src_bytes_est: u64 = 0;
 
-            const Compress = @import("./vendor/Compress.zig");
-            const flate = @import("./vendor/flate.zig");
+            const Compress = std.compress.flate.Compress;
+            const flate = std.compress.flate;
             var compressor_buf: [flate.max_window_len * 2]u8 = undefined;
             var compressor: Compress = try .init(&out_file_writer.interface, &compressor_buf, .gzip, switch (opts.compression_level) {
                 inline else => |level| @field(Compress.Options, @tagName(level)),
             });
-
-            if (comptime !std.mem.eql(u8, @import("builtin").zig_version_string, "0.15.2")) {
-                // TODO: enable compression. it looks like it will be in 0.16.0:
-                // https://codeberg.org/ziglang/zig/src/commit/56253d9e31c0576f024d95929a8fe26428b35176/lib/std/compress/flate/Compress.zig
-                // in 0.15.0, it doesn't work: https://github.com/ziglang/zig/issues/24973
-                @compileError("TODO: enable compression");
-            }
 
             var tar: std.tar.Writer = .{ .underlying_writer = &compressor.writer };
 
@@ -563,7 +566,7 @@ fn emitFileInternal(
                 for (dep_bzz.paths) |path| {
                     const walk_path_node = walk_dir_node.start(path, path.len);
                     defer walk_path_node.end();
-                    walkDir(df.abspaths.get(dep), path, &seen_paths, gpa) catch |e| switch (e) {
+                    walkDir(io, df.abspaths.get(dep), path, &seen_paths, gpa) catch |e| switch (e) {
                         else => |ee| {
                             std.log.err("failed to check path {s} / {s}", .{ path, @errorName(ee) });
                             efo.context.has_error = true;
@@ -598,10 +601,10 @@ fn emitFileInternal(
                     src_bytes_est += rendered.len;
                 } else {
                     // now we will write the file
-                    var file = try std.fs.openFileAbsolute(fullpath, .{ .mode = .read_only });
-                    defer file.close();
+                    var file = try std.Io.Dir.openFileAbsolute(io, fullpath, .{ .mode = .read_only });
+                    defer file.close(io);
                     var reader_buf: [1024]u8 = undefined;
-                    var file_reader = file.reader(&reader_buf);
+                    var file_reader = file.reader(io, &reader_buf);
                     // note: not using writeFile so we don't copy mtime and such
                     // TODO: save +x permission
                     const file_size = try file_reader.getSize();
@@ -613,7 +616,7 @@ fn emitFileInternal(
             // finally, write build.zig.zon
 
             try tar.finishPedantically();
-            try compressor.writer.flush();
+            try compressor.finish();
             try out_file_writer.interface.flush();
             //out_file_writer.pos
 
@@ -633,9 +636,10 @@ fn emitFileInternal(
         const find_hash_node = render_dep_node.start("find hash", 0);
         defer find_hash_node.end();
 
-        const hash_result = try exec(gpa, find_hash_node, &.{
+        const hash_result = try exec(io, gpa, find_hash_node, &.{
             opts.zig_bin,
             "fetch",
+            // TODO: there doesn't seem to be an arg for setting the 'zig-pkg' folder in 0.16
             "--global-cache-dir",
             switch (opts.update.dependency_urls and !dep_bzz.is_local and efo.context.global_cache_dir != null) {
                 true => efo.context.global_cache_dir.?,
@@ -656,7 +660,7 @@ fn emitFileInternal(
         errdefer gpa.free(rendered_hash);
 
         // move the file
-        try std.fs.cwd().rename(tmp_name, rendered_path);
+        try std.Io.Dir.cwd().rename(tmp_name, std.Io.Dir.cwd(), rendered_path, io);
 
         // finally, set generated zon. this takes ownership of rendered_url,rendered_hash
         dep_bzz.generated_zon = .{
@@ -670,14 +674,14 @@ fn emitFileInternal(
         defer gpa.free(rendered);
         const path = try std.fs.path.join(gpa, &.{ dep_abspath, "build.zig.zon" });
         defer gpa.free(path);
-        try std.fs.cwd().writeFile(.{ .data = rendered, .sub_path = path });
+        try std.Io.Dir.cwd().writeFile(io, .{ .data = rendered, .sub_path = path });
     }
 
     // enqueue dependents
     for (dep_bzz.dependents.view(&df.dependents)) |dependent| {
         const dec = df.dependencies_count.ptr(dependent).fetchSub(1, .acq_rel);
         if (dec == 1) { // 1 means we decremented to 0
-            try pool.spawn(emitFile, .{ dependent, efo });
+            group.async(io, emitFile, .{ io, dependent, efo });
         }
     }
 }
@@ -735,11 +739,11 @@ fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
 
-fn walkDir(abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHashMapUnmanaged(void), gpa: std.mem.Allocator) !void {
+fn walkDir(io: std.Io, abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHashMapUnmanaged(void), gpa: std.mem.Allocator) !void {
     const fullpath = try std.fs.path.join(gpa, &.{ abs_root, sub_path });
     defer gpa.free(fullpath);
 
-    var pathdir = std.fs.openDirAbsolute(fullpath, .{ .iterate = true }) catch |e| switch (e) {
+    var pathdir = std.Io.Dir.openDirAbsolute(io, fullpath, .{ .iterate = true }) catch |e| switch (e) {
         error.FileNotFound => return,
         error.NotDir => {
             const gpres = try paths.getOrPut(gpa, sub_path);
@@ -754,10 +758,10 @@ fn walkDir(abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHa
             return ee;
         },
     };
-    defer pathdir.close();
+    defer pathdir.close(io);
 
     var iter = pathdir.iterate();
-    while (try iter.next()) |entry| {
+    while (try iter.next(io)) |entry| {
         if (exclude_paths.get(entry.name) != null) {
             continue; // skip dir
         }
@@ -773,7 +777,7 @@ fn walkDir(abs_root: []const u8, sub_path: []const u8, paths: *std.StringArrayHa
             },
             .directory => {
                 // iterate
-                try walkDir(abs_root, new_sub, paths, gpa);
+                try walkDir(io, abs_root, new_sub, paths, gpa);
             },
             else => |ekind| {
                 std.log.warn("skipping file type .{s} in {s} / {s}", .{ @tagName(ekind), abs_root, new_sub });
@@ -844,11 +848,11 @@ const exclude_paths = std.StaticStringMap(void).initComptime(.{
     .{ ".DS_Store", {} },
 });
 
-pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_id: PackageID, deps_queue: *PackageQueue, context: *const Context) !void {
+pub fn fillDependency(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, package_id: PackageID, deps_queue: *PackageQueue, context: *const Context) !void {
     const fullpath = deps_queue.getAbsolutePath(package_id);
     const is_local = std.mem.startsWith(u8, fullpath, context.update_root);
     const filepath = try std.fs.path.join(arena, &.{ fullpath, "build.zig.zon" });
-    const file = std.fs.cwd().readFileAllocOptions(gpa, filepath, std.math.maxInt(usize), null, .of(u8), 0) catch |e| switch (e) {
+    const file = std.Io.Dir.cwd().readFileAllocOptions(io, filepath, gpa, .unlimited, .of(u8), 0) catch |e| switch (e) {
         error.FileNotFound => {
             deps_queue.setZon(package_id, .{
                 .gpa = gpa,
@@ -876,7 +880,7 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
     errdefer dependencies.deinit(gpa);
 
     // now, parse from the zoir
-    const parsed = try std.zon.parse.fromZoirNode(struct {
+    const parsed = try std.zon.parse.fromZoirNodeAlloc(struct {
         paths: ?[]const []const u8 = null,
         dependencies: ?std.zig.Zoir.Node.Index = null,
         name: ?std.zig.Zoir.Node.Index = null,
@@ -888,7 +892,7 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
         const fields = try structFields(zoir, parsed_deps);
         for (fields.names, 0..fields.vals.len) |name, idx| {
             const field_value_node = fields.vals.at(@intCast(idx));
-            const dep_parsed = try std.zon.parse.fromZoirNode(struct {
+            const dep_parsed = try std.zon.parse.fromZoirNodeAlloc(struct {
                 hash: ?[]const u8 = null,
                 url: ?[]const u8 = null,
                 path: ?[]const u8 = null,
@@ -911,7 +915,7 @@ pub fn fillDependency(gpa: std.mem.Allocator, arena: std.mem.Allocator, package_
                 std.log.err("package {s} has neither path nor hash", .{name.get(zoir)});
                 return error.Errored;
             }
-            const res_real = std.fs.cwd().realpathAlloc(arena, res_path.?) catch |e| switch (e) {
+            const res_real = std.Io.Dir.realPathFileAbsoluteAlloc(io, res_path.?, arena) catch |e| switch (e) {
                 error.FileNotFound => {
                     std.log.warn("missing path .{s} = {s} / maybe you need to run `zig build --fetch=all`?", .{ name.get(zoir), res_path.? });
                     continue; // skip this one ig?
