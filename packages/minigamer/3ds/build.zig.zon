@@ -2,6 +2,7 @@
     .name = .emulators__3ds,
     .version = "0.0.0",
     .paths = .{""},
+    .fingerprint = 0xdd40b35743df2471,
     .dependencies = .{
         .zig3ds = .{ .path = "../../zig3ds" },
         .emulator = .{ .path = "../emulator" },
