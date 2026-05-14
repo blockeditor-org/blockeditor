@@ -18,42 +18,6 @@ function allMatch(sets: ComptimeEnvSets, actual: Map<symbol, unknown>): boolean 
     }
     return true;
 }
-class PerComptimeScopeCache<T> {
-    entries: {sets: ComptimeEnvSets, value: T}[] = [];
-    progress: ComptimeEnvSets[] = [];
-    constructor() {}
-    get(env: Env, cb: (env: Env) => T) {
-        // 1. check if the comptime env matches any of the cache entries
-        for (const entry of this.entries) {
-            // -> does ? return
-            if (allMatch(entry.sets, env.scope.comptime)) return entry.value;
-        }
-
-        // check progress
-        if (this.progress.some(p => allMatch(p, env.scope.comptime))) {
-            throwErr(env, compilerPos(), "cyclic");
-        }
-
-        // 2. mark progress = [...Object.entries(env)]
-        const progressAppend: ComptimeEnvSets = [...env.scope.comptime.entries()];
-        this.progress.push(progressAppend);
-
-        // 3. update env so it will tell us about any comptime fields which are accessed
-        // (todo)
-
-        // 4. call cb
-        const result = cb(env);
-
-        // 5. update env so accessing any comptime envs past this call are an errro
-        // (todo)
-
-        // 6. remove the progress, save the result
-        this.progress.splice(this.progress.indexOf(progressAppend), 1);
-        // (todo: the used sets)
-        this.entries.push({sets: [], value: result});
-        return result;
-    }
-}
 
 export class PositionedError extends Error {
     e: TokenizationError;
@@ -83,14 +47,17 @@ function importFile(filename: string, contents: string) {
         trace: [],
         errors: [...tokenized.errors],
         scope: {
-            comptime: new Map(),
+            comptime: new ComptimeScopeMap(undefined, new Map([
+                [target_env_symbol, {
+                    kind: "build",
+                } satisfies TargetEnv],
+            ])),
             bindings: new Map(),
         },
+        fnCache: new PerComptimeScopeCache(),
+        declCache: new PerComptimeScopeCache(),
+        builtinCache: new PerComptimeScopeCache(),
     };
-    env.scope.comptime.set(target_env_symbol, {
-        kind: "comptime",
-        fnCache: new Map(),
-    } satisfies TargetEnv);
     try {
         const block: AnalysisBlock = emptyBlock();
         const ns = analyzeNamespace(env, {fyl: filename, lyn: 0, col: 0, idx: 0}, tokenized.result);
@@ -124,28 +91,120 @@ export type Binding = {
     kind: "removed",
     pos: TokenPosition,
 };
+export class ComptimeScopeMap {
+    parent?: ComptimeScopeMap;
+    #changes: Map<symbol, unknown>;
+    closed: boolean;
+    #track?: Set<symbol>;
+    constructor(parent: ComptimeScopeMap | undefined, changes: Map<symbol, unknown>, track: boolean = false) {
+        this.parent = parent;
+        this.#changes = changes;
+        this.closed = false;
+        if (track) this.#track = new Set();
+    }
+    get(key: symbol): unknown | undefined {
+        if (this.#track) {
+            if (this.closed && !this.#track.has(key)) throw new Error("uh oh! tried to introduce new tracked symbol after closing the track");
+            this.#track.add(key);
+        }
+        return this.getUntrack(key);
+    }
+    getUntrack(key: symbol): unknown | undefined {
+        if (this.#changes.has(key)) return this.#changes.get(key);
+        return this.parent?.get(key);
+    }
+    sub(changes: Map<symbol, unknown>): ComptimeScopeMap {
+        return new ComptimeScopeMap(this, new Map(changes));
+    }
+    subTrackAccesses(): ComptimeScopeMap {
+        return new ComptimeScopeMap(this, new Map(), true);
+    }
+    endTrackAccesses(): symbol[] {
+        if (!this.#track) throw new Error("unreachable");
+        this.closed = true;
+        return [...this.#track];
+    }
+}
 export type Scope = {
-    comptime: Map<symbol, unknown>
+    comptime: ComptimeScopeMap,
     bindings: Map<string, Binding>,
 };
 export type Env = {
     trace: TraceEntry[],
     errors: TokenizationError[],
     scope: Scope,
+    fnCache: PerComptimeScopeCache<ComptimeValueFn, AnalyzedFn>,
+    declCache: PerComptimeScopeCache<ComptimeValueDeclaration, ComptimeAnalysisResult>,
+    builtinCache: PerComptimeScopeCache<Descriptor, AnalysisResult>,
 };
-type ComptimeFnCache = Map<ComptimeValueFn, {block: AnalysisBlock, value: RuntimeValue} | "inprogress">;
+export type AnalyzedFn = {block: AnalysisBlock, value: RuntimeValue};
+export class PerComptimeScopeCache<T extends {}, U> {
+    #entries = new WeakMap<T, {matches: {key: symbol, value: unknown}[], value: U}[]>();
+    #depLoop = new WeakSet<T>();
+    constructor() {}
+    // TODO
+    getOrPut(key: T, env: Env, cb: (env: Env) => U): U {
+        if (this.#entries.has(key)) {
+            // find matches
+            const entry = this.#entries.get(key)!;
+            for (const option of entry) {
+                let blk = true;
+                for (const match of option.matches) {
+                    if (env.scope.comptime.getUntrack(match.key) !== match.value) {
+                        blk = false;
+                        break;
+                    }
+                }
+                if (!blk) continue;
+
+                // matches! (there should be only one matching value)
+                return option.value;
+            }
+        }
+        if (this.#depLoop.has(key)) {
+            // TODO: we may want to allow dependency loops in some cases
+            // ie if the outer one has already accessed a comptime env value that has changed in the inner one, so they can't possibly be a match
+            // that will allow you to make an infinite loop by:
+            //    myenv :: comptime_env: i32
+            //    demo :: myenv.with(myenv.get() + 1, || demo)
+            // because it will just keep reanalyzing demo over and over again with incrementing values of myenv
+            // but that's probably fine? 
+            throwErr(env, compilerPos(), "dependency loop"); // TODO positions
+        }
+
+        // 1. mark dependency loop
+        this.#depLoop.add(key);
+        // 2. begin tracking comptime scope dependencies
+        const trackingComptime = env.scope.comptime.subTrackAccesses();
+        // 3. eval cb
+        const res = cb({
+            ...env,
+            scope: {
+                ...env.scope,
+                comptime: trackingComptime,
+            },
+        });
+        // 4. end tracking comptime scope dependencies
+        const dependencies = trackingComptime.endTrackAccesses();
+        // 5. unmark dependency loop
+        this.#depLoop.delete(key);
+        // 5. save result
+        if (!this.#entries.has(key)) this.#entries.set(key, []);
+        this.#entries.get(key)!.push({
+            matches: dependencies.map(dep => ({key: dep, value: env.scope.comptime.getUntrack(dep)})),
+            value: res,
+        });
+        return res;
+    }
+}
 export type TargetEnv = {
-    kind: "comptime"
-    fnCache: ComptimeFnCache,
+    kind: "build"
 } | {
     kind: "c"
-    fnCache: ComptimeFnCache,
 } | {
     kind: "mc"
-    fnCache: ComptimeFnCache,
 } | {
     kind: "todo",
-    fnCache: ComptimeFnCache,
 };
 const target_env_symbol = Symbol("target_env");
 type ComptimeValueNamespace = {
@@ -223,13 +282,12 @@ function analyzeNamespace(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): 
 }
 type ComptimeValueDeclaration = {
     ast: ComptimeValueAst,
-    cache: PerComptimeScopeCache<ComptimeAnalysisResult>,
 };
 export function createDeclaration(env: Env, ast: ComptimeValueAst): ComptimeValueDeclaration {
-    return {ast, cache: new PerComptimeScopeCache()};
+    return {ast};
 }
 export function getDeclaration(env: Env, decl: ComptimeValueDeclaration): ComptimeAnalysisResult {
-    return decl.cache.get(env, (env: Env): ComptimeAnalysisResult => {
+    return env.declCache.getOrPut(decl, env, (env: Env): ComptimeAnalysisResult => {
         const block: AnalysisBlock = emptyBlock();
         const result = analyze(decl.ast.env, {type: "unknown", pos: compilerPos()}, decl.ast.pos, decl.ast.ast, block);
         const evald = comptimeEval(decl.ast.env, block, result.value, decl.ast.pos);
@@ -615,7 +673,9 @@ export function analyzeDestructure(env: Env, destructure: Destructure, value: Ru
         return env;
     } else throwErr(env, destructure.extract.pos, `TODO destructure block ${destructure.extract.kind}:${printers.destructure.dump(destructure, 3)}`)
 }
-export function compileFunction(outerEnv: Env, fn: ComptimeValueFn): {block: AnalysisBlock, value: RuntimeValue} {
+export function analyzeFunction(outerEnv: Env, fn: ComptimeValueFn): AnalyzedFn {
+    // TODO: what we need to do is track which env.scope.comptime values the body accesses
+    // and then only recompile if any of those items change
     const env: Env = {
         ...outerEnv,
         scope: {
@@ -623,29 +683,21 @@ export function compileFunction(outerEnv: Env, fn: ComptimeValueFn): {block: Ana
             bindings: fn.internal.body.env.scope.bindings,
         },
     };
-    const scope = env.scope.comptime.get(target_env_symbol) as TargetEnv | null;
-    if (!scope) throwErr(env, compilerPos(), "missing target env in comptime scope?");
-    const cacheResult = scope.fnCache.get(fn);
-    if (cacheResult === "inprogress") throwErr(env, fn.pos, "Compilation loop");
-    if (cacheResult) return cacheResult;
-    scope.fnCache.set(fn, "inprogress");
-    const block = emptyBlock();
-    const argsValue = blockAppend(block, {expr: "args", pos: fn.internal.args.extract.pos});
-    const subEnv = analyzeDestructure(env, fn.internal.args, argsValue, block);
-    const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
-    const result = analyze(subEnv, unknownSlot, fn.pos, fn.internal.body.ast, block);
-    const res = {block, value: result.value};
-    scope.fnCache.set(fn, res);
-    return res;
+    return env.fnCache.getOrPut(fn, env, env => {
+        const block = emptyBlock();
+        const argsValue = blockAppend(block, {expr: "args", pos: fn.internal.args.extract.pos});
+        const subEnv = analyzeDestructure(env, fn.internal.args, argsValue, block);
+        const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
+        const result = analyze(subEnv, unknownSlot, fn.pos, fn.internal.body.ast, block);
+        return {block, value: result.value};
+    });
 }
 
 abstract class Descriptor {
-    cache = new PerComptimeScopeCache<AnalysisResult>();
     _cache: AnalysisResult | null = null;
     abstract constructImpl(env: Env, route: string): AnalysisResult;
     construct(env: Env, route: string): AnalysisResult {
-        // TODO: cache based on any referenced comptime env fields
-        return this._cache ??= this.constructImpl(env, route);
+        return env.builtinCache.getOrPut(this, env, env => this.constructImpl(env, route));
     }
 }
 type NsDescOpts = {
@@ -713,19 +765,19 @@ const builtinNamespaceDescriptor = d.ns({
                 compile: d.ns({}, {call(envIn, slot, pos, argAst, block) {
                     const env = {...envIn, scope: {
                         ...envIn.scope,
-                        comptime: new Map(envIn.scope.comptime),
+                        comptime: envIn.scope.comptime.sub(new Map([
+                            [target_env_symbol, {
+                                kind: "mc",
+                            } satisfies TargetEnv],
+                        ])),
                     }};
-                    env.scope.comptime.set(target_env_symbol, {
-                        kind: "mc",
-                        fnCache: new Map(),
-                    } satisfies TargetEnv);
                     const argRes = analyze(env, {type: "export_list", key: {type: "mc:identifier", pos}, pos}, argAst.pos, argAst.ast, block);
                     const argCt = getComptime(env, "export_list", argRes.value, pos);
                     for (const item of argCt.exports) {
                         const body = analyze(env, {type: "unknown", pos: compilerPos()}, item.value.pos, item.value.ast, block);
                         if (body.type.type === "fn") {
                             const content = getComptime(env, "fn", body.value, item.value.pos);
-                            const compiled = compileFunction(env, content);
+                            const compiled = analyzeFunction(env, content);
                             console.log("ident", printers.runtimeValue.dump(item.key));
                             console.log("compiled.block", printers.block.dump(compiled.block));
                             console.log("compiled.value", printers.runtimeValue.dump(compiled.value));
@@ -743,13 +795,13 @@ const builtinNamespaceDescriptor = d.ns({
                     ...envIn,
                     scope: {
                         ...envIn.scope,
-                        comptime: new Map(envIn.scope.comptime),
+                        comptime: envIn.scope.comptime.sub(new Map([
+                            [target_env_symbol, {
+                                kind: "c",
+                            } satisfies TargetEnv],
+                        ])),
                     },
                 };
-                env.scope.comptime.set(target_env_symbol, {
-                    kind: "c",
-                    fnCache: new Map(),
-                } satisfies TargetEnv);
                 const argRes = analyze(env, {type: "export_list", key: {type: "c:export_name", pos}, pos}, argAst.pos, argAst.ast, block);
                 const argCt = getComptime(env, "export_list", argRes.value, pos);
                 for (const {key, keyPos: key_pos, value} of argCt.exports) {

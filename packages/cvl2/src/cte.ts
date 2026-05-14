@@ -1,4 +1,4 @@
-import { assert, compileFunction, createDeclaration, throwConsumedErr, throwErr, type AnalysisBlock, type ComptimeValue, type ComptimeValueBuildArtifact, type ComptimeValueUint8Array, type Env, type NsFields, type RuntimeValue } from "./cmpyl";
+import { assert, analyzeFunction, createDeclaration, throwConsumedErr, throwErr, type AnalysisBlock, type ComptimeValue, type ComptimeValueBuildArtifact, type ComptimeValueUint8Array, type Env, type NsFields, type RuntimeValue } from "./cmpyl";
 import { type TokenPosition } from "./cvl2";
 import { printers } from "./printers";
 
@@ -47,7 +47,7 @@ export function comptimeEval(env: Env, block: AnalysisBlock, result: RuntimeValu
         } else if (instr.expr === "call") {
             const method = getas("fn", instr.method, instr.pos);
             const arg = getas(null, instr.arg, instr.pos);
-            const body = compileFunction(env, method);
+            const body = analyzeFunction(env, method);
             results[i] = comptimeEval(env, body.block, body.value, instr.pos, arg);
         } else if (instr.expr === "args") {
             if (args == null) throwErr(env, instr.pos, "cannot get args when executing without args", [
