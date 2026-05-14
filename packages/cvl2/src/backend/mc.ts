@@ -11,7 +11,7 @@ runCommand should require arguments:
   - we combine four of those into one
 
 so eg:
-- main :: (loc: mc.Location, self: mc.Entity, macroArg: mc.NBT())
+- main :: (loc: mc.Location, self: mc.Entity, macroArg: mc.NBT(.unknown))
   - _ = mc.Result: mc.runCommand(.at = &pos, .as = &self, .cmd = "say hi")
   - it's &self because runCommand accepts an EntitiesRef (a Selector), but when you call a function you recieve just a single entity
   - same with &loc
