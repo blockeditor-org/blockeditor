@@ -4,6 +4,7 @@ import { isAbsolute, relative, sep } from "path";
 import { readFileSync } from "fs";
 import { Adisp, printers } from "./printers";
 import { validateCName, type CValidatedIdentifierName } from "./backend/c";
+import { codegenMcfunction } from "./backend/mc";
 
 /*
 todo: we may need to split up 'env' and 'scope'
@@ -27,7 +28,7 @@ export class PositionedError extends Error {
     }
 }
 export class ConsumedError extends Error {}
-function compilerPos(): TokenPosition {
+export function compilerPos(): TokenPosition {
     return {fyl: "compiler", lyn: 0, col: 0, idx: 0};
 }
 function emptyBlock(): AnalysisBlock {
@@ -647,7 +648,7 @@ export type ComptimeValueMcIdentifier = {
 };
 export type ComptimeValueMcResult = {
     kind: "mc:result",
-    result: number | "error",
+    result: number | "fail",
 };
 export type ComptimeValueExportList = {
     kind: "export_list",
@@ -762,7 +763,7 @@ const builtinNamespaceDescriptor = d.ns({
         mc: d.ns({
             Result: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "mc:result", pos: compilerPos()}}}),
             Datapack: d.ns({
-                compile: d.ns({}, {call(envIn, slot, pos, argAst, block) {
+                compile: d.ns({}, {call(envIn, slot, pos, argAst, block): AnalysisResult {
                     const env = {...envIn, scope: {
                         ...envIn.scope,
                         comptime: envIn.scope.comptime.sub(new Map([
@@ -773,18 +774,26 @@ const builtinNamespaceDescriptor = d.ns({
                     }};
                     const argRes = analyze(env, {type: "export_list", key: {type: "mc:identifier", pos}, pos}, argAst.pos, argAst.ast, block);
                     const argCt = getComptime(env, "export_list", argRes.value, pos);
+                    const resFiles = new Map<string, Uint8Array>();
                     for (const item of argCt.exports) {
+                        const ident = getComptime(env, "mc:identifier", item.key, pos);
                         const body = analyze(env, {type: "unknown", pos: compilerPos()}, item.value.pos, item.value.ast, block);
                         if (body.type.type === "fn") {
                             const content = getComptime(env, "fn", body.value, item.value.pos);
                             const compiled = analyzeFunction(env, content);
                             console.log("ident", printers.runtimeValue.dump(item.key));
-                            console.log("compiled.block", printers.block.dump(compiled.block));
-                            console.log("compiled.value", printers.runtimeValue.dump(compiled.value));
                             // now we need to compile & emit the mcfunction
+                            const result = codegenMcfunction(env, compiled.block, compiled.value);
+                            resFiles.set(`data/${ident.namespace}/functions/${ident.path}.mcfunction`, enc.encode(result));
                         } else throwErr(env, pos, "TODO mc body type: " + printers.runtimeValue.dumpList([item.key, item.value]));
                     }
-                    throwErr(env, pos, "TODO call #builtin.std.mc.Datapack.compile");
+                    return {type: {type: "build_artifact", pos, narrow: "folder"}, value: {kind: "build_artifact", value: {
+                        kind: "folder",
+                        value: new Map([...resFiles.entries()].map(([k, v]): [string, ComptimeValueBuildArtifact] => ([
+                            k,
+                            {kind: "build_artifact", value: {kind: "file", value: v}},
+                        ]))),
+                    }}};
                 }}),
             }),
         }),
