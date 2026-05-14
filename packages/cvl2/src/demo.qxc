@@ -1,6 +1,11 @@
 #builtin.build .= () => std.Folder: [
-    "datapack" .= std.File: "todo"
+    "example" .= example
+    "datapack" .= std.mc.Datapack.compile: [
+        "qxc:main" .= () => std.mc.Result: {-> 1}
+    ]
 ]
+
+example :: std.File: "abc"
 
 // #builtin.build .= () => c.compile: [
 //     // sample comment

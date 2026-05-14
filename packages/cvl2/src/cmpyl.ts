@@ -1,8 +1,9 @@
 import { comptimeEval, getComptime } from "./cte";
 import { prettyPrintErrors, renderTokenizedOutput, Source, tokenize, unescapeString, type BlockToken, type OperatorSegmentToken, type OperatorToken, type OpTag, type SyntaxNode, type TokenizationError, type TokenizationErrorEntry, type TokenizationErrorStyle, type TokenPosition, type TraceEntry } from "./cvl2";
-import { isAbsolute, relative } from "path";
-import { printers } from "./printers";
-import { validateCName } from "./backend/c";
+import { isAbsolute, relative, sep } from "path";
+import { readFileSync } from "fs";
+import { Adisp, printers } from "./printers";
+import { validateCName, type CValidatedIdentifierName } from "./backend/c";
 
 /*
 todo: we may need to split up 'env' and 'scope'
@@ -88,6 +89,7 @@ function importFile(filename: string, contents: string) {
     };
     env.scope.comptime.set(target_env_symbol, {
         kind: "comptime",
+        fnCache: new Map(),
     } satisfies TargetEnv);
     try {
         const block: AnalysisBlock = emptyBlock();
@@ -102,7 +104,10 @@ function importFile(filename: string, contents: string) {
     }
     
     if (env.errors.length > 0) {
-        console.log(prettyPrintErrors(sourceCode, env.errors));
+        console.log(prettyPrintErrors([
+            sourceCode,
+            new Source("src" + sep + "cmpyl.ts", readFileSync(__filename, "utf-8")),
+        ], env.errors));
         process.exit(1);
     }
 }
@@ -128,12 +133,19 @@ export type Env = {
     errors: TokenizationError[],
     scope: Scope,
 };
+type ComptimeFnCache = Map<ComptimeValueFn, {block: AnalysisBlock, value: RuntimeValue} | "inprogress">;
 export type TargetEnv = {
     kind: "comptime"
+    fnCache: ComptimeFnCache,
 } | {
     kind: "c"
+    fnCache: ComptimeFnCache,
+} | {
+    kind: "mc"
+    fnCache: ComptimeFnCache,
 } | {
     kind: "todo",
+    fnCache: ComptimeFnCache,
 };
 const target_env_symbol = Symbol("target_env");
 type ComptimeValueNamespace = {
@@ -231,7 +243,17 @@ function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src:
     const container = readContainer(rootEnv, pos, src);
     const env = container.env;
     
+    let ret: AnalysisResult | undefined;
+    let retloc: TokenPosition | undefined;
     for (const line of container.lines) {
+        if (ret) {
+            const etok = addErr(env, line.pos, "extra lines not allowed after return", [
+                ...retloc ? [[retloc, "returned here"] satisfies [TokenPosition, string]] : [],
+            ]);
+            // not sure what to do with the error token
+            // (perhaps return an error analysis result?)
+            break;
+        }
         // execute lines
         const rb2 = readBinary2(env, line.pos, line.items, "pub");
         if (rb2) {
@@ -240,11 +262,16 @@ function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src:
         } else {
             // analyze the line
             // TODO: if '->', use the specified slot. else, use void.
-            () => slot;
-            analyze(env, {type: "void", pos: line.pos}, line.pos, line.items, block);
+            if (line.items[0]?.kind === "raw" && line.items[0].tag === "return") {
+                retloc = line.items[0].pos;
+                ret = analyze(env, slot, line.pos, line.items.slice(1), block);
+            } else {
+                analyze(env, {type: "void", pos: line.pos}, line.pos, line.items, block);
+            }
         }
     }
 
+    if (ret) return {env, result: ret};
     return {env, result: {type: {type: "void", pos: pos}, value: {kind: "void"}}};
 }
 export type ComptimeTypeVoid = {type: "void", pos: TokenPosition};
@@ -287,11 +314,26 @@ export type ComptimeTypeOptional = {
     pos: TokenPosition,
     some: ComptimeType,
 };
-export type ComptimeTypeCExports = {
-    type: "c:exports",
+export type ComptimeTypeExportList = {
+    type: "export_list",
+    key: ComptimeType,
     pos: TokenPosition,
 };
-export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeBuildResult | ComptimeTypeTuple | ComptimeTypeOptional | ComptimeTypeCExports;
+export type ComptimeTypeCExportName = {
+    type: "c:export_name",
+    pos: TokenPosition,
+};
+export type ComptimeTypeMcIdentifier = {
+    type: "mc:identifier",
+    category?: string,
+    pos: TokenPosition,
+};
+export type ComptimeTypeMcResult = {
+    type: "mc:result",
+    narrow?: "i32" | "error",
+    pos: TokenPosition,
+};
+export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeBuildResult | ComptimeTypeTuple | ComptimeTypeOptional | ComptimeTypeExportList | ComptimeTypeMcIdentifier | ComptimeTypeCExportName | ComptimeTypeMcResult;
 
 export type ComptimeValueKey = {
     kind: "key",
@@ -447,6 +489,7 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
         }
         const args = readDestructure(env, expr.pos, ast.slice(0, index));
         console.log("destructure", printers.destructure.dump(args));
+        // TODO: we need to infer the ret type of the function?
         const retTy: ComptimeTypeFn = {
             type: "fn",
             arg: args.type,
@@ -466,7 +509,6 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
                 internal: {
                     args,
                     body: {kind: "ast", ast: expr.items, env, pos: expr.pos},
-                    cachedBlock: null,
                 },
                 pos: expr.pos,
             },
@@ -507,7 +549,6 @@ type ComptimeValueFn = {
     internal: {
         args: Destructure,
         body: ComptimeValueAst,
-        cachedBlock: {block: AnalysisBlock, value: RuntimeValue} | "inprogress" | null,
     },
     pos: TokenPosition,
 };
@@ -531,16 +572,34 @@ export type ComptimeFile = {
 export type ComptimeValueUint8Array = {
     kind: "uint8array",
     value: Uint8Array,
+    sourcemap: Uint8ArraySourcemapEntry[],
 };
-export type ComptimeValueCExports = {
-    kind: "c:exports",
-    value: Map<string, ComptimeValue>,
+export type Uint8ArraySourcemapEntry = {
+    lenBytes: number,
+    startPos: TokenPosition,
+};
+export type ComptimeValueCExportName = {
+    kind: "c:export_name",
+    value: CValidatedIdentifierName,
+};
+export type ComptimeValueMcIdentifier = {
+    kind: "mc:identifier",
+    namespace: string,
+    path: string,
+};
+export type ComptimeValueMcResult = {
+    kind: "mc:result",
+    result: number | "error",
+};
+export type ComptimeValueExportList = {
+    kind: "export_list",
+    exports: {key: ComptimeValue, keyPos: TokenPosition, value: ComptimeValueAst}[],
 };
 export type ComptimeValueError = {
     kind: "error",
     etok: ConsumedErrorToken,
 };
-export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueBuildArtifact | ComptimeValueUint8Array | ComptimeValueCExports | ComptimeValueError;
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueBuildArtifact | ComptimeValueUint8Array | ComptimeValueExportList | ComptimeValueCExportName | ComptimeValueMcIdentifier | ComptimeValueError | ComptimeValueMcResult;
 export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
 export type RuntimeValueRuntime = {
     kind: "runtime",
@@ -556,18 +615,28 @@ export function analyzeDestructure(env: Env, destructure: Destructure, value: Ru
         return env;
     } else throwErr(env, destructure.extract.pos, `TODO destructure block ${destructure.extract.kind}:${printers.destructure.dump(destructure, 3)}`)
 }
-export function compileFunction(rootEnv: Env, fn: ComptimeValueFn): {block: AnalysisBlock, value: RuntimeValue} {
-    const env = fn.internal.body.env;
-    if (fn.internal.cachedBlock === "inprogress") throwErr(env, fn.pos, "Compilation loop");
-    if (fn.internal.cachedBlock) return fn.internal.cachedBlock;
-    fn.internal.cachedBlock = "inprogress";
+export function compileFunction(outerEnv: Env, fn: ComptimeValueFn): {block: AnalysisBlock, value: RuntimeValue} {
+    const env: Env = {
+        ...outerEnv,
+        scope: {
+            comptime: outerEnv.scope.comptime,
+            bindings: fn.internal.body.env.scope.bindings,
+        },
+    };
+    const scope = env.scope.comptime.get(target_env_symbol) as TargetEnv | null;
+    if (!scope) throwErr(env, compilerPos(), "missing target env in comptime scope?");
+    const cacheResult = scope.fnCache.get(fn);
+    if (cacheResult === "inprogress") throwErr(env, fn.pos, "Compilation loop");
+    if (cacheResult) return cacheResult;
+    scope.fnCache.set(fn, "inprogress");
     const block = emptyBlock();
     const argsValue = blockAppend(block, {expr: "args", pos: fn.internal.args.extract.pos});
     const subEnv = analyzeDestructure(env, fn.internal.args, argsValue, block);
     const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
     const result = analyze(subEnv, unknownSlot, fn.pos, fn.internal.body.ast, block);
-    fn.internal.cachedBlock = {block, value: result.value};
-    return fn.internal.cachedBlock;
+    const res = {block, value: result.value};
+    scope.fnCache.set(fn, res);
+    return res;
 }
 
 abstract class Descriptor {
@@ -602,7 +671,9 @@ class NamespaceDescriptor extends Descriptor {
                 if (val) return val;
                 const accessor = this.entries.get(field);
                 if (typeof accessor === "function") return accessor(env, pos, block);
-                throwErr(env, pos, `namespace ${route} does not have field: ${field}`);
+                throwErr(env, pos, `namespace ${route} does not have field: ${field}`, [
+                    [this.pos, "namespace defined here"],
+                ]);
             },
             getSymbol(env, pos, field, block): AnalysisResult | undefined {
                 return undefined;
@@ -636,6 +707,35 @@ const builtinNamespaceDescriptor = d.ns({
     std: d.ns({
         File: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "build_artifact", narrow: "file", pos: compilerPos()}}}),
         Folder: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "build_artifact", narrow: "file", pos: compilerPos()}}}),
+        mc: d.ns({
+            Result: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "mc:result", pos: compilerPos()}}}),
+            Datapack: d.ns({
+                compile: d.ns({}, {call(envIn, slot, pos, argAst, block) {
+                    const env = {...envIn, scope: {
+                        ...envIn.scope,
+                        comptime: new Map(envIn.scope.comptime),
+                    }};
+                    env.scope.comptime.set(target_env_symbol, {
+                        kind: "mc",
+                        fnCache: new Map(),
+                    } satisfies TargetEnv);
+                    const argRes = analyze(env, {type: "export_list", key: {type: "mc:identifier", pos}, pos}, argAst.pos, argAst.ast, block);
+                    const argCt = getComptime(env, "export_list", argRes.value, pos);
+                    for (const item of argCt.exports) {
+                        const body = analyze(env, {type: "unknown", pos: compilerPos()}, item.value.pos, item.value.ast, block);
+                        if (body.type.type === "fn") {
+                            const content = getComptime(env, "fn", body.value, item.value.pos);
+                            const compiled = compileFunction(env, content);
+                            console.log("ident", printers.runtimeValue.dump(item.key));
+                            console.log("compiled.block", printers.block.dump(compiled.block));
+                            console.log("compiled.value", printers.runtimeValue.dump(compiled.value));
+                            // now we need to compile & emit the mcfunction
+                        } else throwErr(env, pos, "TODO mc body type: " + printers.runtimeValue.dumpList([item.key, item.value]));
+                    }
+                    throwErr(env, pos, "TODO call #builtin.std.mc.Datapack.compile");
+                }}),
+            }),
+        }),
         c: d.ns({
             compile: d.ns({}, {call(envIn, slot, pos, argAst, block) {
                 // now what we need to do is update the scope to set the compile target to c,
@@ -648,11 +748,15 @@ const builtinNamespaceDescriptor = d.ns({
                 };
                 env.scope.comptime.set(target_env_symbol, {
                     kind: "c",
+                    fnCache: new Map(),
                 } satisfies TargetEnv);
-                const argRes = analyze(env, {type: "c:exports", pos}, argAst.pos, argAst.ast, block);
-                const argCt = getComptime(env, "c:exports", argRes.value, pos);
+                const argRes = analyze(env, {type: "export_list", key: {type: "c:export_name", pos}, pos}, argAst.pos, argAst.ast, block);
+                const argCt = getComptime(env, "export_list", argRes.value, pos);
+                for (const {key, keyPos: key_pos, value} of argCt.exports) {
+                    const kv = getComptime(env, "c:export_name", key, key_pos);
+                }
                 // then readContainer the arg,
-                //   - arguably shouldn't be readContainer, instead we should analyze it as a type 'c:exports'
+                //   - arguably shouldn't be readContainer, instead we should analyze it as a type 'export_list'
                 // then analyze all the entries and emit???
                 throwErr(env, pos, "TODO call #builtin.std.c.compile");
             }}),
@@ -678,8 +782,8 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
     } else if (ast.kind === "block" && ast.tag === "string") {
         if (slot.type === "build_artifact") {
             const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
-            const addedValue = blockAppend(block, {expr: "comptime:file_create", pos: ast.pos, value: str.value});
-            return {type: {type: "build_artifact", pos: compilerPos()}, value: addedValue};
+            const res = blockAppend(block, {expr: "comptime:file_create", pos: ast.pos, value: str.value});
+            return {type: {type: "build_artifact", pos: compilerPos()}, value: res};
         } else if (slot.type === "uint8array") {
             if (ast.items.length !== 1) throwErr(env, ast.pos, "TODO str items len != 1 todo" + printers.astNode.dumpList(ast.items, 3), [], "todo");
             const it0 = ast.items[0]!;
@@ -687,7 +791,28 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             // if it has aggrandizements it might need runtime construction unless they're all comptime
             // although if it's a uint8array you can't runtime construct the aggrandizements so maybe it should just error
             const unescaped = unescapeString(env, it0.raw, it0.pos);
-            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(unescaped)}};
+            const sourcemap: Uint8ArraySourcemapEntry[] = [];
+            // TODO: fill out the sourcemap so that we can ask to make an error point to a specific byte of a comptime uint8array
+            return {type: {type: "uint8array", pos: compilerPos()}, value: {kind: "uint8array", value: enc.encode(unescaped), sourcemap}};
+        } else if (slot.type === "mc:identifier") {
+            const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
+            const u8a = getComptime(env, "uint8array", str.value, ast.pos);
+            const decoded = dec.decode(u8a.value);
+            const match = decoded.match(/^(?:([-._a-z0-9]+):)?([-._a-z0-9/]+)$/);
+            if (!match) throwErr(env, ast.pos, "invalid minecraft identifier name"); // todo point to the specific bad character
+            const namespace = match[1] ?? "minecraft";
+            const path = match[2]!;
+            if (namespace === "..") throwErr(env, ast.pos, "invalid minecraft identifier name");
+
+            return {type: {type: "mc:identifier", pos: compilerPos()}, value: {kind: "mc:identifier", namespace, path}};
+        } else if (slot.type === "c:export_name") {
+            const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
+            const u8a = getComptime(env, "uint8array", str.value, ast.pos);
+            const decoded = dec.decode(u8a.value);
+            if (!validateCName(decoded)) throwErr(env, ast.pos, "invalid c identifier name", [
+                // TODO: "note: invalid character here", pointing to an item of the sourcemap of the uint8array
+            ]);
+            return {type: {type: "c:export_name", pos: compilerPos()}, value: {kind: "c:export_name", value: decoded as CValidatedIdentifierName}};
         } else {
             throwErr(env, ast.pos, "TODO string in slot: " + printers.type.dump(slot, 3));
         }
@@ -716,11 +841,6 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
                 const rawKey = getComptime(env, "uint8array", entry.key, entry.pos);
                 const value = getComptime(env, "ast", entry.value, entry.pos);
                 const key = dec.decode(rawKey.value);
-                if (!validateCName(key)) {
-                    const etok = addErr(env, entry.pos, "invalid c identifier name");
-                    // registered.set(key, {kind: "error", etok, pos: entry.pos}); // skip this, we can't emit it
-                    continue;
-                }
                 if (registered.has(key)) {
                     const prevdef = registered.get(key)!;
                     const etok = addErr(env, entry.pos, "duplicate definition", [
@@ -747,12 +867,12 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
                 }
             }
             return {type: {type: "build_artifact", narrow: "folder", pos: ast.pos}, value: {kind: "build_artifact", value: result}};
-        } else if (slot.type === "c:exports") {
+        } else if (slot.type === "export_list") {
             const exportsBlock: AnalysisBlock = emptyBlock();
             const arrEntry = blockAppend(exportsBlock, {expr: "comptime:kv_list_init", pos: ast.pos});
             const {env: envInner} = analyzeBlock(env, slot, ast.pos, ast.items, exportsBlock, {
                 analyzeBind(env: Env, [lhs, op, rhs]: Binary2, block: AnalysisBlock): AnalysisResult {
-                    const key = analyze(env, {type: "uint8array", pos: compilerPos()}, lhs.pos, lhs.items, block);
+                    const key = analyze(env, slot.key, lhs.pos, lhs.items, block);
                     const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
                     // insert an instruction to append the value to the children list
                     // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
@@ -764,45 +884,35 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             const arrValue = getComptime(env, "comptime:kv_fields", comptimeEval(env, exportsBlock, arrEntry, ast.pos), ast.pos);
             arrValue.locked = true;
 
-            const registered = new Map<string, {kind: "ok", decl: ComptimeValueDeclaration, pos: TokenPosition} | {kind: "error", etok: ConsumedErrorToken, pos: TokenPosition}>();
-            for (const entry of arrValue.entries) {
-                const rawKey = getComptime(env, "uint8array", entry.key, entry.pos);
-                const value = getComptime(env, "ast", entry.value, entry.pos);
-                const key = dec.decode(rawKey.value);
-                if (!validateCName(key)) {
-                    const etok = addErr(env, entry.pos, "invalid c identifier name");
-                    // registered.set(key, {kind: "error", etok, pos: entry.pos}); // skip this, we can't emit it
-                    continue;
-                }
-                if (registered.has(key)) {
-                    const prevdef = registered.get(key)!;
-                    const etok = addErr(env, entry.pos, "duplicate definition", [
-                        [prevdef.pos, "previous definition here"],
-                    ]);
-                    registered.set(key, {kind: "error", etok, pos: prevdef.pos});
-                    continue;
-                }
-                registered.set(key, {kind: "ok", decl: createDeclaration(env, value), pos: entry.pos});
-            }
-
             // now convert to a Map<string, comptimevalue>? maybe?
 
-            const result: ComptimeValueCExports = {
-                kind: "c:exports",
-                value: new Map<string, ComptimeValue>(),
+            const result: ComptimeValueExportList = {
+                kind: "export_list",
+                exports: [],
             };
-            for (const [key, value] of registered) {
-                if (value.kind === "ok") {
-                    result.value.set(key, getDeclaration(env, value.decl).value);
-                } else {
-                    result.value.set(key, {kind: "error", etok: value.etok});
-                }
+
+            for (const entry of arrValue.entries) {
+                const value = getComptime(env, "ast", entry.value, entry.pos);
+                result.exports.push({key: entry.key, keyPos: entry.pos, value});
             }
-            return {type: {type: "c:exports", pos: ast.pos}, value: result};
+
+            return {type: {type: "export_list", key: slot.key, pos: ast.pos}, value: result};
 
         } else {
             throwErr(env, ast.pos, "TODO map in slot: "+printers.type.dump(slot, 3));
         }
+    } else if (ast.kind === "block" && ast.tag === "code") {
+        const res = analyzeBlock(env, slot, ast.pos, ast.items, block, {analyzeBind(env, [lhs, op, rhs], block) {
+            throwErr(env, op.pos, "TODO: implement bind in block");
+        }});
+        return res.result;
+    } else if (ast.kind === "ident" && ast.identTag === "number") {
+        if (slot.type === "mc:result") {
+            const parsed = +ast.str;
+            if (("" + (parsed |0)) !== ast.str) throwErr(env, ast.pos, `invalid i32: expected '${"" + (parsed |0)}', got '${ast.str}'`);
+            return {type: {type: "mc:result", pos: ast.pos, narrow: "i32"}, value: {kind: "mc:result", result: parsed}};
+        }
+        throwErr(env, ast.pos, "TODO support number in slot: " + slot.type);
     } else {
         throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
     }

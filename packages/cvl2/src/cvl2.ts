@@ -832,10 +832,17 @@ const identValueHighlights: Partial<Record<IdentifierTag, string>> = {
 };
 const rainbow = [colors.red, colors.yellow, colors.green, colors.cyan, colors.blue, colors.magenta];
 
-export function prettyPrintErrors(source: Source, errors: TokenizationError[]): string {
+export function prettyPrintErrors(sources_in: Source[], errors: TokenizationError[]): string {
     if (errors.length === 0) return "";
 
-    const sourceLines = source.text.split('\n');
+    const sources = new Map<string, Source | null>();
+    for (const source of sources_in) {
+        if (sources.has(source.filename)) {
+            sources.set(source.filename, null); // oops defined twice
+            continue;
+        }
+        sources.set(source.filename, source);
+    }
     let output = "";
 
     for (const error of errors) {
@@ -848,7 +855,9 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 
             output += `${pos?.fyl ?? "??"}:${pos?.lyn ?? "??"}:${pos?.col ?? "??"}: ${color}${bold}${style}${colors.reset}: ${message}${colors.reset}\n`;
             
-            const line = pos?.fyl === source.filename ? sourceLines[pos.lyn - 1] : "";
+            const source = entry.pos?.fyl ? sources.get(entry.pos?.fyl) : null;
+            const sourceLines = source?.text.split('\n');
+            const line = sourceLines && pos ? sourceLines[pos.lyn - 1] : "";
             if (line === undefined) continue;
 
             const lineNumberStr = `${pos?.lyn ?? "??"}`;
@@ -875,7 +884,7 @@ export function renderTokenizedOutput(tokenizationResult: TokenizationResult, so
     const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false, highlight: true }, tokenizationResult.result, 0, 0, true);
     const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true, highlight: false }, tokenizationResult.result, 0, 0, true);
     const adisp = printers.astNode.dumpList(tokenizationResult.result);
-    const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
+    const prettyErrors = prettyPrintErrors([source], tokenizationResult.errors);
     
     return (
         `// adisp:${adisp}\n\n` +

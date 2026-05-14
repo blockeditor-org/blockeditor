@@ -151,6 +151,8 @@ export const printers = {
                 adisp.putNewline();
                 adisp.put("value: ");
                 adisp.putInline(printers.runtimeValue, expr.value);
+            }else if(expr.expr === "args") {
+                adisp.putSrc(expr.pos);
             } else {
                 adisp.put(" %%TODO%%");
                 adisp.putSrc(expr.pos);
@@ -180,6 +182,10 @@ export const printers = {
             // empty
         } else if (rtv.kind === "fn") {
             // todo
+        } else if (rtv.kind === "mc:identifier") {
+            adisp.put(" " + rtv.namespace, colors.cyan);
+            adisp.put(":");
+            adisp.put(rtv.path, colors.blue);
         } else {
             adisp.put(` %%TODO%%`);
         }
@@ -217,6 +223,8 @@ export const printers = {
             adisp.put("ret: ");
             adisp.putInline(printers.type, type.ret);
         }else if(type.type === "void") {
+            adisp.putSrc(type.pos);
+        }else if(type.type === "unknown") {
             adisp.putSrc(type.pos);
         }else if(type.type === "build_artifact") {
             adisp.putSrc(type.pos);
