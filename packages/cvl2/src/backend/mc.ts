@@ -29,6 +29,12 @@ export function codegenMcfunction(env: Env, ctx: McCodegenCtx, block: AnalysisBl
             const methodComptime = getComptime(env, "fn", line.method, line.pos);
             const methodName = getFnName(ctx, methodComptime);
             pure[i] = "function " + methodName.namespace + ":" + methodName.path;
+        } else if (line.expr === "mc:exec_raw") {
+            // we can add runtime support later, ie /function ($$(nbt prop)) with nbt source
+            const execValue = getComptime(env, "mc:nbt", line.command, line.pos);
+            if (execValue.type === "string") {
+                lines.push(execValue.value);
+            } else throwErr(env, line.pos, "TODO runCommand: " + printers.runtimeValue.dump(execValue));
         } else {
             throwErr(env, line.pos, "TODO codegenMcfunction line: " + printers.block.dump(block));
         }
@@ -43,3 +49,53 @@ export function codegenMcfunction(env: Env, ctx: McCodegenCtx, block: AnalysisBl
     }
     return lines.join("\n");
 }
+
+
+export type ComptimeValueMcResult = {
+    kind: "mc:result",
+    result: number | "fail",
+};
+export type ComptimeValueMcNbt = {
+    kind: "mc:nbt",
+    type: "string",
+    value: string,
+} | {
+    kind: "mc:nbt",
+    type: "source",
+    source: {
+        type: "storage",
+        storage: ComptimeValueMcIdentifier,
+        path: string,
+    } | {
+        type: "entity",
+        selector: ComptimeValueMcSelector,
+        path: string,
+    } | {
+        type: "block",
+        position: ComptimeValueMcPosition,
+        path: string,
+    },
+};
+export type ComptimeValueMcSelector = {
+    kind: "mc:selector",
+    main: "s" | "p" | "a" | "r" | "e",
+    parameters: Map<string, string>,
+};
+export type ComptimeValueMcPosition = {
+    kind: "mc:position",
+    type: "main",
+    x: number,
+    xRel: boolean,
+    y: number,
+    yRel: boolean,
+    z: number,
+    zRel: boolean,
+} | {
+    kind: "mc:position",
+    type: "^",
+    x: number,
+    y: number,
+    z: number,
+};
+
+export type ComptimeValueMc = ComptimeValueMcNbt | ComptimeValueMcSelector | ComptimeValueMcPosition | ComptimeValueMcResult;

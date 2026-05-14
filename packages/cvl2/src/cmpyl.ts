@@ -4,7 +4,7 @@ import { isAbsolute, relative, sep } from "path";
 import { readFileSync } from "fs";
 import { Adisp, printers } from "./printers";
 import { validateCName, type CValidatedIdentifierName } from "./backend/c";
-import { codegenMcfunction, type McCodegenCtx } from "./backend/mc";
+import { codegenMcfunction, type ComptimeValueMc, type McCodegenCtx } from "./backend/mc";
 
 /*
 todo: we may need to split up 'env' and 'scope'
@@ -314,7 +314,7 @@ function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src:
             break;
         }
         // execute lines
-        const rb2 = readBinary2(env, line.pos, line.items, "pub");
+        const rb2 = readBinary2(env, line.items, "pub");
         if (rb2) {
             // have the caller analyze the bind
             cfg.analyzeBind(env, rb2, block);
@@ -392,7 +392,12 @@ export type ComptimeTypeMcResult = {
     narrow?: "i32" | "error",
     pos: TokenPosition,
 };
-export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeBuildResult | ComptimeTypeTuple | ComptimeTypeOptional | ComptimeTypeExportList | ComptimeTypeMcIdentifier | ComptimeTypeCExportName | ComptimeTypeMcResult;
+export type ComptimeTypeMcNbt = {
+    type: "mc:nbt",
+    narrow?: "string" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | [ComptimeTypeMcNbt] | Map<string, ComptimeTypeMcNbt>,
+    pos: TokenPosition,
+};
+export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeBuildResult | ComptimeTypeTuple | ComptimeTypeOptional | ComptimeTypeExportList | ComptimeTypeMcIdentifier | ComptimeTypeCExportName | ComptimeTypeMcResult | ComptimeTypeMcNbt;
 
 export type ComptimeValueKey = {
     kind: "key",
@@ -445,6 +450,10 @@ export type AnalysisLine = {
     expr: "comptime:file_create",
     pos: TokenPosition,
     value: RuntimeValue,
+} | {
+    expr: "mc:exec_raw",
+    pos: TokenPosition,
+    command: RuntimeValue,
 };
 export type AnalysisBlock = {
     lines: AnalysisLine[],
@@ -646,10 +655,6 @@ export type ComptimeValueMcIdentifier = {
     namespace: string,
     path: string,
 };
-export type ComptimeValueMcResult = {
-    kind: "mc:result",
-    result: number | "fail",
-};
 export type ComptimeValueExportList = {
     kind: "export_list",
     exports: {key: ComptimeValue, keyPos: TokenPosition, value: ComptimeValueAst}[],
@@ -658,22 +663,13 @@ export type ComptimeValueError = {
     kind: "error",
     etok: ConsumedErrorToken,
 };
-export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueBuildArtifact | ComptimeValueUint8Array | ComptimeValueExportList | ComptimeValueCExportName | ComptimeValueMcIdentifier | ComptimeValueError | ComptimeValueMcResult;
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueBuildArtifact | ComptimeValueUint8Array | ComptimeValueExportList | ComptimeValueCExportName | ComptimeValueMcIdentifier | ComptimeValueError | ComptimeValueMc;
 export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
 export type RuntimeValueRuntime = {
     kind: "runtime",
     idx: BlockIdx,
     validate: symbol,
 };
-export function analyzeDestructure(env: Env, destructure: Destructure, value: RuntimeValue, block: AnalysisBlock): Env {
-    if (destructure.extract.kind === "list") {
-        for (let i = 0; i < destructure.extract.items.length; i++) {
-            const item = destructure.extract.items[i]!;
-            throwErr(env, item.pos, `TODO destructure list child ${i}:${printers.destructureExact.dump(item, 3)}`);
-        }
-        return env;
-    } else throwErr(env, destructure.extract.pos, `TODO destructure block ${destructure.extract.kind}:${printers.destructure.dump(destructure, 3)}`)
-}
 export function analyzeFunction(outerEnv: Env, fn: ComptimeValueFn): AnalyzedFn {
     // TODO: what we need to do is track which env.scope.comptime values the body accesses
     // and then only recompile if any of those items change
@@ -687,7 +683,7 @@ export function analyzeFunction(outerEnv: Env, fn: ComptimeValueFn): AnalyzedFn 
     return env.fnCache.getOrPut(fn, env, env => {
         const block = emptyBlock();
         const argsValue = blockAppend(block, {expr: "args", pos: fn.internal.args.extract.pos});
-        const subEnv = analyzeDestructure(env, fn.internal.args, argsValue, block);
+        const subEnv = env;
         const unknownSlot: ComptimeType = {type: "unknown", pos: compilerPos()};
         const result = analyze(subEnv, unknownSlot, fn.pos, fn.internal.body.ast, block);
         return {block, value: result.value};
@@ -761,6 +757,13 @@ const builtinNamespaceDescriptor = d.ns({
         File: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "build_artifact", narrow: "file", pos: compilerPos()}}}),
         Folder: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "build_artifact", narrow: "file", pos: compilerPos()}}}),
         mc: d.ns({
+            runCommand: d.ns({}, {call(env, slot, pos, argAst, block): AnalysisResult {
+                // TODO we should accept three args:
+                // entity(mc:selector), position(mc:position), command nbt
+                const arg = analyze(env, {type: "mc:nbt", narrow: "string", pos}, argAst.pos, argAst.ast, block);
+                const res = blockAppend(block, {expr: "mc:exec_raw", pos, command: arg.value});
+                return {type: {type: "mc:result", pos}, value: res};
+            }}),
             Result: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "mc:result", pos: compilerPos()}}}),
             Datapack: d.ns({
                 compile: d.ns({}, {call(envIn, slot, pos, argAst, block): AnalysisResult {
@@ -876,6 +879,11 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             if (namespace === "..") throwErr(env, ast.pos, "invalid minecraft identifier name");
 
             return {type: {type: "mc:identifier", pos: compilerPos()}, value: {kind: "mc:identifier", namespace, path}};
+        } else if (slot.type === "mc:nbt") {
+            const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
+            const u8a = getComptime(env, "uint8array", str.value, ast.pos);
+            const decoded = dec.decode(u8a.value);
+            return {type: {type: "mc:nbt", narrow: "string", pos: compilerPos()}, value: {kind: "mc:nbt", type: "string", value: decoded}};
         } else if (slot.type === "c:export_name") {
             const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
             const u8a = getComptime(env, "uint8array", str.value, ast.pos);
@@ -984,9 +992,32 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             return {type: {type: "mc:result", pos: ast.pos, narrow: "i32"}, value: {kind: "mc:result", result: parsed}};
         }
         throwErr(env, ast.pos, "TODO support number in slot: " + slot.type);
+    } else if (ast.kind === "binary" && ast.tag === "assign") {
+        const rbr = readBinary2(env, [ast], "assign");
+        if (!rbr) throwErr(env, ast.pos, "Expected X = Y, got X = Y = Z? " + printers.astNode.dumpList(ast.items));
+        const [lhs, op, rhs] = rbr;
+        const destructure = readDestructure(env, lhs.pos, lhs.items);
+        const body = analyze(env, destructure.type, rhs.pos, rhs.items, block);
+        const bindings = analyzeDestructure(env, destructure, body, block);
+        if (bindings.length > 0) throwErr(env, lhs.pos, "TODO implement assignment operator");
+        return {type: {type: "void", pos: lhs.pos}, value: {kind: "void"}};
     } else {
         throwErr(env, ast.pos, "TODO analyzeBase: "+ast.kind+printers.astNode.dumpList([ast], 3));
     }
+}
+function analyzeDestructure(env: Env, destructure: Destructure, body: AnalysisResult, block: AnalysisBlock): AnalysisResult[] {
+    const targets: (AnalysisResult | undefined)[] = [];
+    analyzeDestructureInner(env, destructure.extract, body, block, targets);
+    if (!targets.every(t => !!t)) throw new Error("unreachable");
+    return targets as AnalysisResult[];
+}
+function analyzeDestructureInner(env: Env, extract: DestructureExtract, body: AnalysisResult, block: AnalysisBlock, targets: (AnalysisResult | undefined)[]) {
+    if (extract.kind === "single_item") {
+        if (targets[extract.target]) throw new Error("unreachable!");
+        targets[extract.target] = body;
+    } else if (extract.kind === "discard") {
+        // discard body
+    } else throwErr(env, extract.pos, "TODO support extract: " + printers.destructureExtract.dump(extract));
 }
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -1021,14 +1052,16 @@ export type DestructureTag = {
     pos: TokenPosition,
     tok: ConsumedErrorToken,
 };
+export type DestructureTarget = {name: string, pos: TokenPosition};
 export type Destructure = {
+    targets: DestructureTarget[],
     extract: DestructureExtract,
     type: ComptimeType,
     tags: DestructureTag[],
 };
 export type DestructureExtract = {
     kind: "single_item",
-    name: string,
+    target: number,
     pos: TokenPosition,
 } | {
     kind: "list",
@@ -1038,8 +1071,11 @@ export type DestructureExtract = {
     kind: "map",
     items: [ComptimeValueKey, DestructureExtract][],
     pos: TokenPosition,
+} | {
+    kind: "discard",
+    pos: TokenPosition,
 };
-function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destructure {
+function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[], targets: DestructureTarget[] = []): Destructure {
     /*
     destructure types don't really make sense. here's the use-cases
     1. function args
@@ -1095,9 +1131,17 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
     const ident = lhsItems[0]!;
     if (ident.kind === "ident" && ident.identTag === "normal") {
         return {
-            extract: {kind: "single_item", name: ident.str, pos: ident.pos},
+            extract: {kind: "single_item", target: targets.push({name: ident.str, pos: ident.pos}) - 1, pos: ident.pos},
             type: type ?? {type: "unknown", pos: ident.pos},
             tags: [],
+            targets,
+        };
+    } else if (ident.kind === "ident" && ident.identTag === "discard") {
+        return {
+            extract: {kind: "discard", pos: ident.pos},
+            type: {type: "unknown", pos: ident.pos},
+            tags: [],
+            targets,
         };
     } else if (ident.kind === "block" && ident.tag === "list") {
         const args = readBinary(env, ident.pos, ident.items, "sep");
@@ -1105,7 +1149,7 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
         const types: ComptimeType[] = [];
         for (const arg of args) {
             if (arg.items.length === 0) continue; // TODO: we should allow `[a\n\nb]` but disallow `[a,,b]`
-            const sub = readDestructure(env, arg.pos, arg.items);
+            const sub = readDestructure(env, arg.pos, arg.items, targets);
             extracts.push(sub.extract);
             types.push(sub.type);
         }
@@ -1114,6 +1158,7 @@ function readDestructure(env: Env, pos: TokenPosition, src: SyntaxNode[]): Destr
             extract: {kind: "list", items: extracts, pos: ident.pos},
             type: {type: "tuple", children: types, pos: ident.pos},
             tags: [],
+            targets,
         };
     }
     throwErr(env, ident.pos, `Unsupported kind for destructuring: ${ident.kind}`);
@@ -1133,27 +1178,29 @@ function readContainer(rootEnv: Env, pos: TokenPosition, src: SyntaxNode[]): Rea
         try {
             const lineItems = trimWs(lineRaw.items);
             if (lineItems.length === 0) continue;
-            const rb2 = readBinary2(env, lineRaw.pos, lineItems, "def");
+            const rb2 = readBinary2(env, lineItems, "def");
             if (rb2) {
                 // found binding
                 const [lhs, op, rhs] = rb2;
                 const destructure = readDestructure(env, lhs.pos, lhs.items);
-                if (destructure.extract.kind !== "single_item") throwErr(env, destructure.extract.pos, "TODO: support destructure extract kind: " + destructure.extract.kind);
-                const prev = subscope.bindings.get(destructure.extract.name);
-                if (prev) {
-                    // ideally we would prevent posting the error if the value is already an error
-                    const tok = addErr(env, destructure.extract.pos, `Duplicate binding name ${destructure.extract.name}`, [
-                        [prev.pos, "Previous definition here"],
-                    ]);
-                    subscope.bindings.set(destructure.extract.name, {pos: prev.pos, kind: "error", consumed: tok});
-                } else {
-                    
-                    subscope.bindings.set(destructure.extract.name, {pos: op.pos, kind: "valid", decl: createDeclaration(env, {
-                        kind: "ast",
-                        ast: rhs!.items,
-                        pos: rhs!.pos,
-                        env,
-                    })});
+                if (destructure.extract.kind !== "single_item") throwErr(env, destructure.extract.pos, "TODO: support multiple destructure targets using analyzeDestructure(), called when any of the names is resolved (but if two multiple names are resolved, called only once)");
+                for (const target of destructure.targets) {
+                    const prev = subscope.bindings.get(target.name);
+                    if (prev) {
+                        // ideally we would prevent posting the error if the value is already an error
+                        const tok = addErr(env, destructure.extract.pos, `Duplicate binding name ${target.name}`, [
+                            [prev.pos, "Previous definition here"],
+                        ]);
+                        subscope.bindings.set(target.name, {pos: prev.pos, kind: "error", consumed: tok});
+                    } else {
+                        
+                        subscope.bindings.set(target.name, {pos: op.pos, kind: "valid", decl: createDeclaration(env, {
+                            kind: "ast",
+                            ast: rhs!.items,
+                            pos: rhs!.pos,
+                            env,
+                        })});
+                    }
                 }
             } else {
                 // found non-binding
@@ -1169,12 +1216,12 @@ function trimWs(src: SyntaxNode[]): SyntaxNode[] {
     return src.filter(itm => !((itm.kind === "ws") || (itm.kind === "block" && itm.tag === "inline_comment")));
 }
 type Binary2 = [OperatorSegmentToken, OperatorToken, OperatorSegmentToken];
-function readBinary2(env: Env, pos: TokenPosition, rootSrc: SyntaxNode[], kw: OpTag): Binary2 | undefined {
+function readBinary2(env: Env, rootSrc: SyntaxNode[], kw: OpTag): Binary2 | undefined {
     rootSrc = trimWs(rootSrc);
     if (rootSrc.length === 0) return undefined;
     if (rootSrc[0]!.kind !== "binary" || rootSrc[0]!.tag !== kw) return undefined;
     const src = trimWs(rootSrc[0]!.items);
-    if (src.length !== 3) return throwErr(env, pos, "Expected LHS op RHS, found not that");
+    if (src.length !== 3) return throwErr(env, rootSrc[0]!.pos, "Expected LHS op RHS, found not that");
     const [lhs, op, rhs] = src;
     if (lhs?.kind !== "opSeg" || op?.kind !== "op" || rhs?.kind !== "opSeg") return undefined;
     return [lhs, op, rhs];

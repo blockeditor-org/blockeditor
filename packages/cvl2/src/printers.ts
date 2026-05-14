@@ -153,6 +153,12 @@ export const printers = {
                 adisp.putInline(printers.runtimeValue, expr.value);
             }else if(expr.expr === "args") {
                 adisp.putSrc(expr.pos);
+            }else if(expr.expr === "mc:exec_raw") {
+                adisp.putSrc(expr.pos);
+                using _ = adisp.indent();
+                adisp.putNewline();
+                adisp.put("command: ");
+                adisp.putInline(printers.runtimeValue, expr.command);
             } else {
                 adisp.put(" %%TODO%%");
                 adisp.putSrc(expr.pos);
@@ -193,19 +199,19 @@ export const printers = {
     destructure: new MultiPrinter<Destructure>((adisp, destructure) => {
         adisp.putNewline();
         adisp.put("extract: ");
-        adisp.putInline(printers.destructureExact, destructure.extract);
+        adisp.putInline(printers.destructureExtract, destructure.extract);
         adisp.putNewline();
         adisp.put("type: ");
         adisp.putInline(printers.type, destructure.type);
     }),
-    destructureExact: new SinglePrinter<DestructureExtract>((adisp, extract) => {
+    destructureExtract: new SinglePrinter<DestructureExtract>((adisp, extract) => {
         adisp.put(extract.kind, colors.cyan);
         if (extract.kind === "single_item") {
             adisp.put(` ${JSON.stringify(extract.name)}`, colors.green);
             adisp.putSrc(extract.pos);
         } else if (extract.kind === "list") {
             adisp.putSrc(extract.pos);
-            adisp.putList(printers.destructureExact, extract.items);
+            adisp.putList(printers.destructureExtract, extract.items);
         } else {
             adisp.put(` %%TODO%%`);
             adisp.putSrc(extract.pos);

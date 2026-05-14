@@ -1,11 +1,15 @@
 #builtin.build .= () => std.Folder: [
     "example" .= example
     "datapack" .= std.mc.Datapack.compile: [
-        "qxc:main" .= () => std.mc.Result: {-> mc_fn: {}}
+        "qxc:main" .= qxc_main
     ]
 ]
 
-mc_fn :: () => std.mc.Result: {-> 1}
+qxc_main :: () => std.mc.Result: {-> mc_fn: {}}
+mc_fn :: () => std.mc.Result: {
+    _ = std.mc.runCommand: "say \"Hello\""
+    -> 1
+}
 
 example :: std.File: "abc"
 

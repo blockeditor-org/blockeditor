@@ -19,7 +19,7 @@ type Config = {
 export type OpTag = "sep" | "def" | "pub" | "var" | "assign" | "";
 export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "inline_comment" | "";
 export type RawTag = "return" | "discard" | "void" | "string" | "comment";
-export type IdentifierTag = "normal" | "access" | "builtin" | "number";
+export type IdentifierTag = "normal" | "access" | "builtin" | "number" | "discard";
 
 const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>> = {
     paren: {
@@ -264,14 +264,16 @@ export function tokenize(source: Source): TokenizationResult {
         if(mode === "regular") {
             const firstChar = source.take();
             if (firstChar.match(identifierRegex)) {
+                let count = 1;
                 while (source.peek().match(identifierRegex)) {
                     source.take();
+                    count++;
                 }
                 currentSyntaxNodes.push({
                     kind: "ident",
                     pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                     str: source.text.substring(start.idx, source.currentIndex),
-                    identTag: firstChar.match(/^\d/) ? "number" : "normal",
+                    identTag: firstChar.match(/^\d/) ? "number" : firstChar === "_" && count === 1 ? "discard" : "normal",
                     identTagRaw: "",
                 });
                 continue;
@@ -614,6 +616,7 @@ export function unescapeString(env: Env, segment: string, segmentPos: TokenPosit
         idx += 1;
         const def = unescapeDefs.get(segment[idx] ?? "");
         if (def) {
+            idx += 1;
             result += def;
         } else if (segment[idx] === "x") {
             idx += 1;
