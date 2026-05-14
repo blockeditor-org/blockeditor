@@ -4,7 +4,7 @@ import { isAbsolute, relative, sep } from "path";
 import { readFileSync } from "fs";
 import { Adisp, printers } from "./printers";
 import { validateCName, type CValidatedIdentifierName } from "./backend/c";
-import { codegenMcfunction } from "./backend/mc";
+import { codegenMcfunction, type McCodegenCtx } from "./backend/mc";
 
 /*
 todo: we may need to split up 'env' and 'scope'
@@ -603,7 +603,7 @@ type ComptimeValueType = {
     kind: "type",
     type: ComptimeType,
 };
-type ComptimeValueFn = {
+export type ComptimeValueFn = {
     kind: "fn",
     internal: {
         args: Destructure,
@@ -775,17 +775,27 @@ const builtinNamespaceDescriptor = d.ns({
                     const argRes = analyze(env, {type: "export_list", key: {type: "mc:identifier", pos}, pos}, argAst.pos, argAst.ast, block);
                     const argCt = getComptime(env, "export_list", argRes.value, pos);
                     const resFiles = new Map<string, Uint8Array>();
+
+                    const ctx: McCodegenCtx = {
+                        fns: new Map(),
+                        gid: 0,
+                        internalNs: "_0",
+                    };
+                    
                     for (const item of argCt.exports) {
                         const ident = getComptime(env, "mc:identifier", item.key, pos);
                         const body = analyze(env, {type: "unknown", pos: compilerPos()}, item.value.pos, item.value.ast, block);
                         if (body.type.type === "fn") {
                             const content = getComptime(env, "fn", body.value, item.value.pos);
-                            const compiled = analyzeFunction(env, content);
-                            console.log("ident", printers.runtimeValue.dump(item.key));
-                            // now we need to compile & emit the mcfunction
-                            const result = codegenMcfunction(env, compiled.block, compiled.value);
-                            resFiles.set(`data/${ident.namespace}/functions/${ident.path}.mcfunction`, enc.encode(result));
+                            if (ctx.fns.has(content)) throwErr(env, pos, "duplicate item");
+                            ctx.fns.set(content, ident);
                         } else throwErr(env, pos, "TODO mc body type: " + printers.runtimeValue.dumpList([item.key, item.value]));
+                    }
+                    for (const [content, ident] of ctx.fns.entries()) {
+                        const compiled = analyzeFunction(env, content);
+                        // now we need to compile & emit the mcfunction
+                        const result = codegenMcfunction(env, ctx, compiled.block, compiled.value);
+                        resFiles.set(`data/${ident.namespace}/functions/${ident.path}.mcfunction`, enc.encode(result));
                     }
                     return {type: {type: "build_artifact", pos, narrow: "folder"}, value: {kind: "build_artifact", value: {
                         kind: "folder",
