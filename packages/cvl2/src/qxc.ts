@@ -23,5 +23,7 @@ bracket version
 [.rem rem .cb .rem rem cb] def
 [.true .false .true] true
 
+def 'rem, rem cb, rem, rem cb' def <- " '" is open bracket, "' " is close bracket
+
 
 `;

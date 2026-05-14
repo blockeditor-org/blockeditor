@@ -1,7 +1,11 @@
-#builtin.main .= () => c.compile: [
-    // sample comment
-    "main" .= (argc: c.ptr: c.ptr: c.char, argv: c.int) #callconv_c => c.int: 25
+#builtin.build .= () => std.Folder: [
+    "datapack" .= std.File: "todo"
 ]
+
+// #builtin.build .= () => c.compile: [
+//     // sample comment
+//     "main" .= (argc: c.ptr: c.ptr: c.char, argv: c.int) #callconv_c => c.int: 25
+// ]
 
 demo :: std.Folder [
     "a.txt" .= std.File: "hello"

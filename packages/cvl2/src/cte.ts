@@ -1,4 +1,4 @@
-import { assert, compileFunction, createDeclaration, throwConsumedErr, throwErr, type AnalysisBlock, type ComptimeValue, type ComptimeValueFolderOrFile, type ComptimeValueUint8Array, type Env, type NsFields, type RuntimeValue } from "./cmpyl";
+import { assert, compileFunction, createDeclaration, throwConsumedErr, throwErr, type AnalysisBlock, type ComptimeValue, type ComptimeValueBuildArtifact, type ComptimeValueUint8Array, type Env, type NsFields, type RuntimeValue } from "./cmpyl";
 import { type TokenPosition } from "./cvl2";
 import { printers } from "./printers";
 
@@ -57,9 +57,9 @@ export function comptimeEval(env: Env, block: AnalysisBlock, result: RuntimeValu
         } else if (instr.expr === "comptime:file_create") {
             const arg = getas("uint8array", instr.value, instr.pos);
             results[i] = {
-                kind: "folder_or_file",
-                value: arg.value,
-            } satisfies ComptimeValueFolderOrFile;
+                kind: "build_artifact",
+                value: {kind: "file", value: arg.value},
+            } satisfies ComptimeValueBuildArtifact;
         } else {
             throwErr(env, instr.pos, "todo: comptime eval expr: "+instr.expr);
         }

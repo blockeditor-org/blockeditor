@@ -92,10 +92,10 @@ function importFile(filename: string, contents: string) {
     try {
         const block: AnalysisBlock = emptyBlock();
         const ns = analyzeNamespace(env, {fyl: filename, lyn: 0, col: 0, idx: 0}, tokenized.result);
-        const mainFn = ns.getSymbol(env, rootPos, mainSymbolChildType, mainSymbolSymbol, block);
+        const mainFn = ns.getSymbol(env, rootPos, buildSymbolChildType, buildSymbolSymbol, block);
         if (!mainFn) throwErr(env, rootPos, "expected main fn");
         const callResult = analyzeCall(env, stdFolderOrFileType, rootPos, mainFn, {pos: compilerPos(), ast: [{kind: "raw", pos: compilerPos(), raw: "", tag: "void"}]}, block);
-        const result = getComptime(env, "folder_or_file", comptimeEval(env, block, callResult.value, rootPos), rootPos);
+        const result = getComptime(env, "build_artifact", comptimeEval(env, block, callResult.value, rootPos), rootPos);
         console.log("got result" + printers.folderOrFile.dump(result));
     }catch(err) {
         handleErr(env, err);
@@ -272,8 +272,9 @@ export type ComptimeTypeFn = {
     arg: ComptimeType,
     ret: ComptimeType,
 };
-export type ComptimeTypeFolderOrFile = {
-    type: "folder_or_file",
+export type ComptimeTypeBuildResult = {
+    type: "build_artifact",
+    narrow?: "folder" | "file",
     pos: TokenPosition,
 };
 export type ComptimeTypeTuple = {
@@ -290,7 +291,7 @@ export type ComptimeTypeCExports = {
     type: "c:exports",
     pos: TokenPosition,
 };
-export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeFolderOrFile | ComptimeTypeTuple | ComptimeTypeOptional | ComptimeTypeCExports;
+export type ComptimeType = ComptimeTypeVoid | ComptimeTypeKey | ComptimeTypeAst | ComptimeTypeUnknown | ComptimeTypeType | ComptimeTypeNamespace | ComptimeTypeUint8Array | ComptimeTypeFn | ComptimeTypeBuildResult | ComptimeTypeTuple | ComptimeTypeOptional | ComptimeTypeCExports;
 
 export type ComptimeValueKey = {
     kind: "key",
@@ -481,18 +482,18 @@ function analyzeSub(env: Env, slot: ComptimeType, rootSlot: ComptimeType, ast: S
     }
 }
 
-const stdFolderOrFileType: ComptimeTypeFolderOrFile = {type: "folder_or_file", pos: compilerPos()}; // type std.Folder | std.File
-const mainSymbolSymbol = Symbol("main");
-const mainSymbolChildType: ComptimeType = {
+const stdFolderOrFileType: ComptimeTypeBuildResult = {type: "build_artifact", pos: compilerPos()}; // type std.Folder | std.File
+const buildSymbolSymbol = Symbol("build");
+const buildSymbolChildType: ComptimeType = {
     type: "fn",
     arg: {type: "void", pos: compilerPos()},
     ret: stdFolderOrFileType,
     pos: compilerPos(),
 };
-const mainSymbolValue: ComptimeValueKey = {
-    kind: "key", type: "symbol", key: mainSymbolSymbol, child: mainSymbolChildType,
+const buildSymbolValue: ComptimeValueKey = {
+    kind: "key", type: "symbol", key: buildSymbolSymbol, child: buildSymbolChildType,
 };
-const mainSymbolType: ComptimeTypeKey = {
+const buildSymbolType: ComptimeTypeKey = {
     type: "key",
     pos: compilerPos(),
 };
@@ -515,9 +516,17 @@ type ComptimeValueOptional = {
     kind: "optional",
     some?: ComptimeValue,
 };
-export type ComptimeValueFolderOrFile = {
-    kind: "folder_or_file",
-    value: Uint8Array | Record<string, ComptimeValueFolderOrFile>,
+export type ComptimeValueBuildArtifact = {
+    kind: "build_artifact",
+    value: ComptimeFolder | ComptimeFile,
+};
+export type ComptimeFolder = {
+    kind: "folder",
+    value: Map<string, ComptimeValueBuildArtifact>,
+};
+export type ComptimeFile = {
+    kind: "file",
+    value: Uint8Array,
 };
 export type ComptimeValueUint8Array = {
     kind: "uint8array",
@@ -531,7 +540,7 @@ export type ComptimeValueError = {
     kind: "error",
     etok: ConsumedErrorToken,
 };
-export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueFolderOrFile | ComptimeValueUint8Array | ComptimeValueCExports | ComptimeValueError;
+export type ComptimeValue = ComptimeValueKey | ComptimeValueNamespace | ComptimeValueType | ComptimeValueAst | ComptimeValueVoid | NsFields | ComptimeValueFn | ComptimeValueOptional | ComptimeValueBuildArtifact | ComptimeValueUint8Array | ComptimeValueCExports | ComptimeValueError;
 export type RuntimeValue = ComptimeValue | RuntimeValueRuntime;
 export type RuntimeValueRuntime = {
     kind: "runtime",
@@ -623,10 +632,10 @@ const d = {
 };
 
 const builtinNamespaceDescriptor = d.ns({
-    main: d.raw({type: mainSymbolType, value: mainSymbolValue}),
+    build: d.raw({type: buildSymbolType, value: buildSymbolValue}),
     std: d.ns({
-        File: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}}),
-        Folder: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "folder_or_file", pos: compilerPos()}}}),
+        File: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "build_artifact", narrow: "file", pos: compilerPos()}}}),
+        Folder: d.raw({type: {type: "type", pos: compilerPos()}, value: {kind: "type", type: {type: "build_artifact", narrow: "file", pos: compilerPos()}}}),
         c: d.ns({
             compile: d.ns({}, {call(envIn, slot, pos, argAst, block) {
                 // now what we need to do is update the scope to set the compile target to c,
@@ -667,10 +676,10 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         ]);
         return getDeclaration(env, value.decl);
     } else if (ast.kind === "block" && ast.tag === "string") {
-        if (slot.type === "folder_or_file") {
+        if (slot.type === "build_artifact") {
             const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
             const addedValue = blockAppend(block, {expr: "comptime:file_create", pos: ast.pos, value: str.value});
-            return {type: {type: "folder_or_file", pos: compilerPos()}, value: addedValue};
+            return {type: {type: "build_artifact", pos: compilerPos()}, value: addedValue};
         } else if (slot.type === "uint8array") {
             if (ast.items.length !== 1) throwErr(env, ast.pos, "TODO str items len != 1 todo" + printers.astNode.dumpList(ast.items, 3), [], "todo");
             const it0 = ast.items[0]!;
@@ -685,7 +694,60 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
     } else if (ast.kind === "raw" && ast.tag === "void") {
         return {type: {type: "void", pos: compilerPos()}, value: {kind: "void"}};
     } else if (ast.kind === "block" && ast.tag === "map") {
-        if (slot.type === "c:exports") {
+        if (slot.type === "build_artifact") {
+            const exportsBlock: AnalysisBlock = emptyBlock();
+            const arrEntry = blockAppend(exportsBlock, {expr: "comptime:kv_list_init", pos: ast.pos});
+            const {env: envInner} = analyzeBlock(env, slot, ast.pos, ast.items, exportsBlock, {
+                analyzeBind(env: Env, [lhs, op, rhs]: Binary2, block: AnalysisBlock): AnalysisResult {
+                    const key = analyze(env, {type: "uint8array", pos: compilerPos()}, lhs.pos, lhs.items, block);
+                    const value = analyze(env, {type: "ast", pos: compilerPos()}, rhs.pos, rhs.items, block);
+                    // insert an instruction to append the value to the children list
+                    // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
+                    const ret = blockAppend(block, {expr: "comptime:kv_list_append", pos: op.pos, list: arrEntry, key: key.value, value: value.value});
+                    return {type: {type: "void", pos: compilerPos()}, value: ret};
+                    // 
+                }
+            });
+            const arrValue = getComptime(env, "comptime:kv_fields", comptimeEval(env, exportsBlock, arrEntry, ast.pos), ast.pos);
+            arrValue.locked = true;
+
+            const registered = new Map<string, {kind: "ok", decl: ComptimeValueDeclaration, pos: TokenPosition} | {kind: "error", etok: ConsumedErrorToken, pos: TokenPosition}>();
+            for (const entry of arrValue.entries) {
+                const rawKey = getComptime(env, "uint8array", entry.key, entry.pos);
+                const value = getComptime(env, "ast", entry.value, entry.pos);
+                const key = dec.decode(rawKey.value);
+                if (!validateCName(key)) {
+                    const etok = addErr(env, entry.pos, "invalid c identifier name");
+                    // registered.set(key, {kind: "error", etok, pos: entry.pos}); // skip this, we can't emit it
+                    continue;
+                }
+                if (registered.has(key)) {
+                    const prevdef = registered.get(key)!;
+                    const etok = addErr(env, entry.pos, "duplicate definition", [
+                        [prevdef.pos, "previous definition here"],
+                    ]);
+                    registered.set(key, {kind: "error", etok, pos: prevdef.pos});
+                    continue;
+                }
+                registered.set(key, {kind: "ok", decl: createDeclaration(env, value), pos: entry.pos});
+            }
+
+            // now convert to a Map<string, comptimevalue>? maybe?
+
+            const result: ComptimeFolder = {
+                kind: "folder",
+                value: new Map<string, ComptimeValueBuildArtifact>(),
+            };
+            for (const [key, value] of registered) {
+                if (value.kind === "ok") {
+                    const subitm = getComptime(env, "build_artifact", getDeclaration(env, value.decl).value, value.pos);
+                    result.value.set(key, subitm);
+                } else {
+                    throwConsumedErr(value.etok);
+                }
+            }
+            return {type: {type: "build_artifact", narrow: "folder", pos: ast.pos}, value: {kind: "build_artifact", value: result}};
+        } else if (slot.type === "c:exports") {
             const exportsBlock: AnalysisBlock = emptyBlock();
             const arrEntry = blockAppend(exportsBlock, {expr: "comptime:kv_list_init", pos: ast.pos});
             const {env: envInner} = analyzeBlock(env, slot, ast.pos, ast.items, exportsBlock, {

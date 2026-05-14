@@ -1,4 +1,4 @@
-import { type ComptimeValueFolderOrFile, type AnalysisBlock, type ComptimeType, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
+import { type ComptimeValueBuildArtifact, type AnalysisBlock, type ComptimeType, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
 import { colors, highlights, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 type PrintCfg = {indent: string};
@@ -218,8 +218,12 @@ export const printers = {
             adisp.putInline(printers.type, type.ret);
         }else if(type.type === "void") {
             adisp.putSrc(type.pos);
-        }else if(type.type === "folder_or_file") {
+        }else if(type.type === "build_artifact") {
             adisp.putSrc(type.pos);
+            using _ = adisp.indent();
+            adisp.putNewline();
+            adisp.put("narrow: ");
+            adisp.put(type.narrow ?? "undefined");
         }else if(type.type === "tuple") {
             adisp.putSrc(type.pos);
             adisp.putList(printers.type, type.children);
@@ -262,22 +266,22 @@ export const printers = {
             adisp.putSrc(entity.pos);
         }
     }),
-    folderOrFile: new SinglePrinter<ComptimeValueFolderOrFile>((adisp, entity) => {
-        if (entity.value instanceof Uint8Array) {
-            adisp.put("file", colors.blue);
+    folderOrFile: new SinglePrinter<ComptimeValueBuildArtifact>((adisp, entity) => {
+        if (entity.value.kind === "file") {
+            adisp.put("File", colors.blue);
             using _ = adisp.indent();
             adisp.putNewline();
-            adisp.putWithNl(new TextDecoder().decode(entity.value), colors.green);
-        } else {
-            adisp.put("folder", colors.blue);
+            adisp.putWithNl(new TextDecoder().decode(entity.value.value), colors.white);
+        } else if (entity.value.kind === "folder") {
+            adisp.put("Folder", colors.blue);
             using _ = adisp.indent();
-            for (const [key, value] of Object.entries(entity.value)) {
+            for (const [key, value] of entity.value.value.entries()) {
                 adisp.putNewline();
                 adisp.put(JSON.stringify(key), colors.green);
                 adisp.put(" = ");
                 adisp.putInline(printers.folderOrFile, value);
             }
-            if (Object.entries(entity.value).length === 0) {
+            if (entity.value.value.size === 0) {
                 adisp.putNewline();
                 adisp.put("*empty folder*", colors.brblack);
             }
