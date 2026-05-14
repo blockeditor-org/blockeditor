@@ -8,6 +8,12 @@
 qxc_main :: () => std.mc.Result: {-> mc_fn: {}}
 mc_fn :: () => std.mc.Result: {
     _ = std.mc.runCommand: "say \"Hello\""
+    // aka '/execute if function (-> 0)
+    std.mc.if (std.mc.runCommand: "return 0") {
+
+    } .else {
+
+    }
     -> 1
 }
 

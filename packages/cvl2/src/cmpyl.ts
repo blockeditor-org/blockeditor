@@ -393,7 +393,7 @@ export type ComptimeTypeMcResult = {
     pos: TokenPosition,
 };
 export type ComptimeTypeMcNbt = {
-    type: "mc:nbt",
+    type: "mc:nbt_ref",
     narrow?: "string" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | [ComptimeTypeMcNbt] | Map<string, ComptimeTypeMcNbt>,
     pos: TokenPosition,
 };
@@ -760,7 +760,7 @@ const builtinNamespaceDescriptor = d.ns({
             runCommand: d.ns({}, {call(env, slot, pos, argAst, block): AnalysisResult {
                 // TODO we should accept three args:
                 // entity(mc:selector), position(mc:position), command nbt
-                const arg = analyze(env, {type: "mc:nbt", narrow: "string", pos}, argAst.pos, argAst.ast, block);
+                const arg = analyze(env, {type: "mc:nbt_ref", narrow: "string", pos}, argAst.pos, argAst.ast, block);
                 const res = blockAppend(block, {expr: "mc:exec_raw", pos, command: arg.value});
                 return {type: {type: "mc:result", pos}, value: res};
             }}),
@@ -879,11 +879,11 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
             if (namespace === "..") throwErr(env, ast.pos, "invalid minecraft identifier name");
 
             return {type: {type: "mc:identifier", pos: compilerPos()}, value: {kind: "mc:identifier", namespace, path}};
-        } else if (slot.type === "mc:nbt") {
+        } else if (slot.type === "mc:nbt_ref") {
             const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
             const u8a = getComptime(env, "uint8array", str.value, ast.pos);
             const decoded = dec.decode(u8a.value);
-            return {type: {type: "mc:nbt", narrow: "string", pos: compilerPos()}, value: {kind: "mc:nbt", type: "string", value: decoded}};
+            return {type: {type: "mc:nbt_ref", narrow: "string", pos: compilerPos()}, value: {kind: "mc:nbt_ref", type: "string", value: decoded}};
         } else if (slot.type === "c:export_name") {
             const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
             const u8a = getComptime(env, "uint8array", str.value, ast.pos);

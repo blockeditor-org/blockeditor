@@ -2,6 +2,22 @@ import { compilerPos, throwErr, type AnalysisBlock, type ComptimeValueFn, type C
 import { getComptime } from "../cte";
 import { printers } from "../printers";
 
+/*
+runCommand should require arguments:
+- location (eg /execute positioned 1.0 2.0 3.0 rotated 4.0 5.0 in minecraft:the_nether)
+- entities (eg /execute as @p)
+- aka CommandSourceStack in the code: https://mcsrc.dev/1/26.1.2/net/minecraft/commands/CommandSourceStack
+  - vec3 worldPosition, dimension level, entity entity, anchor anchor, vec2 rotation 
+  - we combine four of those into one
+
+so eg:
+- main :: (loc: mc.Location, self: mc.Entity, macroArg: mc.NBT())
+  - _ = mc.Result: mc.runCommand(.at = &pos, .as = &self, .cmd = "say hi")
+  - it's &self because runCommand accepts an EntitiesRef (a Selector), but when you call a function you recieve just a single entity
+  - same with &loc
+  - in codegen, these resolve to '@s' and '~ ~ ~' (assuming they haven't been clobbered, in which case they error at codegen)
+*/
+
 export type McCodegenCtx = {
     fns: Map<ComptimeValueFn, ComptimeValueMcIdentifier>,
     gid: number,
@@ -31,7 +47,7 @@ export function codegenMcfunction(env: Env, ctx: McCodegenCtx, block: AnalysisBl
             pure[i] = "function " + methodName.namespace + ":" + methodName.path;
         } else if (line.expr === "mc:exec_raw") {
             // we can add runtime support later, ie /function ($$(nbt prop)) with nbt source
-            const execValue = getComptime(env, "mc:nbt", line.command, line.pos);
+            const execValue = getComptime(env, "mc:nbt_ref", line.command, line.pos);
             if (execValue.type === "string") {
                 lines.push(execValue.value);
             } else throwErr(env, line.pos, "TODO runCommand: " + printers.runtimeValue.dump(execValue));
@@ -55,12 +71,12 @@ export type ComptimeValueMcResult = {
     kind: "mc:result",
     result: number | "fail",
 };
-export type ComptimeValueMcNbt = {
-    kind: "mc:nbt",
+export type ComptimeValueMcNbtRef = {
+    kind: "mc:nbt_ref",
     type: "string",
     value: string,
 } | {
-    kind: "mc:nbt",
+    kind: "mc:nbt_ref",
     type: "source",
     source: {
         type: "storage",
@@ -68,22 +84,22 @@ export type ComptimeValueMcNbt = {
         path: string,
     } | {
         type: "entity",
-        selector: ComptimeValueMcSelector,
+        selector: ComptimeValueMcEntitiesRef,
         path: string,
     } | {
         type: "block",
-        position: ComptimeValueMcPosition,
+        position: ComptimeValueMcPositionRef,
         path: string,
     },
 };
-export type ComptimeValueMcSelector = {
-    kind: "mc:selector",
+export type ComptimeValueMcEntitiesRef = {
+    kind: "mc:entities_ref",
     main: "s" | "p" | "a" | "r" | "e",
     parameters: Map<string, string>,
 };
-export type ComptimeValueMcPosition = {
-    kind: "mc:position",
-    type: "main",
+export type ComptimeValueMcPositionRef = {
+    kind: "mc:position_ref",
+    type: "absrel",
     x: number,
     xRel: boolean,
     y: number,
@@ -91,11 +107,30 @@ export type ComptimeValueMcPosition = {
     z: number,
     zRel: boolean,
 } | {
-    kind: "mc:position",
+    kind: "mc:position_ref",
     type: "^",
     x: number,
     y: number,
     z: number,
+    anchor: "eyes" | "feet", // default is feet
+};
+export type ComptimeValueMcLocation = {
+    kind: "mc:location",
+    position: ComptimeValueMcPositionRef,
+    rotation: ComptimeValueMcRotationRef,
+    dimension?: ComptimeValueMcIdentifier,
+};
+export type ComptimeValueMcRotationRef = {
+    kind: "mc:rotation_ref",
+    type: "absrel",
+    x: number,
+    xRel: number,
+    y: number,
+    yRel: number,
+} | {
+    kind: "mc:rotation_ref",
+    type: "as",
+    selector: ComptimeValueMcEntitiesRef,
 };
 
-export type ComptimeValueMc = ComptimeValueMcNbt | ComptimeValueMcSelector | ComptimeValueMcPosition | ComptimeValueMcResult;
+export type ComptimeValueMc = ComptimeValueMcNbtRef | ComptimeValueMcEntitiesRef | ComptimeValueMcPositionRef | ComptimeValueMcResult | ComptimeValueMcLocation | ComptimeValueMcRotationRef;
