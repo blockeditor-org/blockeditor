@@ -5,16 +5,25 @@
     ]
 ]
 
-qxc_main :: () => std.mc.Result: {-> mc_fn: {}}
-mc_fn :: () => std.mc.Result: {
+qxc_main :: () => std.mc.Result: {
+    _ = mc_return_test_1: {}
+    _ = mc_return_test_2: {}
+    // _ = mc_error_test_1: {} // TODO: expect a compilation error in mcfunction codegen for this one
+    -> 0
+}
+mc_return_test_1 :: () => std.mc.Result: {
+    value := std.mc.Result: 5
+    -> value
+}
+mc_return_test_2 :: () => std.mc.Result: {
     _ = std.mc.runCommand: "say \"Hello\""
-    // aka '/execute if function (-> 0)
-    std.mc.if (std.mc.runCommand: "return 0") {
-
-    } .else {
-
-    }
-    -> 1
+    result := std.mc.runCommand: "say \"Goodbye\""
+    -> result
+}
+mc_error_test_1 :: () => std.mc.Result: {
+    r1 := std.mc.runCommand: "say \"Hello\""
+    r2 := std.mc.runCommand: "say \"Goodbye\""
+    -> r1
 }
 
 example :: std.File: "abc"

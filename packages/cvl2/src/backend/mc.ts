@@ -1,5 +1,6 @@
 import { compilerPos, throwErr, type AnalysisBlock, type ComptimeValueFn, type ComptimeValueMcIdentifier, type Env, type RuntimeValue } from "../cmpyl";
 import { getComptime } from "../cte";
+import type { TokenPosition } from "../cvl2";
 import { printers } from "../printers";
 
 /*
@@ -11,11 +12,15 @@ runCommand should require arguments:
   - we combine four of those into one
 
 so eg:
-- main :: (loc: mc.Location, self: mc.Entity, macroArg: mc.NBT(.unknown))
-  - _ = mc.Result: mc.runCommand(.at = &pos, .as = &self, .cmd = "say hi")
+    main :: (loc: mc.Location, self: mc.Entity, macroArg: mc.NBT(.unknown))
+        _ = mc.Result: mc.runCommand(.at = &pos, .as = &self, .cmd = "say hi")
   - it's &self because runCommand accepts an EntitiesRef (a Selector), but when you call a function you recieve just a single entity
   - same with &loc
   - in codegen, these resolve to '@s' and '~ ~ ~' (assuming they haven't been clobbered, in which case they error at codegen)
+  - but note that if you do this, it will resolve to @s still
+      self_ref := &self
+      mc.execute.as(mc.world.allEntities().filterTag("abc")).at(self_ref) <- it will use 'at @s' here
+      mc.execute.as(mc.world.allEntities().filterTag("abc")).at(&self) <- this is ok, it will just error
 */
 
 export type McCodegenCtx = {
@@ -35,8 +40,16 @@ export function codegenMcfunction(env: Env, ctx: McCodegenCtx, block: AnalysisBl
     console.log("codegenMcfunction.block", printers.block.dump(block));
     console.log("codegenMcfunction.value", printers.runtimeValue.dump(value));
 
-    const lines: string[] = [];
-    let pure: string[] = [];
+    const _rawLines: string[] = [];
+    let lostPositions: TokenPosition[] = [];
+    let uncommittedLine: {idx?: number, cmd: string} | undefined;
+    function addLine(idx: number | undefined, pos: TokenPosition, cmd: string) {
+        if (uncommittedLine) {
+            _rawLines.push(uncommittedLine.cmd);
+            if (uncommittedLine.idx) lostPositions[uncommittedLine.idx] = pos;
+        }
+        uncommittedLine = {idx, cmd};
+    }
     for (const [i, line] of block.lines.entries()) {
         if (line.expr === "args") {
             // nothing to do
@@ -44,26 +57,33 @@ export function codegenMcfunction(env: Env, ctx: McCodegenCtx, block: AnalysisBl
             // we can add runtime support later, ie for dynamic dispatch
             const methodComptime = getComptime(env, "fn", line.method, line.pos);
             const methodName = getFnName(ctx, methodComptime);
-            pure[i] = "function " + methodName.namespace + ":" + methodName.path;
+            addLine(i, line.pos, "function " + methodName.namespace + ":" + methodName.path);
         } else if (line.expr === "mc:exec_raw") {
             // we can add runtime support later, ie /function ($$(nbt prop)) with nbt source
             const execValue = getComptime(env, "mc:nbt_ref", line.command, line.pos);
             if (execValue.type === "string") {
-                lines.push(execValue.value);
+                addLine(i, line.pos,execValue.value);
             } else throwErr(env, line.pos, "TODO runCommand: " + printers.runtimeValue.dump(execValue));
         } else {
             throwErr(env, line.pos, "TODO codegenMcfunction line: " + printers.block.dump(block));
         }
     }
     if (value.kind === "mc:result") {
-        lines.push("return " + value.result);
+        addLine(undefined, compilerPos(), "return " + value.result);
     } else if (value.kind === "runtime") {
-        if (pure[value.idx]) return `return ${pure[value.idx]}`;
-        throwErr(env, compilerPos(), "TODO return");
+        if (uncommittedLine?.idx === value.idx) {
+            uncommittedLine.cmd = `return run ${uncommittedLine.cmd}`;
+        } else {
+            throwErr(env, compilerPos(), "this result was lost", [
+                [block.lines[value.idx]!.pos, "acquired here"],
+                [lostPositions[value.idx] ?? compilerPos(), "lost here"],
+            ]); // todo: add a 'lost here' note
+        }            
     } else {
         throwErr(env, compilerPos(), "TODO codegenMcfunction result: " + printers.runtimeValue.dump(value));
     }
-    return lines.join("\n");
+    if (uncommittedLine) _rawLines.push(uncommittedLine.cmd);
+    return _rawLines.join("\n");
 }
 
 

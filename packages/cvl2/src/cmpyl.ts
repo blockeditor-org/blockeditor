@@ -85,6 +85,10 @@ export type Binding = {
     pos: TokenPosition,
     decl: ComptimeValueDeclaration,
 } | {
+    kind: "runtime",
+    pos: TokenPosition,
+    runtime: AnalysisResult,
+} | {
     kind: "error",
     pos: TokenPosition,
     consumed: ConsumedErrorToken,
@@ -300,7 +304,7 @@ function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src:
     analyzeBind(env: Env, b2: Binary2, block: AnalysisBlock): AnalysisResult,
 }): AnalyzedBlock {
     const container = readContainer(rootEnv, pos, src);
-    const env = container.env;
+    let env = container.env;
     
     let ret: AnalysisResult | undefined;
     let retloc: TokenPosition | undefined;
@@ -319,13 +323,29 @@ function analyzeBlock(rootEnv: Env, slot: ComptimeType, pos: TokenPosition, src:
             // have the caller analyze the bind
             cfg.analyzeBind(env, rb2, block);
         } else {
-            // analyze the line
-            // TODO: if '->', use the specified slot. else, use void.
-            if (line.items[0]?.kind === "raw" && line.items[0].tag === "return") {
-                retloc = line.items[0].pos;
-                ret = analyze(env, slot, line.pos, line.items.slice(1), block);
+            const rb3 = readBinary2(env, line.items, "var");
+            if (rb3) {
+                const [lhs, op, rhs] = rb3;
+                const destructure = readDestructure(env, lhs.pos, lhs.items);
+                const rhsanalyzed = analyze(env, destructure.type, rhs.pos, rhs.items, block);
+                const destructured = analyzeDestructure(env, destructure, rhsanalyzed, block);
+                const newBindings = new Map(env.scope.bindings);
+                for (let i = 0; i < destructure.targets.length; i++) {
+                    const target = destructure.targets[i]!;
+                    const value = destructured[i]!;
+                    newBindings.set(target.name, {kind: "runtime", pos: target.pos, runtime: value});
+                }
+                env = {...env, scope: {...env.scope, bindings: newBindings}};
             } else {
-                analyze(env, {type: "void", pos: line.pos}, line.pos, line.items, block);
+                // analyze the line
+                // TODO: if '->', use the specified slot. else, use void.
+                const trimmed = trimWs(line.items); // oops this is duplicated in analyze() too
+                if (trimmed[0]?.kind === "raw" && trimmed[0].tag === "return") {
+                    retloc = trimmed[0].pos;
+                    ret = analyze(env, slot, line.pos, trimmed.slice(1), block);
+                } else {
+                    analyze(env, {type: "void", pos: line.pos}, line.pos, line.items, block);
+                }
             }
         }
     }
@@ -522,6 +542,7 @@ function analyze(env: Env, slot: ComptimeType, pos: TokenPosition, ast: SyntaxNo
     */
 
     if (ast.length === 0) throwErr(env, pos, "failed to analyze empty expression");
+    if (ast[0]?.kind === "raw" && ast[0].tag === "return") throwErr(env, ast[0].pos, "can't return here");
 
     return analyzeSub(env, slot, slot, ast, ast.length - 1, block);
 }
@@ -852,7 +873,12 @@ function analyzeBase(env: Env, slot: ComptimeType, ast: SyntaxNode, block: Analy
         if (value.kind === "removed") throwErr(env, ast.pos, "not defined in scope: "+ast.str, [
             [value.pos, "removed here"],
         ]);
-        return getDeclaration(env, value.decl);
+        if (value.kind === "valid") return getDeclaration(env, value.decl);
+        if (value.kind === "runtime") {
+            if (value.runtime.value.kind === "runtime" && value.runtime.value.validate !== block.validate) throwErr(env, ast.pos, "not accessible");
+            return value.runtime;
+        }
+        throwErr(env, ast.pos, "unreachable?");
     } else if (ast.kind === "block" && ast.tag === "string") {
         if (slot.type === "build_artifact") {
             const str = analyzeBase(env, {type: "uint8array", pos: compilerPos()}, ast, block);
@@ -1009,6 +1035,7 @@ function analyzeDestructure(env: Env, destructure: Destructure, body: AnalysisRe
     const targets: (AnalysisResult | undefined)[] = [];
     analyzeDestructureInner(env, destructure.extract, body, block, targets);
     if (!targets.every(t => !!t)) throw new Error("unreachable");
+    if (targets.length !== destructure.targets.length) throw new Error("unreachable");
     return targets as AnalysisResult[];
 }
 function analyzeDestructureInner(env: Env, extract: DestructureExtract, body: AnalysisResult, block: AnalysisBlock, targets: (AnalysisResult | undefined)[]) {
