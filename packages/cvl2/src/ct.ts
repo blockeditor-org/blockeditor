@@ -34,10 +34,12 @@ const comptime = {
 const basic = {
     void: blockTypeSym<null>(),
     noop: blockLineSym<null>(),
+    i32: blockTypeSym<null>(),
+    add: blockLineSym<{lhs: BlockArg, rhs: BlockArg}>(),
 };
 const mc = {
     result: blockTypeSym<null>(),
-    raw: blockLineSym<string[]>(),
+    raw: blockLineSym<string>(),
 };
 const demo: Block = {
     offset: 0,
@@ -50,6 +52,16 @@ const demo: Block = {
 registerTypeConversion(basic.void, mc.result, (src) => {
     return null;
 });
+registerTypeConversion(basic.void, mc.result, (src) => {
+    return null;
+});
 registerLineConversion(basic.noop, mc.raw, (src) => {
-    return [[]];
+    return [];
+});
+registerLineConversion(basic.add, mc.raw, (src) => {
+    return [
+        "execute store result score $tmp qxc.tmp1 run <get.0>", // or really, get src.lhs -> $tmp qxc.tmp1
+        "execute store result score $tmp qxc.tmp2 run <get.1>", // get src.rhs -> $tmp qxc.tmp2
+        "scoreboard players operation $tmp qxc.tmp1 += $tmp qxc.tmp2",
+    ];
 });
