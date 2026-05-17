@@ -34,7 +34,7 @@ const comptime = {
 const basic = {
     void: blockTypeSym<null>(),
     noop: blockLineSym<null>(),
-    i32: blockTypeSym<null>(),
+    int: blockTypeSym<{min: bigint, max: bigint}>(),
     add: blockLineSym<{lhs: BlockArg, rhs: BlockArg}>(),
 };
 const mc = {
@@ -58,6 +58,11 @@ registerTypeConversion(basic.void, mc.result, (src) => {
 registerLineConversion(basic.noop, mc.raw, (src) => {
     return [];
 });
+registerTypeConversion(basic.int, mc.result, src => {
+    if (src.min < -2,147,483,648) return convert_fail_sym;
+    if (src.max > 2,147,483,647) return convert_fail_sym;
+    return null;
+});
 registerLineConversion(basic.add, mc.raw, (src) => {
     return [
         "execute store result score $tmp qxc.tmp1 run <get.0>", // or really, get src.lhs -> $tmp qxc.tmp1
@@ -65,3 +70,7 @@ registerLineConversion(basic.add, mc.raw, (src) => {
         "scoreboard players operation $tmp qxc.tmp1 += $tmp qxc.tmp2",
     ];
 });
+
+// to convert, the reciever specifies which types are supported, and then we automatically convert
+// ie we pathfind using the conversion weights from an unsupported type to a supported type
+// we do need to figure out how to support eg i32 and i64 but not i33
