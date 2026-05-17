@@ -444,6 +444,8 @@ export type ComptimeValueAst = {
 // and then other instructions will be transformed to the nearest supported instruction
 // (it will assemble a plan for each unsupported instruction that uses the lowest cost list of
 //  transforms to convert to a supported instruction)
+// ^ do we need to do this? we can switch based on the target environment so we can emit whatever
+//    instructions we want
 export type AnalysisLine = {
     expr: "comptime:kv_list_init",
     pos: TokenPosition,
@@ -476,6 +478,7 @@ export type AnalysisLine = {
     command: RuntimeValue,
 };
 export type AnalysisBlock = {
+    offset: number,
     lines: AnalysisLine[],
     validate: symbol,
 };
