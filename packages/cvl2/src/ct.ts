@@ -74,3 +74,25 @@ registerLineConversion(basic.add, mc.raw, (src) => {
 // to convert, the reciever specifies which types are supported, and then we automatically convert
 // ie we pathfind using the conversion weights from an unsupported type to a supported type
 // we do need to figure out how to support eg i32 and i64 but not i33
+
+// we want to be able to convert i128 to 2xi64, and then each of those to 2xi32 on a platform that supports i32 but not i128
+// i128 example
+// %0: i128 = int_init(123456789) <- this probably won't be a real instruction. maybe convert() can request conversion from comptime to initializers?
+// %1: i128 = int_add(%0, $int(45))
+// ->
+// %0: struct(i64, i64) = blk{
+//   %1: i64 = int_init(0)
+//   %2: i64 = int_init(123456789)
+//   -> pair_init(%1: i64, %2: i64)
+// }
+// %1: struct(i64, i64) = call($i128_add_64, %0, $pair_init(...))
+//
+// $i64_add::{...}
+// note that all values are immutable, a reference needs to be like stack_alloc()
+//
+// or a simpler one, ranged ints to regular ints for c eg
+// %0: int(0, 5) = ...
+// %1: int(0, 10) = int_add(%0, %0)
+// ->
+// %0: int(0, 8) = ...
+// %1: int(0, 16) = ...
