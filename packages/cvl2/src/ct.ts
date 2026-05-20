@@ -94,7 +94,6 @@ export class TypeOptional extends Type {
     constructor(public child: Type) {super()}
 }
 
-
 export class CtExportList extends Type {
     constructor(public key: Type) {super()}
     

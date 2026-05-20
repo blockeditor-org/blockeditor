@@ -154,3 +154,87 @@ export type ComptimeValueMcRotationRef = {
 };
 
 export type ComptimeValueMc = ComptimeValueMcNbtRef | ComptimeValueMcEntitiesRef | ComptimeValueMcPositionRef | ComptimeValueMcResult | ComptimeValueMcLocation | ComptimeValueMcRotationRef;
+
+/*
+
+const comptime = {
+    Artifact: blockTypeSym<null>(),
+    file_create: blockLineSym<null>(),
+};
+const basic = {
+    void: blockTypeSym<null>(),
+    noop: blockLineSym<null>(),
+    int: blockTypeSym<{min: bigint, max: bigint}>(),
+    add: blockLineSym<{lhs: BlockArg, rhs: BlockArg}>(),
+};
+const mc = {
+    result: blockTypeSym<null>(),
+    raw: blockLineSym<string>(),
+    argument_type: {
+        // https://minecraft.wiki/w/Argument_types
+        // types used for arguments in commands
+        "brigader:bool": blockTypeSym<null>(),
+        "brigader:double": blockTypeSym<null>(),
+        "brigader:float": blockTypeSym<null>(),
+        "brigader:integer": blockTypeSym<null>(),
+        "brigadier:long": blockTypeSym<null>(),
+        "brigadier:string": blockTypeSym<"word" | "phrase" | "greedy">(),
+        "minecraft:angle": blockTypeSym<null>(),
+        "minecraft:block_pos": blockTypeSym<null>(),
+        "minecraft:block_predicate": blockTypeSym<null>(),
+        "minecraft:block_state": blockTypeSym<null>(),
+        "minecraft:color": blockTypeSym<null>(),
+        "minecraft:column_pos": blockTypeSym<null>(),
+        "minecraft:component": blockTypeSym<null>(),
+        "minecraft:dimension": blockTypeSym<null>(),
+        "minecraft:entity": blockTypeSym<null>(),
+        "minecraft:entity_anchor": blockTypeSym<null>(),
+        "minecraft:float_range": blockTypeSym<null>(),
+        "minecraft:function": blockTypeSym<null>(),
+        "minecraft:game_profile": blockTypeSym<null>(),
+        "minecraft:gamemode": blockTypeSym<null>(),
+        "minecraft:heightmap": blockTypeSym<null>(),
+        "minecraft:int_range": blockTypeSym<null>(),
+        "minecraft:item_predicate": blockTypeSym<null>(),
+        "minecraft:item_slot": blockTypeSym<null>(),
+        "minecraft:item_slots": blockTypeSym<null>(),
+        "minecraft:item_stack": blockTypeSym<null>(),
+        "minecraft:loot_modifier": blockTypeSym<null>(),
+        "minecraft:loot_predicate": blockTypeSym<null>(),
+        "minecraft:loot_table": blockTypeSym<null>(),
+        "minecraft:message": blockTypeSym<null>(),
+        "minecraft:nbt_compound_tag": blockTypeSym<null>(),
+        "minecraft:nbt_path": blockTypeSym<null>(),
+        "minecraft:nbt_tag": blockTypeSym<null>(),
+        "minecraft:objective": blockTypeSym<null>(),
+        "minecraft:objective_criteria": blockTypeSym<null>(),
+        "minecraft:operation": blockTypeSym<null>(),
+        "minecraft:particle": blockTypeSym<null>(),
+        "minecraft:resource": blockTypeSym<{registry: string}>(),
+        "minecraft:resource_key": blockTypeSym<{registry: string}>(),
+        "minecraft:resource_location": blockTypeSym<null>(),
+        "minecraft:resource_or_tag": blockTypeSym<{registry: string}>(),
+        "minecraft:resource_or_tag_key": blockTypeSym<{registry: string}>(),
+        "minecraft:resource_selector": blockTypeSym<null>(),
+        "minecraft:rotation": blockTypeSym<null>(),
+        "minecraft:score_holder": blockTypeSym<{amount: "single" | "multiple"}>(),
+        "minecraft:scoreboard_slot": blockTypeSym<null>(),
+        "minecraft:style": blockTypeSym<null>(),
+        "minecraft:swizzle": blockTypeSym<null>(),
+        "minecraft:team": blockTypeSym<null>(),
+        "minecraft:template_mirror": blockTypeSym<null>(),
+        "minecraft:template_rotation": blockTypeSym<null>(),
+        "minecraft:time": blockTypeSym<null>(),
+        "minecraft:uuid": blockTypeSym<null>(),
+        "minecraft:vec2": blockTypeSym<null>(),
+        "minecraft:vec3": blockTypeSym<null>(),
+    },
+};
+const demo: Block = {
+    offset: 0,
+    lines: [
+        blockLine(basic.noop, null, [], blockType(basic.void, null)),
+    ],
+    validate: Symbol(),
+};
+*/
