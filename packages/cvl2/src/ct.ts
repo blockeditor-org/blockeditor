@@ -284,3 +284,39 @@ export class CExportName extends Type {
         return {type: CExportName.from(), value: {kind: "c:export_name", value: decoded as CValidatedIdentifierName}};
     }
 }
+
+/*
+because we have the destination target available in comptime env, our ideal is to not
+need a ct system. ideally instead of blockAppend(), every append is per-target.
+
+so does that work? if so, how?
+
+first off, each target would have its own block type
+^ this means each target needs its own comptimeeval
+^ that is not ideal. we would prefer to reuse comptimeeval across targets
+
+so maybe we have a shared block type. in that case, the issue we run into is:
+- function call can't use blockAppend(call), it has to dispatch per-target
+- each target will have its own instruction for function calling, eg mc:function_call
+- and then we have the same issue
+  - we don't really want to implement mc:function_call at comptime
+- can we always know if something needs to be evaluated at comptime before it is?
+  - if we could, then 
+  - well no. we can't do that. because a :: getenv() needs to be able to get the runtime target
+
+so the question is do we want comptemp?
+- comptemp:
+  - comptemp is that platforms can define custom instruction types, and
+    platforms can define what final types & instructions they support
+    - eg mc would not support i32, but it would support mc:Result
+    - a conversion with weight 1 of i32 to mc:Result would exist
+    - when we convert a regular block to a comptemp one, we pathfind from any unsupported types
+      - so a i32 initialization becomes a mc:Result initialization
+    - and we pathfind instructions, so add becomes mc:add
+- non-comptemp:
+  - we run into some trouble. (a :: 1 + 2) needs to evaluate to 3 at comptime. but with non-comptemp,
+    the type i32 itself would be backed by switch(target). and since target is mc, it would be backed by mc:result,
+    which doesn't work
+
+so ig we need comptemp :/
+*/
