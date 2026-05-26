@@ -1,13 +1,9 @@
 // we're just reinventing comptemp
 
-type Block = {
-    offset: number,
-    lines: BlockLine[],
-    validate: symbol,
-};
 type BlockLine = {type: symbol, cfg: unknown, args: BlockArg[], ret: BlockType};
 type BlockType = {type: symbol, cfg: unknown};
-type BlockArg = {kind: "ref", index: number, type: BlockType, validate: symbol} | {kind: "comptime"};
+type BlockArg = {kind: "ref", index: number, type: BlockType, validate: symbol} | {kind: "arg"} | {kind: "comptime"} | {kind: "sub", block: Block};
+type BlockArgIndex = number & {__is_block_arg_index: true};
 
 type BlockLineT<T> = symbol & {__is_block_line: T};
 type BlockTypeT<T> = symbol & {__is_block_type: T};
@@ -35,18 +31,16 @@ const basic = {
     void: blockTypeSym<null>(),
     noop: blockLineSym<null>(),
     int: blockTypeSym<{min: bigint, max: bigint}>(),
-    add: blockLineSym<{lhs: BlockArg, rhs: BlockArg}>(),
+    add: blockLineSym<{lhs: BlockArgIndex, rhs: BlockArgIndex}>(),
 };
 const mc = {
     result: blockTypeSym<null>(),
     raw: blockLineSym<string>(),
 };
-const demo: Block = {
-    offset: 0,
-    lines: [
-        blockLine(basic.noop, null, [], blockType(basic.void, null)),
-    ],
-    validate: Symbol(),
+const testing = {
+    print: blockLineSym<{arg: BlockArgIndex}>(),
+    string_create: blockLineSym<string>(),
+    String: blockTypeSym<null>(),
 };
 
 registerTypeConversion(basic.void, mc.result, (src) => {
@@ -70,6 +64,33 @@ registerLineConversion(basic.add, mc.raw, (src) => {
         "scoreboard players operation $tmp qxc.tmp1 += $tmp qxc.tmp2",
     ];
 });
+
+class Block {
+
+    rootLines: BlockLine[] = [];
+    validate = Symbol();
+    addLine<K>(type: BlockLineT<K>, cfg: NoInfer<K>, args: BlockArg[], ret: BlockType): BlockArg {
+
+    }
+    beginSub(): BlockArgIndex {}
+
+    convert(descriptor: ConvertDescriptor): Block {
+        const res = new Block();
+    }
+}
+
+type ConvertDescriptor = {};
+
+function tests() {
+    const block = new Block();
+    block.addLine(testing.print, {arg: 0}, [
+        block.addLine(testing.string_create, ),
+    ], blockType(basic.void, null));
+    block.convert({});
+}
+
+// * do we really need convert if we can vary implementations by backend?
+// ie if cmpyl can vary the backing type of i128 by target?
 
 // to convert, the reciever specifies which types are supported, and then we automatically convert
 // ie we pathfind using the conversion weights from an unsupported type to a supported type
