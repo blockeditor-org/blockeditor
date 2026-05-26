@@ -1,4 +1,5 @@
-import { type ComptimeValueBuildArtifact, type AnalysisBlock, type ComptimeType, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
+import { type ComptimeValueBuildArtifact, type AnalysisBlock, type Destructure, type DestructureExtract, type RuntimeValue } from "./cmpyl";
+import type { Type } from "./ct";
 import { colors, highlights, type SyntaxNode, type TokenPosition } from "./cvl2";
 
 type PrintCfg = {indent: string};
@@ -207,7 +208,7 @@ export const printers = {
     destructureExtract: new SinglePrinter<DestructureExtract>((adisp, extract) => {
         adisp.put(extract.kind, colors.cyan);
         if (extract.kind === "single_item") {
-            adisp.put(` ${JSON.stringify(extract.name)}`, colors.green);
+            adisp.put(` ${extract.target}`, colors.green);
             adisp.putSrc(extract.pos);
         } else if (extract.kind === "list") {
             adisp.putSrc(extract.pos);
@@ -217,34 +218,35 @@ export const printers = {
             adisp.putSrc(extract.pos);
         }
     }),
-    type: new SinglePrinter<ComptimeType>((adisp, type) => {
-        adisp.put(type.type, colors.yellow);
-        if (type.type === "fn") {
-            adisp.putSrc(type.pos);
-            using _ = adisp.indent();
-            adisp.putNewline();
-            adisp.put("arg: ");
-            adisp.putInline(printers.type, type.arg);
-            adisp.putNewline();
-            adisp.put("ret: ");
-            adisp.putInline(printers.type, type.ret);
-        }else if(type.type === "void") {
-            adisp.putSrc(type.pos);
-        }else if(type.type === "unknown") {
-            adisp.putSrc(type.pos);
-        }else if(type.type === "build_artifact") {
-            adisp.putSrc(type.pos);
-            using _ = adisp.indent();
-            adisp.putNewline();
-            adisp.put("narrow: ");
-            adisp.put(type.narrow ?? "undefined");
-        }else if(type.type === "tuple") {
-            adisp.putSrc(type.pos);
-            adisp.putList(printers.type, type.children);
-        }else {
-            adisp.put(" %%TODO%%");
-            adisp.putSrc(type.pos);
-        }
+    type: new SinglePrinter<Type>((adisp, type) => {
+        adisp.put(type.dump(), colors.yellow); // TODO
+        // adisp.put(type.type, colors.yellow);
+        // if (type.type === "fn") {
+        //     adisp.putSrc(type.pos);
+        //     using _ = adisp.indent();
+        //     adisp.putNewline();
+        //     adisp.put("arg: ");
+        //     adisp.putInline(printers.type, type.arg);
+        //     adisp.putNewline();
+        //     adisp.put("ret: ");
+        //     adisp.putInline(printers.type, type.ret);
+        // }else if(type.type === "void") {
+        //     adisp.putSrc(type.pos);
+        // }else if(type.type === "unknown") {
+        //     adisp.putSrc(type.pos);
+        // }else if(type.type === "build_artifact") {
+        //     adisp.putSrc(type.pos);
+        //     using _ = adisp.indent();
+        //     adisp.putNewline();
+        //     adisp.put("narrow: ");
+        //     adisp.put(type.narrow ?? "undefined");
+        // }else if(type.type === "tuple") {
+        //     adisp.putSrc(type.pos);
+        //     adisp.putList(printers.type, type.children);
+        // }else {
+        //     adisp.put(" %%TODO%%");
+        //     adisp.putSrc(type.pos);
+        // }
     }),
     astNode: new SinglePrinter<SyntaxNode>((adisp, entity) => {
         adisp.put(entity.kind, colors.cyan);

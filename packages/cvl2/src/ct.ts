@@ -1,119 +1,286 @@
-// we're just reinventing comptemp
+import { validateCName, type CValidatedIdentifierName } from "./backend/c";
+import { addErr, analyze, analyzeBase, analyzeBlock, assert, blockAppend, castValue, compilerPos, createDeclaration, dec, emptyBlock, enc, getDeclaration, throwConsumedErr, throwErr, type AnalysisBlock, type AnalysisResult, type Binary2, type ComptimeFolder, type ComptimeValueBuildArtifact, type ComptimeValueDeclaration, type ComptimeValueExportList, type ConsumedErrorToken, type Env, type Uint8ArraySourcemapEntry } from "./cmpyl";
+import { comptimeEval, getComptime } from "./cte";
+import { unescapeString, type BlockToken, type IdentifierToken, type SyntaxNode, type TokenPosition } from "./cvl2";
+import { printers } from "./printers";
 
-type BlockLine = {type: symbol, cfg: unknown, args: BlockArg[], ret: BlockType};
-type BlockType = {type: symbol, cfg: unknown};
-type BlockArg = {kind: "ref", index: number, type: BlockType, validate: symbol} | {kind: "arg"} | {kind: "comptime"} | {kind: "sub", block: Block};
-type BlockArgIndex = number & {__is_block_arg_index: true};
 
-type BlockLineT<T> = symbol & {__is_block_line: T};
-type BlockTypeT<T> = symbol & {__is_block_type: T};
-function blockLineSym<T>(): BlockLineT<NoInfer<T>> {
-    return Symbol() as BlockLineT<T>;
-}
-function blockTypeSym<T>(): BlockTypeT<NoInfer<T>> {
-    return Symbol() as BlockTypeT<T>;
-}
-function blockLine<K>(type: BlockLineT<K>, cfg: NoInfer<K>, args: BlockArg[], ret: BlockType): BlockLine {
-    return {type, cfg, args, ret};
-}
-function blockType<K>(type: BlockTypeT<K>, cfg: NoInfer<K>): BlockType {
-    return {type, cfg};
-}
-const convert_fail_sym = Symbol();
-function registerTypeConversion<Src, Dst>(src: BlockTypeT<Src>, dst: BlockTypeT<Dst>, cb: (src: NoInfer<Src>) => NoInfer<Dst> | (typeof convert_fail_sym)): void {}
-function registerLineConversion<Src, Dst>(src: BlockLineT<Src>, dst: BlockLineT<Dst>, cb: (src: NoInfer<Src>) => NoInfer<Dst>[] | (typeof convert_fail_sym)): void {}
-
-const comptime = {
-    Artifact: blockTypeSym<null>(),
-    file_create: blockLineSym<null>(),
-};
-const basic = {
-    void: blockTypeSym<null>(),
-    noop: blockLineSym<null>(),
-    int: blockTypeSym<{min: bigint, max: bigint}>(),
-    add: blockLineSym<{lhs: BlockArgIndex, rhs: BlockArgIndex}>(),
-};
-const mc = {
-    result: blockTypeSym<null>(),
-    raw: blockLineSym<string>(),
-};
-const testing = {
-    print: blockLineSym<{arg: BlockArgIndex}>(),
-    string_create: blockLineSym<string>(),
-    String: blockTypeSym<null>(),
-};
-
-registerTypeConversion(basic.void, mc.result, (src) => {
-    return null;
-});
-registerTypeConversion(basic.void, mc.result, (src) => {
-    return null;
-});
-registerLineConversion(basic.noop, mc.raw, (src) => {
-    return [];
-});
-registerTypeConversion(basic.int, mc.result, src => {
-    if (src.min < -2,147,483,648) return convert_fail_sym;
-    if (src.max > 2,147,483,647) return convert_fail_sym;
-    return null;
-});
-registerLineConversion(basic.add, mc.raw, (src) => {
-    return [
-        "execute store result score $tmp qxc.tmp1 run <get.0>", // or really, get src.lhs -> $tmp qxc.tmp1
-        "execute store result score $tmp qxc.tmp2 run <get.1>", // get src.rhs -> $tmp qxc.tmp2
-        "scoreboard players operation $tmp qxc.tmp1 += $tmp qxc.tmp2",
-    ];
-});
-
-class Block {
-
-    rootLines: BlockLine[] = [];
-    validate = Symbol();
-    addLine<K>(type: BlockLineT<K>, cfg: NoInfer<K>, args: BlockArg[], ret: BlockType): BlockArg {
-
+const cache0arg = Symbol();
+export class Type {
+    static from<T extends new (...args: any) => any>(this: T, ...args: ConstructorParameters<NoInfer<T>>): InstanceType<NoInfer<T>> {
+        if (args.length === 0 && (this as any)[cache0arg]) return (this as any)[cache0arg] as InstanceType<T>;
+        const res = new this(...args);
+        if (args.length === 0) (this as any)[cache0arg] = res;
+        return res;
     }
-    beginSub(): BlockArgIndex {}
+    into(env: Env, block: AnalysisBlock, other: AnalysisResult, pos: TokenPosition): AnalysisResult {
+        if (other.type === this) return other;
+        throwErr(env, pos, `TODO implicit casting: ${this.dump()}`);
+    }
 
-    convert(descriptor: ConvertDescriptor): Block {
-        const res = new Block();
+    // TODO there should be two versions of this
+    // fromString, fromStringAggrandizements
+    // we should for fromString, it should accept uint8Array. for aggrandizements it should accept a list of (pos, uint8array) | Aggrandizement
+    fromString(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        throwErr(env, ast.pos, `String is not supported in slot: ${this.dump()}`);
+    }
+    // TODO: should not accept ast, should be simplified
+    fromMap(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        throwErr(env, ast.pos, `Map is not supported in slot: ${this.dump()}`);
+    }
+    // TODO: should accept uint8array or smth
+    fromNumber(env: Env, slot: Type, ast: IdentifierToken, block: AnalysisBlock): AnalysisResult {
+        throwErr(env, ast.pos, `Number is not supported in slot: ${this.dump()}`);
+    }
+
+    dump(): string {
+        return `${Object.getPrototypeOf(this).constructor.name}`;
+        // printers.type.dump(this, 3);
+    }
+    analyzeCall(env: Env, slot: Type, pos: TokenPosition, method: AnalysisResult, argIn: {pos: TokenPosition, ast: SyntaxNode[]}, block: AnalysisBlock): AnalysisResult {
+        throwErr(env, pos, "not supported call type: " + this.dump());
+    }
+    analyzeAccess(env: Env, slot: Type, obj: AnalysisResult, pos: TokenPosition, prop: AnalysisResult, block: AnalysisBlock): AnalysisResult {
+        throwErr(env, pos, "not supported access type: " + this.dump());
+    }
+
+    implicitArgRetForArrowFn(): {arg: Type, ret: Type} {
+        return {arg: TypeUnknown.from(), ret: TypeUnknown.from()};
     }
 }
 
-type ConvertDescriptor = {};
+export class TypeVoid extends Type {}
+export class TypeUnknown extends Type {}
+export class TypeFn extends Type {
+    constructor(
+        public data: {
+            pos: TokenPosition,
+            // these will need to be lazily resolved?
+            arg: Type,
+            ret: Type,
+        },
+    ) {super()}
 
-function tests() {
-    const block = new Block();
-    block.addLine(testing.print, {arg: 0}, [
-        block.addLine(testing.string_create, ),
-    ], blockType(basic.void, null));
-    block.convert({});
+
+    override analyzeCall(env: Env, slot: Type, pos: TokenPosition, method: AnalysisResult, argIn: {pos: TokenPosition, ast: SyntaxNode[]}, block: AnalysisBlock): AnalysisResult {
+        const arg = analyze(env, this.data.arg, argIn.pos, argIn.ast, block);
+        return {
+            value: blockAppend(block, {expr: "call", method: method.value, arg: arg.value, pos}),
+            type: this.data.ret,
+        };
+    }
 }
 
-// * do we really need convert if we can vary implementations by backend?
-// ie if cmpyl can vary the backing type of i128 by target?
+export class TypeUint8Array extends Type {
+    constructor() {super()}
 
-// to convert, the reciever specifies which types are supported, and then we automatically convert
-// ie we pathfind using the conversion weights from an unsupported type to a supported type
-// we do need to figure out how to support eg i32 and i64 but not i33
+    override fromString(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        if (ast.items.length !== 1) throwErr(env, ast.pos, "TODO str items len != 1 todo" + printers.astNode.dumpList(ast.items, 3), [], "todo");
+        const it0 = ast.items[0]!;
+        if (it0.kind !== "raw" || it0.tag !== "string") throwErr(env, ast.pos, "TODO str item 0 ! raw string" + printers.astNode.dump(it0, 3));
+        // if it has aggrandizements it might need runtime construction unless they're all comptime
+        // although if it's a uint8array you can't runtime construct the aggrandizements so maybe it should just error
+        const unescaped = unescapeString(env, it0.raw, it0.pos);
+        const sourcemap: Uint8ArraySourcemapEntry[] = [];
+        // TODO: fill out the sourcemap so that we can ask to make an error point to a specific byte of a comptime uint8array
+        return {type: TypeUint8Array.from(), value: {kind: "uint8array", value: enc.encode(unescaped), sourcemap}};
+    }
+}
 
-// we want to be able to convert i128 to 2xi64, and then each of those to 2xi32 on a platform that supports i32 but not i128
-// i128 example
-// %0: i128 = int_init(123456789) <- this probably won't be a real instruction. maybe convert() can request conversion from comptime to initializers?
-// %1: i128 = int_add(%0, $int(45))
-// ->
-// %0: struct(i64, i64) = blk{
-//   %1: i64 = int_init(0)
-//   %2: i64 = int_init(123456789)
-//   -> pair_init(%1: i64, %2: i64)
-// }
-// %1: struct(i64, i64) = call($i128_add_64, %0, $pair_init(...))
-//
-// $i64_add::{...}
-// note that all values are immutable, a reference needs to be like stack_alloc()
-//
-// or a simpler one, ranged ints to regular ints for c eg
-// %0: int(0, 5) = ...
-// %1: int(0, 10) = int_add(%0, %0)
-// ->
-// %0: int(0, 8) = ...
-// %1: int(0, 16) = ...
+export class TypeTuple extends Type {
+    constructor(public children: Type[]) {super()}
+}
+export class TypeOptional extends Type {
+    constructor(public child: Type) {super()}
+}
+
+
+export class CtExportList extends Type {
+    constructor(public key: Type) {super()}
+    
+    override fromMap(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        const thiskey = this.key;
+        const exportsBlock: AnalysisBlock = emptyBlock();
+        const arrEntry = blockAppend(exportsBlock, {expr: "comptime:kv_list_init", pos: ast.pos});
+        const {env: envInner} = analyzeBlock(env, slot, ast.pos, ast.items, exportsBlock, {
+            analyzeBind(env: Env, [lhs, op, rhs]: Binary2, block: AnalysisBlock): AnalysisResult {
+                const key = analyze(env, thiskey, lhs.pos, lhs.items, block);
+                const value = analyze(env, CtAst.from(), rhs.pos, rhs.items, block);
+                // insert an instruction to append the value to the children list
+                // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
+                const ret = blockAppend(block, {expr: "comptime:kv_list_append", pos: op.pos, list: arrEntry, key: key.value, value: value.value});
+                return {type: TypeVoid.from(), value: ret};
+                // 
+            }
+        });
+        const arrValue = getComptime(env, "comptime:kv_fields", comptimeEval(env, exportsBlock, arrEntry, ast.pos), ast.pos);
+        arrValue.locked = true;
+
+        // now convert to a Map<string, comptimevalue>? maybe?
+
+        const result: ComptimeValueExportList = {
+            kind: "export_list",
+            exports: [],
+        };
+
+        for (const entry of arrValue.entries) {
+            const value = getComptime(env, "ast", entry.value, entry.pos);
+            result.exports.push({key: entry.key, keyPos: entry.pos, value});
+        }
+
+        return {type: CtExportList.from(this.key), value: result};
+    }
+
+}
+export class CtKey extends Type {}
+export class CtAst extends Type {}
+export class CtNamespace extends Type {
+    override analyzeCall(env: Env, slot: Type, pos: TokenPosition, method: AnalysisResult, argIn: {pos: TokenPosition, ast: SyntaxNode[]}, block: AnalysisBlock): AnalysisResult {
+        const val = getComptime(env, "namespace", method.value, pos);
+        if (val.call == null) throwErr(env, pos, "this namespace does not support call", [
+            [val.pos, "defined here"],
+        ]);
+        return val.call(env, slot, pos, argIn, block);
+    }
+
+    override analyzeAccess(env: Env, slot: Type, obj: AnalysisResult, pos: TokenPosition, prop: AnalysisResult, block: AnalysisBlock): AnalysisResult {
+        if (obj.value.kind !== "namespace") throwErr(env, pos, `cannot access on namespace type with value kind ${obj.value.kind}`);
+        const asKey = CtKey.from().into(env, block, prop, pos);
+        const kval = getComptime(env, "key", asKey.value, pos);
+        if (kval.type === "string") {
+            return obj.value.getString(env, pos, kval.key, block);
+        }else{
+            throwErr(env, pos, "TODO return ?symbolChildType .some(T) or .none");
+        }
+    }
+}
+export class CtType extends Type {
+    override analyzeCall(env: Env, slot: Type, pos: TokenPosition, method: AnalysisResult, argIn: {pos: TokenPosition, ast: SyntaxNode[]}, block: AnalysisBlock): AnalysisResult {
+        const slotType = getComptime(env, "type", method.value, pos);
+        const result = analyze(env, slotType.type, argIn.pos, argIn.ast, block);
+        return castValue(slotType.type, result);
+    }
+}
+export class CtBuildArtifact extends Type {
+    constructor(public narrow?: "folder" | "file") {super()}
+
+    override fromString(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        const str = analyzeBase(env, TypeUint8Array.from(), ast, block);
+        const res = blockAppend(block, {expr: "comptime:file_create", pos: ast.pos, value: str.value});
+        return {type: CtBuildArtifact.from(), value: res};
+    }
+    
+    override fromMap(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        const exportsBlock: AnalysisBlock = emptyBlock();
+        const arrEntry = blockAppend(exportsBlock, {expr: "comptime:kv_list_init", pos: ast.pos});
+        const {env: envInner} = analyzeBlock(env, slot, ast.pos, ast.items, exportsBlock, {
+            analyzeBind(env: Env, [lhs, op, rhs]: Binary2, block: AnalysisBlock): AnalysisResult {
+                const key = analyze(env, TypeUint8Array.from(), lhs.pos, lhs.items, block);
+                const value = analyze(env, CtAst.from(), rhs.pos, rhs.items, block);
+                // insert an instruction to append the value to the children list
+                // we could directly append here, but that would preclude `blk: [.a = 1, .b = 2, break :blk, .c = 3]` if we even want to support that
+                const ret = blockAppend(block, {expr: "comptime:kv_list_append", pos: op.pos, list: arrEntry, key: key.value, value: value.value});
+                return {type: TypeVoid.from(), value: ret};
+                // 
+            }
+        });
+        const arrValue = getComptime(env, "comptime:kv_fields", comptimeEval(env, exportsBlock, arrEntry, ast.pos), ast.pos);
+        arrValue.locked = true;
+
+        const registered = new Map<string, {kind: "ok", decl: ComptimeValueDeclaration, pos: TokenPosition} | {kind: "error", etok: ConsumedErrorToken, pos: TokenPosition}>();
+        for (const entry of arrValue.entries) {
+            const rawKey = getComptime(env, "uint8array", entry.key, entry.pos);
+            const value = getComptime(env, "ast", entry.value, entry.pos);
+            const key = dec.decode(rawKey.value);
+            if (registered.has(key)) {
+                const prevdef = registered.get(key)!;
+                const etok = addErr(env, entry.pos, "duplicate definition", [
+                    [prevdef.pos, "previous definition here"],
+                ]);
+                registered.set(key, {kind: "error", etok, pos: prevdef.pos});
+                continue;
+            }
+            registered.set(key, {kind: "ok", decl: createDeclaration(env, value), pos: entry.pos});
+        }
+
+        // now convert to a Map<string, comptimevalue>? maybe?
+
+        const result: ComptimeFolder = {
+            kind: "folder",
+            value: new Map<string, ComptimeValueBuildArtifact>(),
+        };
+        for (const [key, value] of registered) {
+            if (value.kind === "ok") {
+                const subitm = getComptime(env, "build_artifact", getDeclaration(env, value.decl).value, value.pos);
+                result.value.set(key, subitm);
+            } else {
+                throwConsumedErr(value.etok);
+            }
+        }
+        return {type: CtBuildArtifact.from("folder"), value: {kind: "build_artifact", value: result}};
+    }
+    
+}
+
+export class McResult extends Type {
+    constructor(
+        public narrow?: "i32" | "fail",
+    ) {super()}
+
+    override into(env: Env, block: AnalysisBlock, other: AnalysisResult, pos: TokenPosition): AnalysisResult {
+        if (other.type === this) return other;
+        if (!(other.type instanceof McResult)) throwErr(env, pos, "no implicit cast available");
+        if (this.narrow != null && this.narrow !== other.type.narrow) throwErr(env, pos, "cannot widen");
+        return other;
+    }
+
+    override fromNumber(env: Env, slot: Type, ast: IdentifierToken, block: AnalysisBlock): AnalysisResult {
+        const parsed = +ast.str;
+        if (("" + (parsed |0)) !== ast.str) throwErr(env, ast.pos, `invalid i32: expected '${"" + (parsed |0)}', got '${ast.str}'`);
+        return {type: McResult.from("i32"), value: {kind: "mc:result", result: parsed}};
+    }
+}
+
+export class McNbtRef extends Type {
+    constructor(
+        public narrow?: "string" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | [McNbtRef] | Map<string, McNbtRef>,
+    ) {super()}
+
+    override fromString(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        const str = analyzeBase(env, TypeUint8Array.from(), ast, block);
+        const u8a = getComptime(env, "uint8array", str.value, ast.pos);
+        const decoded = dec.decode(u8a.value);
+        return {type: McNbtRef.from("string"), value: {kind: "mc:nbt_ref", type: "string", value: decoded}};
+    }
+}
+
+export class McIdentifier extends Type {
+    constructor(
+        public category?: string,
+    ) {super()}
+    override fromString(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        const str = analyzeBase(env, TypeUint8Array.from(), ast, block);
+        const u8a = getComptime(env, "uint8array", str.value, ast.pos);
+        const decoded = dec.decode(u8a.value);
+        const match = decoded.match(/^(?:([-._a-z0-9]+):)?([-._a-z0-9/]+)$/);
+        if (!match) throwErr(env, ast.pos, "invalid minecraft identifier name"); // todo point to the specific bad character
+        const namespace = match[1] ?? "minecraft";
+        const path = match[2]!;
+        if (namespace === "..") throwErr(env, ast.pos, "invalid minecraft identifier name");
+
+        return {type: McIdentifier.from(), value: {kind: "mc:identifier", namespace, path}};
+    }
+}
+
+
+export class CExportName extends Type {
+    override fromString(env: Env, slot: Type, ast: BlockToken, block: AnalysisBlock): AnalysisResult {
+        const str = analyzeBase(env, TypeUint8Array.from(), ast, block);
+        const u8a = getComptime(env, "uint8array", str.value, ast.pos);
+        const decoded = dec.decode(u8a.value);
+        if (!validateCName(decoded)) throwErr(env, ast.pos, "invalid c identifier name", [
+            // TODO: "note: invalid character here", pointing to an item of the sourcemap of the uint8array
+        ]);
+        return {type: CExportName.from(), value: {kind: "c:export_name", value: decoded as CValidatedIdentifierName}};
+    }
+}
