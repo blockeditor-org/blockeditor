@@ -4,6 +4,13 @@ import type { TokenPosition } from "../cvl2";
 import { printers } from "../printers";
 
 /*
+here's how selectors should work:
+- there is the EntityQuery and the EntityList
+- you can execute an EntityQuery to get an EntityList
+- an EntityQuery is eg '@s' or '@e[tag=...]'. an EntityList is the actual executed value
+*/
+
+/*
 runCommand should require arguments:
 - location (eg /execute positioned 1.0 2.0 3.0 rotated 4.0 5.0 in minecraft:the_nether)
 - entities (eg /execute as @p)
