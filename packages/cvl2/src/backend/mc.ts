@@ -7,6 +7,9 @@ import { printers } from "../printers";
 compilation:
 - saving variables in a stack
 - saving entities in a stack: tag the entity, store it in the stack
+  - ie tag the entity with a cfg.prefix.tmp_$(index) tag
+  - and increment global index every time
+  - or we can do the scoreboard method where we give the entity a score and filter for it
 if we do this, then:
     r1 := std.mc.runCommand: "say \"Hello\""
     r2 := std.mc.runCommand: "say \"Goodbye\""
