@@ -4,6 +4,51 @@ import type { TokenPosition } from "../cvl2";
 import { printers } from "../printers";
 
 /*
+compilation:
+- saving variables in a stack
+- saving entities in a stack: tag the entity, store it in the stack
+if we do this, then:
+    r1 := std.mc.runCommand: "say \"Hello\""
+    r2 := std.mc.runCommand: "say \"Goodbye\""
+    -> r1
+would compile to
+    // function header
+    execute if score temp(cfg.prefix).$fn$0 matches 1 run {
+        // this is a sub-call to this function, we need to stash the values and restore them before exit
+    }
+
+    execute store result temp(cfg.prefix).$fn$1 store success temp.$fn$2 run say Hello
+    execute store result temp(cfg.prefix).$fn$3 store success temp.$fn$4 run say Hello
+
+    // Result to Return:
+    execute if score temp.$fn2 matches 0 run return fail
+    execute store result data storage cfg.namespace:$fn.call.a0 run scoreboard players get temp(cfg.prefix).$fn$2
+    return run function {
+        function $restore
+        return $(a0)
+    } with cfg.namespace:temp.call
+    $restore: {
+        execute unless data storage cfg.namespace:$fn.stack run return 1
+        execute store result temp(cfg.prefix).$fn.len run data get storage cfg.namespace:$fn.stack
+        scoreboard players remove temp(cfg.prefix).$fn.len 1
+        with {idx} function {
+            tmp_data = stack[idx]
+            delete stack[idx]
+        }
+        // ... restore variable & data values from stack
+        $fn$1 = stack.1
+        $fn$2 = stack.2
+        // ...
+    }
+// ... yikes. that sucks.
+// ideally in some cases we could optimize it to be better. like:
+// - if you returned the second result, we don't need to store the results
+// - if the function's call tree is known at render(build) time to not call itself, we can skip the function header and footer
+//   - or if it features no temporary variables
+// but geez.
+*/
+
+/*
 here's how selectors should work:
 - there is the EntityQuery and the EntityList
 - you can execute an EntityQuery to get an EntityList
