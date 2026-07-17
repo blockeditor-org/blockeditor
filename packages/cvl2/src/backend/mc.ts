@@ -46,6 +46,20 @@ would compile to
 // - if the function's call tree is known at render(build) time to not call itself, we can skip the function header and footer
 //   - or if it features no temporary variables
 // but geez.
+
+alternate method: we don't automatically do any of that stuff, but we allow it to be done manually:
+r1 := std.mc.runCommand: "say Hello"
+a := std.mc.score: r1.success
+b := std.mc.score: r1.result
+_ = std.mc.runCommand: "say Goodbye"
+if (a != 0) { return: .fail }
+-> ((std.mc.Args({result: Int})) => {
+    -> result
+})(std.mc.nbt: {
+    result: b,
+})
+
+still bad
 */
 
 /*
