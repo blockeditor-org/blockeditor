@@ -77,7 +77,7 @@ runCommand should require arguments:
 - location (eg /execute positioned 1.0 2.0 3.0 rotated 4.0 5.0 in minecraft:the_nether)
 - entities (eg /execute as @p)
 - aka CommandSourceStack in the code: https://mcsrc.dev/1/26.1.2/net/minecraft/commands/CommandSourceStack
-  - vec3 worldPosition, dimension level, entity entity, anchor anchor, vec2 rotation 
+  - vec3 worldPosition, dimension level, entity entity, anchor anchor, vec2 rotation
   - we combine four of those into one
 
 so eg:
@@ -147,7 +147,7 @@ export function codegenMcfunction(env: Env, ctx: McCodegenCtx, block: AnalysisBl
                 [block.lines[value.idx]!.pos, "acquired here"],
                 [lostPositions[value.idx] ?? compilerPos(), "lost here"],
             ]); // todo: add a 'lost here' note
-        }            
+        }
     } else {
         throwErr(env, compilerPos(), "TODO codegenMcfunction result: " + printers.runtimeValue.dump(value));
     }
