@@ -35,6 +35,7 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
         ",": {style: "join", opTag: "sep"},
         ";": {style: "join", opTag: "sep"},
         "\n": {style: "join", opTag: "sep"},
+        "\n\n": {style: "join", opTag: "sep"},
     },
     bind: {
         // name :: value (pub name = value)
@@ -53,7 +54,8 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
     string: {
         "\"": {style: "open", close: "<in_string>\"", bracketTag: "string"},
         "<in_string>\"": {style: "close", bracketTag: "string"},
-        "//": {style: "open", bracketTag: "inline_comment"},
+        "//": {style: "open", close: "<in_inline_comment>end", bracketTag: "inline_comment"},
+        "<in_inline_comment>end": {style: "close", bracketTag: "inline_comment"},
     },
 
     // TODO: "=>"
@@ -304,7 +306,9 @@ export function tokenize(source: Source): TokenizationResult {
                 while (source.peek().match(whitespaceRegex)) {
                     source.take();
                 }
-                currentToken = source.text.substring(start.idx, source.currentIndex).includes("\n") ? "\n" : " ";
+                const matched = source.text.substring(start.idx, source.currentIndex);
+                const nlCount = matched.split("\n").length - 1;
+                currentToken = nlCount > 1 ? "\n\n" : nlCount === 1 ? "\n" : " ";
             }else if ("()[]{},;\"'`".includes(firstChar)) {
                 currentToken = source.text.substring(start.idx, source.currentIndex);
             }else if(operatorChars.includes(firstChar)) {
@@ -358,14 +362,13 @@ export function tokenize(source: Source): TokenizationResult {
                 continue;
             }
         } else if (mode === "inline_comment") {
-            let request: TokenPosition | null = null;
+            let request: TokenPosition;
             while (true) {
                 const peek = source.peek();
                 if (peek === "\n") {
                     const revert = source.getPosition();
-                    source.take();
                     request = source.getPosition();
-                    currentToken = "\n";
+                    currentToken = "<in_inline_comment>end";
                     source.revert(revert);
                     break;
                 } else {
@@ -378,11 +381,7 @@ export function tokenize(source: Source): TokenizationResult {
                 raw: source.text.substring(start.idx, source.currentIndex),
                 tag: "comment",
             });
-            if (request) {
-                source.revert(request);
-            } else {
-                continue;
-            }
+            source.revert(request);
         }else throw new Error("TODO mode: "+mode);
 
         const cfg = config[currentToken];
@@ -733,11 +732,16 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], in
 function hl(config: RenderConfig, str: string, hl: string) {
     return config.highlight && str.trim() ? `${hl}${str}${colors.reset}` : str;
 }
+function renderEndPretty(end: string): string {
+    if (end === "<in_string>\"") return "\"";
+    if (end === "<in_inline_comment>end") return "";
+    return end;
+}
 function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: number, depth: number, isTopLevel: boolean): string {
     if (entity.kind === "block") {
         return hl(config, entity.start, bracketHighlights[entity.tag] ?? highlights.error) +
             renderEntityPrettyList(config, entity.items, indent, depth, false) +
-            hl(config, entity.end.replaceAll("<in_string>", ""), bracketHighlights[entity.tag] ?? highlights.error);
+            hl(config, renderEndPretty(entity.end), bracketHighlights[entity.tag] ?? highlights.error);
     } else if (entity.kind === "binary") {
         return renderEntityPrettyList(config, entity.items, indent, depth, isTopLevel);
     } else if (entity.kind === "ws") {
