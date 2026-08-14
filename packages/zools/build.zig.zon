@@ -1,0 +1,13 @@
+.{
+    .name = .ztools,
+    .fingerprint = 0x37a3a66e32106579,
+    .version = "0.0.0",
+
+    .dependencies = .{
+        .anywhere = .{ .path = "../anywhere" },
+    },
+
+    .paths = .{
+        "",
+    },
+}

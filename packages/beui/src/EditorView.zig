@@ -252,6 +252,9 @@ pub fn gui(self: *EditorView, call_info: B2.StandardCallInfo, beui: *Beui) B2.St
         beui.getClipboard(&paste_txt);
         self.core.executeCommand(.{ .paste = .{ .text = paste_txt.items } });
     }
+    if (beui.hotkey(.{ .ctrl_or_cmd = .yes }, &.{.d})) |_| {
+        self.core.executeCommand(.{ .duplicate_cursor = .{ .direction = .right } });
+    }
 
     // if(beui.uncommittedTextInput()) |text| // on android, this text doesn't even have to be at the position of the cursor
     if (beui.textInput()) |text| {

@@ -33,6 +33,11 @@ pub const zgui = struct {
         if (zgui_mod) |z| return z.button(label, .{});
         return false;
     }
+
+    /// log a message for the current frame
+    pub fn framelog(comptime msg: []const u8, args: anytype) void {
+        if (zgui_mod) |z| return z.framelog(msg, args);
+    }
 };
 
 pub const tracy = struct {
