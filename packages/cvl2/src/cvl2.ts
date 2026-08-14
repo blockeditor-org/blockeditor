@@ -258,7 +258,7 @@ export function tokenize(source: Source): TokenizationResult {
 
     while (source.peek()) {
         const start = source.getPosition();
-        
+
         let currentToken: string;
         const mode: TokenizerMode = setModes[(parseStack[parseStack.length - 1]?.tag ?? "") as BracketTag] ?? "regular";
         if(mode === "regular") {
@@ -280,7 +280,7 @@ export function tokenize(source: Source): TokenizationResult {
             }
             if (identtag[firstChar]) {
                 const beforeAttempt = source.getPosition();
-                
+
                 while (source.peek().match(identifierRegex)) {
                     source.take();
                 }
@@ -721,8 +721,6 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], in
                 needsDeeperIndent = !isTopLevel && i < lastNewlineIndex;
                 didInsertNewline = true;
                 result += "\n" + config.indent.repeat(indent + (needsDeeperIndent ? 1 : 0));
-            } else {
-                result += " ";
             }
         } else {
             didInsertNewline = false;
@@ -857,7 +855,7 @@ export function prettyPrintErrors(sources_in: Source[], errors: TokenizationErro
             const bold = style !== 'note' ? colors.bold : "";
 
             output += `${pos?.fyl ?? "??"}:${pos?.lyn ?? "??"}:${pos?.col ?? "??"}: ${color}${bold}${style}${colors.reset}: ${message}${colors.reset}\n`;
-            
+
             const source = entry.pos?.fyl ? sources.get(entry.pos?.fyl) : null;
             const sourceLines = source?.text.split('\n');
             const line = sourceLines && pos ? sourceLines[pos.lyn - 1] : "";
@@ -888,7 +886,7 @@ export function renderTokenizedOutput(tokenizationResult: TokenizationResult, so
     const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true, highlight: false }, tokenizationResult.result, 0, 0, true);
     const adisp = printers.astNode.dumpList(tokenizationResult.result);
     const prettyErrors = prettyPrintErrors([source], tokenizationResult.errors);
-    
+
     return (
         `// adisp:${adisp}\n\n` +
         `// ugly\n${uglyCode}\n\n` +
