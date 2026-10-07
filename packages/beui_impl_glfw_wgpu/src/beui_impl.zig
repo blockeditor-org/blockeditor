@@ -7,7 +7,7 @@ const tracy = anywhere.tracy;
 const build_options = @import("build_options");
 const App = @import("app");
 const ImageCache = B2.ImageCache;
-const using_zgui = true;
+const event_thread_zig = @import("event_thread.zig");
 
 // TODO:
 // - [ ] beui needs to be able to render render_list
@@ -18,7 +18,6 @@ const math = std.math;
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
-// const zgui = @import("zgui");
 const zm = @import("zmath");
 
 pub const std_options = if (@hasDecl(App, "std_options")) App.std_options else std.Options{};
@@ -39,7 +38,43 @@ const window_title = "zig-gamedev: textured quad (wgpu)";
 
 pub const anywhere_cfg: anywhere.AnywhereCfg = .{
     .tracy = if (build_options.enable_tracy) @import("tracy__impl") else null,
-    // .zgui = zgui,
+    .zgui = zgui_impl,
+};
+
+const zgui_impl = struct {
+    frame_msg: std.Io.Writer.Allocating,
+
+    fn init(gpa: std.mem.Allocator) zgui_impl {
+        return .{ .frame_msg = .init(gpa) };
+    }
+    fn deinit(this: *zgui_impl) void {
+        this.frame_msg.deinit();
+    }
+
+    var data_ptr: ?*zgui_impl = null;
+    pub fn begin(title: [:0]const u8, _: struct {}) bool {
+        _ = title;
+        return false; // todo
+    }
+    pub fn end() void {
+        // todo
+    }
+    pub inline fn text(comptime fmt: []const u8, args: anytype) void {
+        _ = fmt;
+        _ = args;
+    }
+    pub inline fn checkbox(label: [:0]const u8, value: struct { v: *bool }) void {
+        _ = label;
+        _ = value;
+    }
+    pub inline fn button(label: [:0]const u8, _: struct {}) bool {
+        _ = label;
+        return false;
+    }
+    pub fn framelog(comptime fmt: []const u8, args: anytype) void {
+        const impl = data_ptr orelse return;
+        impl.frame_msg.writer.print(fmt ++ "\n", args) catch @panic("oom");
+    }
 };
 
 const wgsl_common = (
@@ -316,17 +351,7 @@ fn destroy(allocator: std.mem.Allocator, demo: *DemoState) void {
     allocator.destroy(demo);
 }
 
-fn update(demo: *DemoState) void {
-    // zgui.backend.newFrame(
-    //     demo.gctx.swapchain_descriptor.width,
-    //     demo.gctx.swapchain_descriptor.height,
-    // );
-
-    // _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
-    _ = demo;
-}
-
-fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, frame_timer: *std.time.Timer, last_frame_time: *u64, add_us: u64) void {
+fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, back_buffer_view: zgpu.wgpu.TextureView) void {
     const b2ft = tracy.traceNamed(@src(), "draw & wait");
     defer b2ft.end();
 
@@ -392,16 +417,6 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
             texpack.modified = null;
         }
     }
-
-    const back_buffer_view = blk: {
-        const b2ft1 = tracy.traceNamed(@src(), "wait for texture view");
-        defer b2ft1.end();
-        last_frame_time.* = add_us + frame_timer.read();
-        const res = gctx.swapchain.getCurrentTextureView();
-        frame_timer.reset();
-        break :blk res;
-    };
-    defer back_buffer_view.release();
 
     if (draw_lists.RenderListIndex == u16 and draw_list.indices.items.len % 2 == 1) draw_list.indices.append(0) catch @panic("oom"); // using a u16 index array it has to be aligned to 4 bytes still
 
@@ -497,17 +512,20 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
             //   at the end?
             // - should all images be .rgba and we pay the cost on the cpu?
             // - ??
+            const screen_size_int: @Vector(2, u32) = .{ fb_width, fb_height };
+            const screen_size: @Vector(2, f32) = @floatFromInt(screen_size_int);
             mem.slice[0] = .{
-                .screen_size = .{ @floatFromInt(fb_width), @floatFromInt(fb_height) },
+                .screen_size = screen_size,
                 .image_r = 0,
             };
             mem2.slice[0] = .{
-                .screen_size = .{ @floatFromInt(fb_width), @floatFromInt(fb_height) },
+                .screen_size = screen_size,
                 .image_r = 1,
             };
             // either this or writing a texture every frame has caused after like 10sec on mac the application
             // freezes the entire computer :/ maybe we need to use opengl or something, zig-gamedev wgpu
             // seems to have problems
+            anywhere.zgui.framelog("draw commands: {d}", .{draw_list.commands.items.len});
             for (draw_list.commands.items) |command| {
                 const bind_group_handle = gctx.createBindGroup(demo.bind_group_layout, &.{
                     .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 256 },
@@ -526,7 +544,13 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
                 const bind_group = gctx.lookupResource(bind_group_handle) orelse break :pass;
 
                 pass.setBindGroup(0, bind_group, &.{if (command.image == .grayscale) mem2.offset else mem.offset});
-                pass.setScissorRect(command.clip.x, command.clip.y, command.clip.w, command.clip.h);
+
+                const clip_ul: @Vector(2, u32) = .{ command.clip.x, command.clip.y };
+                const clip_br = clip_ul + @Vector(2, u32){ command.clip.w, command.clip.h };
+                const clip_ul_clamped = @max(@min(clip_ul, screen_size_int), @Vector(2, u32){ 0, 0 });
+                const clip_br_clamped = @max(@min(clip_br, screen_size_int), @Vector(2, u32){ 0, 0 });
+                const clip_wh_clamped = clip_br_clamped - clip_ul_clamped;
+                pass.setScissorRect(clip_ul_clamped[0], clip_ul_clamped[1], clip_wh_clamped[0], clip_wh_clamped[1]);
 
                 pass.drawIndexed(command.index_count, 1, command.first_index, command.base_vertex, 0);
             }
@@ -548,8 +572,6 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
                 pass.end();
                 pass.release();
             }
-
-            // zgui.backend.draw(pass);
         }
 
         break :commands encoder.finish(null);
@@ -566,6 +588,7 @@ fn draw(demo: *DemoState, draw_list: *draw_lists.RenderList, b2: *B2.Beui2, fram
         const b2ft1 = tracy.traceNamed(@src(), "present frame");
         defer b2ft1.end();
         _ = gctx.present();
+        tracy.frameMark();
     }
 }
 
@@ -613,8 +636,7 @@ const callbacks = struct {
         }
     }
 
-    fn keyCallback(window: *zglfw.Window, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn keyCallback(b2: *B2.Beui2, key: zglfw.Key, scancode: i32, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
         const beui = b2.persistent.beui1;
 
         if (action != .release) {
@@ -628,8 +650,7 @@ const callbacks = struct {
         beui.frame.has_events = true;
         handleKeyWithAction(beui, beui_key, action);
     }
-    fn charCallback(window: *zglfw.Window, codepoint: u32) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn charCallback(b2: *B2.Beui2, codepoint: u32) callconv(.c) void {
         const beui = b2.persistent.beui1;
         const codepoint_u21 = std.math.cast(u21, codepoint) orelse {
             std.log.warn("charCallback codepoint out of range: {d}", .{codepoint});
@@ -640,15 +661,13 @@ const callbacks = struct {
         beui.frame.text_input = printed;
     }
 
-    fn scrollCallback(window: *zglfw.Window, xoffset: f64, yoffset: f64) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn scrollCallback(b2: *B2.Beui2, xoffset: f64, yoffset: f64) callconv(.c) void {
         const beui = b2.persistent.beui1;
         if (!beui.frame.frame_cfg.?.can_capture_mouse) return;
         beui.frame.has_events = true;
         beui.frame.scroll_px += @floatCast(@Vector(2, f64){ xoffset, yoffset } * @Vector(2, f64){ 48, 48 });
     }
-    fn cursorPosCallback(window: *zglfw.Window, xpos: f64, ypos: f64) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn cursorPosCallback(b2: *B2.Beui2, xpos: f64, ypos: f64) callconv(.c) void {
         const beui = b2.persistent.beui1;
         if (!beui.frame.frame_cfg.?.can_capture_mouse) {
             // TODO: mouse_pos = null
@@ -666,8 +685,8 @@ const callbacks = struct {
             beui.frame.mouse_offset += beui.persistent.mouse_pos - prev_pos;
         }
     }
-    fn cursorEnterCallback(window: *zglfw.Window, entered: i32) callconv(.c) void {
-        _ = window;
+    fn cursorEnterCallback(b2: *B2.Beui2, entered: i32) callconv(.c) void {
+        _ = b2;
         _ = entered; // why is it i32 now
         // if (entered == zglfw.TRUE) {
         //     // entered
@@ -675,8 +694,7 @@ const callbacks = struct {
         //     // left
         // }
     }
-    fn mouseButtonCallback(window: *zglfw.Window, button: zglfw.MouseButton, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
-        const b2 = window.getUserPointer(B2.Beui2).?;
+    fn mouseButtonCallback(b2: *B2.Beui2, button: zglfw.MouseButton, action: zglfw.Action, mods: zglfw.Mods) callconv(.c) void {
         const beui = b2.persistent.beui1;
 
         if (action != .release) {
@@ -735,16 +753,8 @@ pub fn main() !void {
 
     const gpa = tracy_wrapped.allocator();
 
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
     try zglfw.init();
     defer zglfw.terminate();
-
-    var app: App = undefined;
-    app.init(gpa);
-    defer app.deinit();
 
     // Change current working directory to where the executable is located.
     {
@@ -759,26 +769,6 @@ pub fn main() !void {
     defer window.destroy();
     window.setSizeLimits(-1, -1, -1, -1);
 
-    var beui: Beui = .{};
-
-    var b2: Beui.beui_experiment.Beui2 = undefined;
-    b2.init(&beui, gpa);
-    defer b2.deinit();
-
-    window.setUserPointer(@ptrCast(@alignCast(&b2)));
-
-    _ = window.setPosCallback(null);
-    _ = window.setKeyCallback(&callbacks.keyCallback);
-    _ = window.setSizeCallback(null);
-    _ = window.setCharCallback(&callbacks.charCallback);
-    _ = zglfw.setDropCallback(window, null);
-    _ = zglfw.setScrollCallback(window, &callbacks.scrollCallback);
-    _ = zglfw.setCursorPosCallback(window, &callbacks.cursorPosCallback);
-    _ = zglfw.setCursorEnterCallback(window, &callbacks.cursorEnterCallback);
-    _ = zglfw.setMouseButtonCallback(window, &callbacks.mouseButtonCallback);
-    _ = window.setContentScaleCallback(null);
-    _ = zglfw.setFramebufferSizeCallback(window, null);
-
     const demo = try create(gpa, window);
     defer destroy(gpa, demo);
 
@@ -788,7 +778,7 @@ pub fn main() !void {
     };
     _ = scale_factor;
 
-    var cursors = Beui.EnumArray(Beui.Cursor, ?*zglfw.Cursor).init(null);
+    var cursors = Cursors.init(null);
     for (&cursors.values, 0..) |*c, i| {
         c.* = zglfw.Cursor.createStandard(switch (@as(Beui.Cursor, @enumFromInt(i))) {
             .arrow => .arrow,
@@ -801,78 +791,116 @@ pub fn main() !void {
         }) catch null;
     }
     defer for (cursors.values) |c| if (c) |d| d.destroy();
-    var current_cursor: Beui.Cursor = .arrow;
 
-    // zgui.init(gpa);
-    // defer zgui.deinit();
+    var event_queue: event_thread_zig.EventQueue = .{ .gpa = gpa };
+    defer event_queue.deinit();
 
-    // zgui.backend.init(
-    //     window,
-    //     demo.gctx.device,
-    //     @intFromEnum(zgpu.GraphicsContext.swapchain_format),
-    //     @intFromEnum(wgpu.TextureFormat.undef),
-    // );
-    // defer zgui.backend.deinit();
+    var res_err: anyerror!void = undefined;
+    var main_thread = try std.Thread.spawn(.{ .allocator = gpa }, main2, .{ &event_queue, window, demo, gpa, &cursors, &res_err });
+    event_thread_zig.eventThreadListen(window, &event_queue);
+    main_thread.join();
 
-    // zgui.io.setConfigFlags(.{
-    //     .nav_enable_keyboard = true,
-    //     .dock_enable = true,
-    //     .dpi_enable_scale_fonts = true,
-    // });
+    return res_err;
+}
 
-    // zgui.getStyle().scaleAllSizes(scale_factor);
+const Cursors = Beui.EnumArray(Beui.Cursor, ?*zglfw.Cursor);
+
+pub fn main2(event_queue: *event_thread_zig.EventQueue, window: *zglfw.Window, demo: *DemoState, gpa: std.mem.Allocator, cursors: *Cursors, res_err: *(anyerror!void)) void {
+    defer {
+        event_queue.kill.store(true, .seq_cst);
+        zglfw.postEmptyEvent();
+    }
+    main3(event_queue, window, demo, gpa, cursors) catch |e| {
+        res_err.* = e;
+        return;
+    };
+    res_err.* = {};
+    return;
+}
+pub fn main3(event_queue: *event_thread_zig.EventQueue, window: *zglfw.Window, demo: *DemoState, gpa: std.mem.Allocator, cursors: *Cursors) !void {
+    var zgui_impl_data = zgui_impl.init(gpa);
+    defer zgui_impl_data.deinit();
+    zgui_impl.data_ptr = &zgui_impl_data;
+    defer zgui_impl.data_ptr = null;
+
+    var app: App = undefined;
+    app.init(gpa);
+    defer app.deinit();
+
+    var beui: Beui = .{};
+
+    var b2: Beui.beui_experiment.Beui2 = undefined;
+    b2.init(&beui, gpa);
+    defer b2.deinit();
 
     var draw_list = draw_lists.RenderList.init(gpa);
     defer draw_list.deinit();
 
     var frame_num: u64 = 0;
+    var current_cursor: Beui.Cursor = .arrow;
 
-    var frame_timer = try std.time.Timer.start();
-    var last_frame_time: u64 = 0;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
-    var reduce_latency_target: u64 = target_none;
-    _ = &reduce_latency_target;
-
+    var timer = try std.time.Timer.start();
+    _ = &timer;
     while (!window.shouldClose()) {
-        var add_us: u64 = 0;
-        const reduce_input_latency: usize = if (reduce_latency_target != 0) (reduce_latency_target -| last_frame_time) -| (1 * std.time.ns_per_ms) else 0;
-        if (reduce_input_latency > 0) {
-            const b2ft = tracy.traceNamed(@src(), "reduce latency");
-            defer b2ft.end();
+        const back_buffer_view = blk: {
+            const b2ft1 = tracy.traceNamed(@src(), "wait for texture view");
+            defer b2ft1.end();
+            const res = demo.gctx.swapchain.getCurrentTextureView();
+            break :blk res;
+        };
+        defer back_buffer_view.release();
 
-            add_us = frame_timer.read();
-            std.Thread.sleep(reduce_input_latency);
-            frame_timer.reset();
-        }
-
-        tracy.frameMark();
+        const b2ft = tracy.traceNamed(@src(), "render");
+        defer b2ft.end();
 
         _ = arena_state.reset(.retain_capacity);
         draw_list.clear();
 
         var beui_vtable: BeuiVtable = .{ .window = window };
-        beui.newFrame(.{
-            .can_capture_keyboard = true, // !zgui.io.getWantCaptureKeyboard(),
-            .can_capture_mouse = true, // !zgui.io.getWantCaptureMouse(),
-            .arena = arena,
-            .now_ms = std.time.milliTimestamp(),
-            .user_data = @ptrCast(@alignCast(&beui_vtable)),
-            .vtable = BeuiVtable.vtable,
-        });
-        defer beui.endFrame();
+        {
+            const b2ft2 = tracy.traceNamed(@src(), "beui.newFrame");
+            defer b2ft2.end();
+            beui.newFrame(.{
+                .can_capture_keyboard = true,
+                .can_capture_mouse = true,
+                .arena = arena,
+                .now_ms = std.time.milliTimestamp(),
+                .user_data = @ptrCast(@alignCast(&beui_vtable)),
+                .vtable = BeuiVtable.vtable,
+            });
+        }
+        defer {
+            const b2ft2 = tracy.traceNamed(@src(), "beui.endFrame");
+            defer b2ft2.end();
+            beui.endFrame();
+        }
 
-        zglfw.pollEvents();
+        {
+            const b2ft2 = tracy.traceNamed(@src(), "zglfw.pollEvents");
+            defer b2ft2.end();
+
+            const events = try event_queue.takeEventsOwned();
+            defer gpa.free(events);
+
+            for (events) |event| {
+                switch (event) {
+                    .key => |ev| callbacks.keyCallback(&b2, ev.key, ev.scancode, ev.action, ev.mods),
+                    .char => |ev| callbacks.charCallback(&b2, ev.codepoint),
+                    .scroll => |ev| callbacks.scrollCallback(&b2, ev.xoffset, ev.yoffset),
+                    .cursorPos => |ev| callbacks.cursorPosCallback(&b2, ev.xpos, ev.ypos),
+                    .cursorEnter => |ev| callbacks.cursorEnterCallback(&b2, ev.entered),
+                    .mouseButton => |ev| callbacks.mouseButtonCallback(&b2, ev.button, ev.action, ev.mods),
+                }
+            }
+        }
         if (frame_num == 0) {
             beui.frame.has_events = true;
         }
 
-        if (!beui.frame.has_events and allow_skip_frames) {
-            // skip this frame
-            // eventually we could even ignore frames that have a mouse move event but there is no
-            // beui2 item that asks for the mouse position event
-            std.Thread.sleep(std.time.ns_per_ms * 4);
-            continue;
-        }
         if (beui.isKeyHeld(.escape)) {
             // used to pause input to reveal bugs
             // eg: right now, you can hold escape, click the close button on a window, and then
@@ -888,28 +916,11 @@ pub fn main() !void {
             // this is a pretty bad option. don't want it.
             continue;
         }
-        if (allow_skip_frames) std.log.info("frame: {d}", .{frame_num});
+        anywhere.zgui.framelog("frame: {d}", .{frame_num});
 
         if (beui.isKeyHeld(.mouse_middle)) {
+            // scroll emulation with middle mouse
             beui.frame.scroll_px += beui.frame.mouse_offset;
-        }
-
-        update(demo);
-
-        // transparency test rainbows
-        if (false) {
-            for (0..11) |i| {
-                const im: f32 = @floatFromInt(i);
-                draw_list.addRect(.{ 50 * im + 50, 50 }, .{ 50, 50 }, .{ .tint = .{ 1.0, 0.0, 0.0, im / 10.0 } });
-            }
-            for (0..11) |i| {
-                const im: f32 = @floatFromInt(i);
-                draw_list.addRect(.{ 50 * im + 50, 83 }, .{ 50, 50 }, .{ .tint = .{ 0.0, 1.0, 0.0, im / 10.0 } });
-            }
-            for (0..11) |i| {
-                const im: f32 = @floatFromInt(i);
-                draw_list.addRect(.{ 50 * im + 50, 116 }, .{ 50, 50 }, .{ .tint = .{ 0.0, 0.0, 1.0, im / 10.0 } });
-            }
         }
 
         const gctx = demo.gctx;
@@ -917,8 +928,8 @@ pub fn main() !void {
         const fb_height = gctx.swapchain_descriptor.height;
 
         {
-            const b2ft = tracy.traceNamed(@src(), "b2 frame");
-            defer b2ft.end();
+            const b2ft2 = tracy.traceNamed(@src(), "b2 frame");
+            defer b2ft2.end();
 
             const id = blk: {
                 const b2ft_ = tracy.traceNamed(@src(), "b2 newFrame");
@@ -926,62 +937,46 @@ pub fn main() !void {
                 break :blk b2.newFrame(.{ .size = .{ @floatFromInt(fb_width), @floatFromInt(fb_height) } });
             };
 
-            if (using_zgui) {
-                // can't call zglfw setCursor because it gets immediately overwritten by dear imgui glfw backend
-                // if (beui.frame.cursor != .arrow) zgui.setMouseCursor(switch (beui.frame.cursor) {
-                //     .arrow => .arrow,
-                //     .pointer => .hand,
-                //     .text_input => .text_input,
-                //     .resize_nw_se => .resize_nwse,
-                //     .resize_ns => .resize_ns,
-                //     .resize_ne_sw => .resize_nesw,
-                //     .resize_ew => .resize_ew,
-                // });
-            } else {
-                if (beui.frame.cursor != current_cursor) {
-                    current_cursor = beui.frame.cursor;
+            if (beui.frame.cursor != current_cursor) {
+                current_cursor = beui.frame.cursor;
 
-                    std.log.info("setCursor: {}", .{beui.frame.cursor});
-                    window.setCursor(cursors.get(current_cursor));
-                }
+                std.log.info("setCursor: {}", .{beui.frame.cursor});
+                window.setCursor(cursors.get(current_cursor));
             }
 
-            const rdl = blk: {
+            const app_rdl = blk: {
                 const b2ft_ = tracy.traceNamed(@src(), "b2 scrollDemo");
                 defer b2ft_.end();
 
                 break :blk app.render(id.sub(@src()));
             };
+            const overlay_rdl = blk: {
+                const b2ft_ = tracy.traceNamed(@src(), "b2 debug overlay");
+                defer b2ft_.end();
+                // debug overlay
+                const dbgoverlay = B2.textLine(.{
+                    .caller_id = id.sub(@src()),
+                    .constraints = .{ .available_size = .{ .w = b2.frame.frame_cfg.size[0], .h = b2.frame.frame_cfg.size[1] } },
+                }, .{
+                    .text = zgui_impl_data.frame_msg.written(),
+                });
+                zgui_impl_data.frame_msg.clearRetainingCapacity();
+                break :blk dbgoverlay.rdl;
+            };
+            const final_rdl = blk: {
+                const final_rdl = b2.draw();
+                final_rdl.place(overlay_rdl, .{});
+                final_rdl.place(app_rdl, .{});
+                break :blk final_rdl;
+            };
             {
                 const b2ft_ = tracy.traceNamed(@src(), "b2 finalize");
                 defer b2ft_.end();
-                b2.endFrame(rdl, &draw_list);
+                b2.endFrame(final_rdl, &draw_list);
             }
         }
 
-        // zgui.showDemoWindow(null);
-
-        // zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .first_use_ever });
-        // zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
-
-        // if (zgui.begin("Demo Settings", .{})) {
-        //     zgui.text(
-        //         "Average : {d:.3} ms/frame ({d:.1} fps)",
-        //         .{ demo.gctx.stats.average_cpu_time, demo.gctx.stats.fps },
-        //     );
-        //     zgui.text("draw_list items: {d} / {d}", .{ draw_list.vertices.items.len, draw_list.indices.items.len });
-        //     zgui.text("click_count: {d}", .{beui.leftMouseClickedCount()});
-        //     zgui.text("frame non-wait time: {d}", .{std.fmt.fmtDuration(last_frame_time)});
-        //     zgui.text("ns per vertex: {d:0.3}", .{@as(f64, @floatFromInt(last_frame_time)) / @as(f64, @floatFromInt(draw_list.vertices.items.len))});
-        //     zgui.text("reduce latency: {d}", .{std.fmt.fmtDuration(reduce_input_latency)});
-        //     if (zgui.radioButton("none", .{ .active = reduce_latency_target == target_none })) reduce_latency_target = target_none;
-        //     if (zgui.radioButton("60hz", .{ .active = reduce_latency_target == target_60hz })) reduce_latency_target = target_60hz;
-        //     if (zgui.radioButton("239.75hz", .{ .active = reduce_latency_target == target_239_75hz })) reduce_latency_target = target_239_75hz;
-        //     _ = zgui.checkbox("Update tex", .{ .v = &demo.update_tex });
-        // }
-        // zgui.end();
-
-        draw(demo, &draw_list, &b2, &frame_timer, &last_frame_time, add_us);
+        draw(demo, &draw_list, &b2, back_buffer_view);
         frame_num += 1;
     }
 }

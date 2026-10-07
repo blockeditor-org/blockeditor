@@ -1,7 +1,7 @@
 .{
     .name = .beui_app,
     .fingerprint = 0x44ee248ad82d7641,
-    .version = "0.1.0",
+    .version = "0.0.0",
     .paths = .{
         "",
     },

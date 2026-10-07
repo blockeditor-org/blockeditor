@@ -1,5 +1,4 @@
 const std = @import("std");
-const zig_gamedev = @import("zig_gamedev");
 const beui_app = @import("beui_app");
 
 pub fn build(b: *std.Build) !void {

@@ -382,6 +382,15 @@ pub const Color = struct {
         res /= @splat(255.0);
         return res;
     }
+    pub fn toArgb(self: Color) u32 {
+        const res = packed struct(u32) { b: u8, g: u8, r: u8, a: u8 };
+        return @bitCast(res{
+            .r = self.value[0],
+            .g = self.value[1],
+            .b = self.value[2],
+            .a = self.value[3],
+        });
+    }
 };
 
 test {

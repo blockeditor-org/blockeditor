@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Beui = @import("Beui.zig");
-const render_list = @import("render_list.zig");
+pub const render_list = @import("render_list.zig");
 const tracy = @import("anywhere").tracy;
 const util = @import("anywhere").util;
 const LayoutCache = @import("LayoutCache.zig");
@@ -71,6 +71,11 @@ const Beui2Frame = struct {
     frame_cfg: Beui2FrameCfg,
     scroll_target: ?ScrollTarget,
     overlay_rdl: *RepositionableDrawList,
+    next_frame_request: Beui2NextFrameRequest,
+};
+pub const Beui2NextFrameRequest = enum {
+    none,
+    animation,
 };
 const ScrollTarget = struct {
     id: ID,
@@ -229,6 +234,7 @@ pub const Beui2 = struct {
                                 .pos = mpos,
                                 .action = .down,
                                 .drag_start_pos = self.persistent.mouse_pos_on_drag_start.?,
+                                .offset = self.persistent.uncommitted_move_offset,
                             })) |cursor| {
                                 self.persistent.beui1.frame.cursor = cursor;
                                 // it ate the event, so we set it as the mouse focus
@@ -253,6 +259,7 @@ pub const Beui2 = struct {
                                 .pos = self.persistent.mouse_pos,
                                 .action = .up,
                                 .drag_start_pos = self.persistent.mouse_pos_on_drag_start.?,
+                                .offset = self.persistent.uncommitted_move_offset,
                             }).?;
                         }
                     }
@@ -277,6 +284,7 @@ pub const Beui2 = struct {
                             .pos = mpos,
                             .action = .move_while_down,
                             .drag_start_pos = self.persistent.mouse_pos_on_drag_start.?,
+                            .offset = self.persistent.uncommitted_move_offset,
                         }).?;
                     }
                 }
@@ -296,6 +304,7 @@ pub const Beui2 = struct {
                             .pos = mpos,
                             .action = .move_while_up,
                             .drag_start_pos = mpos,
+                            .offset = self.persistent.uncommitted_move_offset,
                         })) |cursor| {
                             self.persistent.beui1.frame.cursor = cursor;
                             break;
@@ -415,6 +424,7 @@ pub const Beui2 = struct {
             .frame_cfg = frame_cfg,
             .scroll_target = scroll_target,
             .overlay_rdl = undefined,
+            .next_frame_request = .none,
         };
         self.frame.overlay_rdl = self.draw();
 
@@ -541,6 +551,10 @@ pub const Beui2 = struct {
 
     pub fn fmt(self: *Beui2, comptime format: []const u8, args: anytype) []u8 {
         return std.fmt.allocPrint(self.frame.arena, format, args) catch @panic("oom");
+    }
+
+    pub fn isAnimation(self: *Beui2) void {
+        self.frame.next_frame_request = .animation;
     }
 };
 const GenericDrawListState = struct {
@@ -1165,39 +1179,7 @@ pub const RepositionableDrawList = struct {
     }
 };
 
-// fn harfbuzzText(call_info: StandardCallInfo, text: []const u8, color: Beui.Color) StandardChild {
-//     const ui = call_info.ui(@src());
-
-//     const draw = ui.id.b2.draw();
-// }
-
-pub fn textOnly(
-    call_info: StandardCallInfo,
-    text_v: []const u8,
-    color: Beui.Color,
-) StandardChild {
-    const ui = call_info.ui(@src());
-    const b2 = ui.id.b2;
-
-    const draw = b2.draw();
-
-    var char_pos: @Vector(2, f32) = .{ 0, 0 };
-    for (text_v) |char| {
-        draw.addChar(char, char_pos, color);
-        char_pos += .{ 6, 0 };
-    }
-
-    return .{
-        .size = .{ char_pos[0], 10 },
-        .rdl = draw,
-    };
-}
-
-const TextLine = struct {
-    text: []const u8,
-};
-
-pub fn textLine(call_info: StandardCallInfo, line: TextLine) StandardChild {
+pub fn textLine(call_info: StandardCallInfo, line: LayoutCache.LineData) StandardChild {
     const tctx = tracy.trace(@src());
     defer tctx.end();
 
@@ -1205,7 +1187,7 @@ pub fn textLine(call_info: StandardCallInfo, line: TextLine) StandardChild {
     const b2 = ui.id.b2;
     const lc = &b2.persistent.layout_cache;
 
-    const result = lc.renderLine(b2, .{ .text = line.text, .max_width = call_info.constraints.available_size.w });
+    const result = lc.renderLine(b2, .{ .value = line, .max_width = call_info.constraints.available_size.w });
     const resdraw = b2.draw();
     resdraw.addVertices(result.image, result.vertices, result.indices);
 
@@ -1318,19 +1300,6 @@ pub fn Component(comptime Arg1: type, comptime Arg2: type, comptime Ret: type) t
             return self.fn_ptr(self.ctx, arg1, arg2);
         }
     };
-}
-fn defaultTextButton(call_info: StandardCallInfo, msg: []const u8, ehdl: ButtonEhdl) StandardChild {
-    const ui = call_info.ui(@src());
-    return button(ui.sub(@src()), ehdl, .from(&msg, defaultTextButton_1));
-}
-fn defaultTextButton_1(msg: *const []const u8, caller_id: StandardCallInfo, evres: ButtonState) StandardChild {
-    const ui = caller_id.ui(@src());
-    const color: Beui.Color = if (evres.active) .fromHexRgb(0x0000FF) else .fromHexRgb(0x000099);
-    return setBackground(ui.sub(@src()), color, .from(msg, defaultTextButton_2));
-}
-fn defaultTextButton_2(msg: *const []const u8, caller_id: StandardCallInfo, _: void) StandardChild {
-    const ui = caller_id.ui(@src());
-    return textOnly(ui.sub(@src()), msg.*, .fromHexRgb(0xFFFF00));
 }
 
 pub const ContextMenuLineEhdl = struct {
@@ -1537,6 +1506,7 @@ pub const MouseEvent = struct {
     capture_pos: @Vector(2, f32),
     capture_size: @Vector(2, f32),
     pos: ?@Vector(2, f32),
+    offset: @Vector(2, f32),
     drag_start_pos: ?@Vector(2, f32),
     action: enum { down, up, move_while_down, move_while_up },
 };
@@ -1671,36 +1641,6 @@ pub fn virtualScroller(call_info: StandardCallInfo, context: anytype, comptime I
     );
 
     return .{ .size = .{ ui.constraints.available_size.w.?, ui.constraints.available_size.h.? }, .rdl = rdl };
-}
-
-pub fn scrollDemo(call_info: StandardCallInfo) StandardChild {
-    const ui = call_info.ui(@src());
-
-    const my_list: []const []const []const u8 = &[_][]const []const u8{
-        &[_][]const u8{ "flying", "searing", "lesser", "greater", "weak", "durable", "enchanted", "magic" },
-        &[_][]const u8{ "apple", "banana", "cherry", "durian", "etobicoke", "fig", "grape" },
-        &[_][]const u8{ "goblin", "blaster", "cannon", "cook", "castle" },
-    };
-    var my_list_len: usize = 1;
-    for (my_list) |item| {
-        my_list_len *= item.len;
-    }
-
-    return virtualScroller(ui.sub(@src()), my_list_len, ListIndex, .from(&my_list, scrollDemo_0_3));
-}
-fn scrollDemo_0_3(my_list: *const []const []const []const u8, caller_id: StandardCallInfo, index: ListIndex) StandardChild {
-    const ui = caller_id.ui(@src());
-
-    var res_str: []const u8 = "";
-
-    var i = index.i;
-    for (my_list.*, 0..) |items, j| {
-        const sub_i = i % items.len;
-        res_str = ui.id.b2.fmt("{s}{s}{s}", .{ res_str, if (j == 0) "" else " ", items[sub_i] });
-        i = @divFloor(i, items.len);
-    }
-
-    return defaultTextButton(ui.sub(@src()), res_str, null);
 }
 
 pub const B2Tester = struct {

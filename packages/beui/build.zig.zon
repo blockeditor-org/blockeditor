@@ -1,7 +1,7 @@
 .{
     .name = .beui,
     .fingerprint = 0x9851bd1063dcf9b1,
-    .version = "0.1.0",
+    .version = "0.0.0",
     .paths = .{
         "",
     },
@@ -10,11 +10,14 @@
             .path = "../loadimage",
         },
         .mach_freetype = .{
-            .url = "https://github.com/pfgithub/mach-freetype/archive/8b74ee7afbfa30c60594c6f215f48af5a2140eff.zip",
-            .hash = "mach_freetype-0.0.0-2WmHMYEVAgB4yNvU9_bolnJK7HCe7L5nYMYC5F5URxnh",
+            // .url = "https://github.com/pfgithub/mach-freetype/archive/8b74ee7afbfa30c60594c6f215f48af5a2140eff.zip",
+            // .hash = "mach_freetype-0.0.0-2WmHMYEVAgB4yNvU9_bolnJK7HCe7L5nYMYC5F5URxnh",
+            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/mach_freetype-0.0.0-2WmHMTYVAgAW6HfFO1ciapZveYFtDJYWNYKw28OLPAq-.tar.gz",
+            .hash = "mach_freetype-0.0.0-2WmHMTYVAgAW6HfFO1ciapZveYFtDJYWNYKw28OLPAq-",
         },
         .fonts = .{
-            .url = "https://github.com/pfgithub/fonts/archive/a34bfc717f5f2df359a4114d99be0eb5a2aeeadb.tar.gz",
+            // .url = "https://github.com/pfgithub/fonts/archive/a34bfc717f5f2df359a4114d99be0eb5a2aeeadb.tar.gz",
+            .url = "https://lfs.pfg.pw/by-hash/zig-pkg/N-V-__8AAAxjEgA8mB_lhrvymrd8PbBWSiGNmbtCjsCD-6nf.tar.gz",
             .hash = "N-V-__8AAAxjEgA8mB_lhrvymrd8PbBWSiGNmbtCjsCD-6nf",
         },
         .sheen_bidi = .{ .path = "../sheen_bidi" },

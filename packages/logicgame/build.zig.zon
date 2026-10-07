@@ -1,6 +1,6 @@
 .{
     .name = .logicgame2,
-    .version = "0.0.1",
+    .version = "0.0.0",
     .paths = .{ "src", "build.zig", "build.zig.zon" },
     .fingerprint = 0xd931b2b71b514ebe,
     .anywhere = .{ .path = "../anywhere" },

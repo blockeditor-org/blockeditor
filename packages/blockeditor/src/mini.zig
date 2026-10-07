@@ -3,8 +3,10 @@ const Beui = @import("beui").Beui;
 const B2 = Beui.beui_experiment;
 
 const emu = @import("minigamer");
-const sponge_cart = @embedFile("sponge.cart");
 const util = @import("anywhere").util;
+const blocks_mod = @import("blocks");
+const db_mod = blocks_mod.blockdb;
+const bi = blocks_mod.blockinterface2;
 
 const OffsetsOut = [emu.constants.EMU_SCREEN_NLAYERS]@Vector(2, i8);
 const State = struct {
@@ -14,6 +16,7 @@ const State = struct {
     offsets_out: *OffsetsOut,
     bg_color_out: u32,
     mouse: ?@Vector(2, i16) = null,
+    err: bool = false,
 
     pub fn init(self: *State, gpa: std.mem.Allocator) void {
         self.* = .{
@@ -22,9 +25,6 @@ const State = struct {
             .frame_out = B2.ImageCache.Image.create(gpa, .{ emu.constants.EMU_SCREEN_W, emu.constants.EMU_SCREEN_H * emu.constants.EMU_SCREEN_NLAYERS }, .rgba),
             .offsets_out = gpa.create(OffsetsOut) catch @panic("oom"),
             .bg_color_out = 0,
-        };
-        self.val.loadProgram(gpa, sponge_cart) catch |e| {
-            std.log.err("progarm failed to load: {s}", .{@errorName(e)});
         };
     }
     pub fn deinit(self: *State) void {
@@ -55,14 +55,21 @@ pub fn render__onMouseEvent(data: *Data, b2: *B2.Beui2, mev: B2.MouseEvent) ?Beu
     return .arrow;
 }
 
-pub fn render(_: *const void, call_info: B2.StandardCallInfo, _: void) *B2.RepositionableDrawList {
+pub fn render(viewer: db_mod.TypedComponentRef(bi.ReplaceTextComponent), call_info: B2.StandardCallInfo, _: void) *B2.RepositionableDrawList {
     const ui = call_info.ui(@src());
     const rdl = ui.id.b2.draw();
     const size: @Vector(2, f32) = .{ ui.constraints.available_size.w.?, ui.constraints.available_size.h.? };
 
     const state = ui.id.b2.state2(ui.id.sub(@src()), ui.id.b2.persistent.gpa, State);
 
-    if (state.val.program == null) return rdl;
+    if (state.val.program == null) {
+        state.val.loadProgram(state.gpa, viewer.value.value) catch |e| {
+            std.log.err("progarm failed to load: {s}", .{@errorName(e)});
+            state.err = true;
+            return rdl;
+        };
+    }
+    if (state.val.program == null or state.err) return rdl;
 
     state.val.simulate(.{
         .time_ms = @bitCast(ui.id.b2.persistent.beui1.frame.frame_cfg.?.now_ms),

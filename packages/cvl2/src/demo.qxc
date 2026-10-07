@@ -1,4 +1,39 @@
-#builtin.main .= () => std.Folder [
+#builtin.build .= () => std.Folder: [
+    "example" .= example
+    "datapack" .= std.mc.Datapack.compile: [
+        "qxc:main" .= qxc_main
+    ]
+]
+
+qxc_main :: () => std.mc.Result: {
+    _ = mc_return_test_1: {}
+    _ = mc_return_test_2: {}
+    // _ = mc_error_test_1: {} // TODO: expect a compilation error in mcfunction codegen for this one
+    -> 0
+}
+mc_return_test_1 :: () => std.mc.Result: {
+    value := std.mc.Result: 5
+    -> value
+}
+mc_return_test_2 :: () => std.mc.Result: {
+    _ = std.mc.runCommand: "say \"Hello\""
+    result := std.mc.runCommand: "say \"Goodbye\""
+    -> result
+}
+mc_error_test_1 :: () => std.mc.Result: {
+    r1 := std.mc.runCommand: "say \"Hello\""
+    r2 := std.mc.runCommand: "say \"Goodbye\""
+    -> r1
+}
+
+example :: std.File: "abc"
+
+// #builtin.build .= () => c.compile: [
+//     // sample comment
+//     "main" .= (argc: c.ptr: c.ptr: c.char, argv: c.int) #callconv_c => c.int: 25
+// ]
+
+demo :: std.Folder [
     "a.txt" .= std.File: "hello"
     "a.zig" .= std.zig.compile: () => {}
     "a.js" .= std.js.compile: () => {}
@@ -8,5 +43,14 @@
     }
 ]
 std :: #builtin.std
+c :: std.c
 
 other :: void, other2::void;other3::void
+
+syntax :: [
+    "str\(demo)\(demo2)\(demo3)ng\"abc\n\x00"
+    "\(demo4)"
+    ""
+    25
+    // comment
+]

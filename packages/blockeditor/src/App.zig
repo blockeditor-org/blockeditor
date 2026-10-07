@@ -210,7 +210,7 @@ fn render__contextMenu__child__onClick(ctx: *render__contextMenu__child__child_D
             self.wm.wm.moveFrameNewWindow(self.wm.wm.addFrame(.{ .final = .{ .ref = debugwm_viewer } }));
         },
         .minigamer => {
-            const minigamer_viewer = self.db.createBlock(bi.MinigamerViewer.deserialize(self.gpa, bi.MinigamerViewer.default) catch @panic("oom"));
+            const minigamer_viewer = self.db.createBlock(bi.MinigamerViewer.deserialize(self.gpa, @alignCast(@embedFile("sponge.cart"))) catch @panic("oom"));
             self.wm.wm.moveFrameNewWindow(self.wm.wm.addFrame(.{ .final = .{ .ref = minigamer_viewer } }));
         },
         .file_tree => {
@@ -305,6 +305,7 @@ fn render__bounceBall(call_info: B2.StandardCallInfo) *B2.RepositionableDrawList
             state.ball_pos_px[1] = whole_size[1] - ball_size_half[1];
         }
     }
+    b2.isAnimation();
 
     // TODO:
     // - [x] drag with mouse
@@ -466,7 +467,10 @@ fn render__block(self: *App, arg: WM.Manager.RenderBlockArg) *B2.RepositionableD
             return rdl;
         },
         bi.MinigamerViewer.uuid => {
-            return @import("mini.zig").render(&{}, ui.sub(@src()), {});
+            const data_component = block.typedComponent(bi.MinigamerViewer).?;
+            defer data_component.unref();
+
+            return @import("mini.zig").render(data_component, ui.sub(@src()), {});
         },
         bi.FileTreeViewer.uuid => {
             return render__tree(self, ui.sub(@src()), {});
@@ -581,7 +585,16 @@ fn render__tree__child_onClick(data: *render__tree__child_onClick_data, b2: *B2.
         var file_path = std.array_list.Managed(u8).init(b2.frame.arena);
         tree.getPath(tree_node, &file_path);
         if (std.fs.cwd().readFileAlloc(b2.frame.arena, file_path.items, std.math.maxInt(usize))) |file_cont| {
-            data.app.wm.wm.moveFrameNewWindow(data.app.wm.wm.addFrame(.{ .final = .{ .ref = data.app.addTab(file_cont) } }));
+            if (std.mem.endsWith(u8, file_path.items, ".zig")) {
+                data.app.wm.wm.moveFrameNewWindow(data.app.wm.wm.addFrame(.{ .final = .{ .ref = data.app.addTab(file_cont) } }));
+            } else if (std.mem.endsWith(u8, file_path.items, ".cart") or std.mem.endsWith(u8, file_path.items, ".elf")) {
+                const fcont: bi.AlignedByteSlice = blk: {
+                    @setRuntimeSafety(false);
+                    break :blk @alignCast(file_cont);
+                };
+                const minigamer_viewer = data.app.db.createBlock(bi.MinigamerViewer.deserialize(data.app.gpa, fcont) catch @panic("oom"));
+                data.app.wm.wm.moveFrameNewWindow(data.app.wm.wm.addFrame(.{ .final = .{ .ref = minigamer_viewer } }));
+            }
         } else |e| {
             std.log.err("Failed to open file: {s}", .{@errorName(e)});
         }

@@ -3,6 +3,7 @@ const std = @import("std");
 pub const deps = struct {
     pub const tree_sitter = @import("tree_sitter");
     pub const beui_app = @import("beui_app");
+    pub const anywhere = @import("anywhere");
 };
 
 pub fn build(b: *std.Build) void {
@@ -31,6 +32,7 @@ pub fn build(b: *std.Build) void {
     const loadimage_wasm_dep = b.dependency("loadimage_wasm", .{});
     const logicgame_dep = b.dependency("logicgame", .{ .target = target, .optimize = optimize });
     const minigamer_3ds_dep = b.dependency("minigamer_3ds", .{ .optimize = optimize });
+    const ocln_dep = b.dependency("ocln", .{ .opts = opts.passIn(b) });
     const sheen_bidi_dep = b.dependency("sheen_bidi", .{ .target = target, .optimize = optimize });
     const texteditor_dep = b.dependency("texteditor", .{ .target = target, .optimize = optimize });
     const tracy_dep = b.dependency("tracy", .{ .target = b.resolveTargetQuery(.{}), .optimize = .ReleaseSafe });
@@ -38,6 +40,8 @@ pub fn build(b: *std.Build) void {
 
     const blockeditor_app = deps.beui_app.app(blockeditor_dep, "blockeditor");
     const blockeditor_app_install = deps.beui_app.installApp(b, blockeditor_app);
+    const ocln_app = deps.beui_app.app(ocln_dep, "ocln");
+    const ocln_app_install = deps.beui_app.installApp(b, ocln_app);
     b.installArtifact(blocks_net_dep.artifact("server"));
     b.getInstallStep().dependOn(&b.addInstallBinFile(minigamer_3ds_dep.namedLazyPath("minigamer.3dsx"), "mingamer.3dsx").step);
     // b.installArtifact(texteditor_dep.artifact("zls")); // disabled because zls isn't used so it's a bit of a waste of time to compile
@@ -45,28 +49,37 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(loadimage_wasm_dep.artifact("loadimage_wasm"));
     if (opts.tracy) b.getInstallStep().dependOn(&b.addInstallArtifact(tracy_dep.artifact("tracy"), .{ .dest_dir = .{ .override = .{ .custom = "tool" } } }).step); // tracy exe has system dependencies and cannot be compiled for all targets
 
+    const snapshot = deps.anywhere.addUpdateSnapshotsOption(b, anywhere_dep.artifact("snapshot_runner"));
+
     const test_step = b.step("test", "Test");
     test_step.dependOn(b.getInstallStep());
-    test_step.dependOn(&b.addRunArtifact(anywhere_dep.artifact("test")).step);
-    test_step.dependOn(&b.addRunArtifact(beui_dep.artifact("test")).step);
-    if (!opts.target(b).result.abi.isAndroid()) test_step.dependOn(&b.addRunArtifact(blockeditor_dep.artifact("test")).step);
-    test_step.dependOn(&b.addRunArtifact(blocks_dep.artifact("test")).step);
-    test_step.dependOn(&b.addRunArtifact(blocks_net_dep.artifact("test")).step);
-    const cvl_test_run = b.addRunArtifact(cvl_dep.artifact("test"));
+    test_step.dependOn(&snapshot.addRunTest(b, anywhere_dep.artifact("test")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, beui_dep.artifact("test")).step);
+    if (!opts.target(b).result.abi.isAndroid()) test_step.dependOn(&snapshot.addRunTest(b, blockeditor_dep.artifact("test")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, blocks_dep.artifact("test")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, blocks_net_dep.artifact("test")).step);
+    const cvl_test_run = snapshot.addRunTest(b, cvl_dep.artifact("test"));
     cvl_test_run.setCwd(b.path("packages/cvl"));
     cvl_test_run.addFileInput(b.path("packages/cvl/src/tests/zig.cvl"));
     test_step.dependOn(&cvl_test_run.step);
-    test_step.dependOn(&b.addRunArtifact(loadimage_dep.artifact("test")).step);
-    test_step.dependOn(&b.addRunArtifact(logicgame_dep.artifact("test")).step);
-    test_step.dependOn(&b.addRunArtifact(sheen_bidi_dep.artifact("test")).step);
-    test_step.dependOn(&b.addRunArtifact(texteditor_dep.artifact("test")).step);
-    test_step.dependOn(&b.addRunArtifact(unicode_segmentation_2_dep.artifact("test")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, loadimage_dep.artifact("test")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, logicgame_dep.artifact("test")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, ocln_dep.artifact("test_ocln")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, sheen_bidi_dep.artifact("test")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, texteditor_dep.artifact("test")).step);
+    test_step.dependOn(&snapshot.addRunTest(b, unicode_segmentation_2_dep.artifact("test")).step);
 
     const run_blockeditor = deps.beui_app.addRunApp(b, blockeditor_app, blockeditor_app_install);
     if (b.args) |args| run_blockeditor.addArgs(args);
     run_blockeditor.step.dependOn(b.getInstallStep());
     const run_blockeditor_step = b.step("run", "Run");
     run_blockeditor_step.dependOn(&run_blockeditor.step);
+
+    const run_ocln = deps.beui_app.addRunApp(b, ocln_app, ocln_app_install);
+    if (b.args) |args| run_ocln.addArgs(args);
+    run_ocln.step.dependOn(b.getInstallStep());
+    const run_ocln_step = b.step("run-ocln", "Run");
+    run_ocln_step.dependOn(&run_ocln.step);
 
     const run_server = b.addRunArtifact(blocks_net_dep.artifact("server"));
     run_server.step.dependOn(b.getInstallStep());

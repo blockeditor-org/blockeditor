@@ -1,5 +1,6 @@
 // parses to rpn
 const std = @import("std");
+const anywhere = @import("anywhere");
 
 pub const SrcLoc = packed struct(u64) {
     tag: enum(u1) { builtin, user },
@@ -1136,7 +1137,7 @@ pub fn parse(gpa: std.mem.Allocator, src: []const u8) AstTree {
     return tree;
 }
 
-pub fn testParser(out: *std.array_list.Managed(u8), opt: struct { no_lines: bool = false }, src_in: []const u8) ![]const u8 {
+pub fn testParser(out: *std.array_list.Managed(u8), opt: struct { no_lines: bool = false }, src_in: []const u8) !anywhere.util.testing.Snapshot {
     const gpa = out.allocator;
     var src = std.array_list.Managed(u8).init(gpa);
     defer src.deinit();
@@ -1177,9 +1178,9 @@ pub fn testParser(out: *std.array_list.Managed(u8), opt: struct { no_lines: bool
 
     out.clearRetainingCapacity();
     try out.appendSlice(fmt_buf.items);
-    return out.items;
+    return .static(out.items);
 }
-fn testPrinter(out: *std.array_list.Managed(u8), _: struct {}, src_in: []const u8) ![]const u8 {
+fn testPrinter(out: *std.array_list.Managed(u8), _: struct {}, src_in: []const u8) !anywhere.util.testing.Snapshot {
     const gpa = out.allocator;
 
     var tree = parse(gpa, src_in);
@@ -1203,72 +1204,71 @@ fn testPrinter(out: *std.array_list.Managed(u8), _: struct {}, src_in: []const u
 
     out.clearRetainingCapacity();
     try out.appendSlice(fmt_buf.written());
-    return out.items;
+    return .static(out.items);
 }
 
-const snap = @import("anywhere").util.testing.snap;
 fn doTestParser(gpa: std.mem.Allocator) !void {
     var out = std.array_list.Managed(u8).init(gpa);
     defer out.deinit();
-    try snap(@src(),
+    try (try testParser(&out, .{}, "|\"Hello, world!\"")).snap(@src(),
         \\[string "Hello, world!" @0] @0
-    , try testParser(&out, .{}, "|\"Hello, world!\""));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|\"Hello, world!|")).snap(@src(),
         \\[err [err_skip [string "Hello, world!" @0] @1] "Expected \" to end string, found eof" @1] @0
-    , try testParser(&out, .{}, "|\"Hello, world!|"));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|\"Hello, world!|\x1b\"")).snap(@src(),
         \\[err [err_skip [map [string "Hello, world!" @0] @0] @1] "Invalid byte in file: 0x1B" @1]
-    , try testParser(&out, .{}, "|\"Hello, world!|\x1b\""));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|abc")).snap(@src(),
         \\[ref "abc" @0] @0
-    , try testParser(&out, .{}, "|abc"));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|abc|]")).snap(@src(),
         \\[err [err_skip [map [ref "abc" @0] @0] @1] "Unexpected token: unused_end" @1]
-    , try testParser(&out, .{}, "|abc|]"));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|  |abc, |def   ;|ghi ")).snap(@src(),
         \\[ref "abc" @1] [ref "def" @2] [ref "ghi" @3] @0
-    , try testParser(&out, .{}, "|  |abc, |def   ;|ghi "));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|  |std|.|math|.|pow|: |\"abc\" ")).snap(@src(),
         \\[call [access [access [ref "std" @1] [key "math" @3] @2] [key "pow" @5] @4] [string "abc" @7] @6] @0
-    , try testParser(&out, .{}, "|  |std|.|math|.|pow|: |\"abc\" "));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|  |.|key |= |value ")).snap(@src(),
         \\[map_entry [with_slot [access slot [key "key" @2] @1] @1] [ref "value" @4] @3] @0
-    , try testParser(&out, .{}, "|  |.|key |= |value "));
+    );
     // TODO: string escapes
     // try snap(@src(), "@0 [string \"\\x1b[3m\\xe1\\x88\\xb4\\\"\" @0]", try testParser(&out, .{}, "|\"\\x1b[3m\\u{1234}\\\"\""));
-    try snap(@src(),
-        \\[string "hello " [code [ref "user" @2] @1] "" @0] @0
-    , try testParser(&out, .{},
+    try (try testParser(&out, .{},
         \\|"hello \|{|user}"
-    ));
-    try snap(@src(),
-        \\[err [err_skip [map [string "hello " [code [ref "user" @3] @1] "" @0] @0] @2] "Newline not allowed inside string" @2]
-    , try testParser(&out, .{},
+    )).snap(@src(),
+        \\[string "hello " [code [ref "user" @2] @1] "" @0] @0
+    );
+    try (try testParser(&out, .{},
         \\|"hello \|{|
         \\    |user
         \\}"
-    ));
-    try snap(@src(),
+    )).snap(@src(),
+        \\[err [err_skip [map [string "hello " [code [ref "user" @3] @1] "" @0] @0] @2] "Newline not allowed inside string" @2]
+    );
+    try (try testParser(&out, .{}, "|builtin |:= |__builtin__")).snap(@src(),
         \\[bind [ref "builtin" @0] [ref "__builtin__" @2] @1] @0
-    , try testParser(&out, .{}, "|builtin |:= |__builtin__"));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|{|.|implicit|: |.|arg1}|: |.|arg2")).snap(@src(),
         \\[call [code [with_slot [call [access slot [key "implicit" @2] @1] [with_slot [access slot [key "arg1" @5] @4] @4] @3] @1] @0] [with_slot [access slot [key "arg2" @8] @7] @7] @6] @0
-    , try testParser(&out, .{}, "|{|.|implicit|: |.|arg1}|: |.|arg2"));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|{|#defer |error}")).snap(@src(),
         \\[code [defer_expr [ref "error" @2] @1] @0] @0
-    , try testParser(&out, .{}, "|{|#defer |error}"));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|#\"my identifier\"|.|#\"my field\"")).snap(@src(),
         \\[access [ref "my identifier" @0] [key "my field" @2] @1] @0
-    , try testParser(&out, .{}, "|#\"my identifier\"|.|#\"my field\""));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|(|arg|: |ArgType) |body")).snap(@src(),
         \\[fn_def [map [call [ref "arg" @1] [ref "ArgType" @3] @2] @0] [ref "body" @4] @<14>] @0
-    , try testParser(&out, .{}, "|(|arg|: |ArgType) |body"));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|:|return |{|return|: |5}")).snap(@src(),
         \\[marker [ref "return" @1] [code [call [ref "return" @3] [number "5" @5] @4] @2] @0] @0
-    , try testParser(&out, .{}, "|:|return |{|return|: |5}"));
-    try snap(@src(),
+    );
+    try (try testParser(&out, .{}, "|*|a|:| |b")).snap(@src(),
         \\[call [prefix "*" [ref "a" @1] @0] [ref "b" @4] @2] @0
-    , try testParser(&out, .{}, "|*|a|:| |b"));
+    );
     // try snap(@src(),
     //     \\
     // , try testParser(&out, .{}, @embedFile("sample2.cvl")));
@@ -1285,11 +1285,11 @@ fn doTestParser(gpa: std.mem.Allocator) !void {
 
     // std.struct [  ]
 
-    try snap(@src(),
-        \\<todo: map_entry>;
-    , try testPrinter(&out, .{},
+    try (try testPrinter(&out, .{},
         \\one = two;
-    ));
+    )).snap(@src(),
+        \\<todo: map_entry>;
+    );
 }
 test Parser {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, doTestParser, .{});

@@ -1,25 +1,25 @@
-import { Adisp, printers } from "./cte";
+import { assert, throwErr, type Env } from "./cmpyl";
+import { printers } from "./printers";
 
 function unreachable(): never {
     throw new Error("unreachable");
 }
 
-type TokenizerMode = "regular" | "in_string";
+type TokenizerMode = "regular" | "in_string" | "inline_comment";
 type Config = {
     style: "open" | "close" | "join",
     prec: number,
     precStr: string,
     close?: string,
     autoOpen?: boolean,
-    setMode?: TokenizerMode,
     opTag?: OpTag,
     bracketTag?: BracketTag,
 };
 
 export type OpTag = "sep" | "def" | "pub" | "var" | "assign" | "";
-export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "";
-export type RawTag = "return" | "discard";
-export type IdentifierTag = "normal" | "access" | "builtin";
+export type BracketTag = "map" | "list" | "code" | "colon_call" | "arrow_fn" | "string" | "inline_comment" | "";
+export type RawTag = "return" | "discard" | "void" | "string" | "comment";
+export type IdentifierTag = "normal" | "access" | "builtin" | "number" | "discard";
 
 const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>> = {
     paren: {
@@ -29,11 +29,13 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
         ")": {style: "close", bracketTag: "list"},
         "}": {style: "close", bracketTag: "code"},
         "]": {style: "close", bracketTag: "map"},
+        "\\(": {style: "open", close: ")", bracketTag: "list"},
     },
     sep: {
         ",": {style: "join", opTag: "sep"},
         ";": {style: "join", opTag: "sep"},
         "\n": {style: "join", opTag: "sep"},
+        "\n\n": {style: "join", opTag: "sep"},
     },
     bind: {
         // name :: value (pub name = value)
@@ -50,12 +52,18 @@ const mkconfig: Record<string, Record<string, Omit<Config, "prec" | "precStr">>>
         "=": {style: "join", opTag: "assign"},
     },
     string: {
-        "\"": {style: "open", close: "<in_string>\"", setMode: "in_string", bracketTag: "string"},
-        "<in_string>\"": {style: "close", setMode: "regular", bracketTag: "string"},
+        "\"": {style: "open", close: "<in_string>\"", bracketTag: "string"},
+        "<in_string>\"": {style: "close", bracketTag: "string"},
+        "//": {style: "open", close: "<in_inline_comment>end", bracketTag: "inline_comment"},
+        "<in_inline_comment>end": {style: "close", bracketTag: "inline_comment"},
     },
 
     // TODO: "=>"
     // TODO: "\()" as style open prec 0 autoclose display{open: "(", close: ")"}
+};
+const setModes: Partial<Record<BracketTag, TokenizerMode>> = {
+    string: "in_string",
+    inline_comment: "inline_comment",
 };
 const rawconfig: Record<string, RawTag> = {
     "->": "return",
@@ -169,6 +177,7 @@ export interface OperatorToken {
     kind: "op";
     pos: TokenPosition;
     op: string;
+    opTag: OpTag;
 }
 
 export interface OperatorSegmentToken {
@@ -194,12 +203,6 @@ export interface BinaryExpressionToken {
     items: SyntaxNode[];
 }
 
-export interface StrSegToken {
-    kind: "strSeg";
-    pos: TokenPosition;
-    str: string;
-}
-
 export interface RawToken {
     kind: "raw";
     pos: TokenPosition;
@@ -212,7 +215,7 @@ export interface ErrToken {
     pos: TokenPosition;
 }
 
-export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | StrSegToken | RawToken | ErrToken;
+export type SyntaxNode = IdentifierToken | WhitespaceToken | OperatorToken | BlockToken | BinaryExpressionToken | OperatorSegmentToken | RawToken | ErrToken;
 
 interface TokenizerStackItem {
     pos: TokenPosition,
@@ -227,9 +230,10 @@ interface TokenizerStackItem {
 
 export type TokenizationErrorEntry = {
     pos?: TokenPosition,
-    style: "note" | "error",
+    style: TokenizationErrorStyle,
     message: string,
 };
+export type TokenizationErrorStyle = "note" | "error" | "todo" | "unreachable" | "warning";
 export type TraceEntry = {
     pos: TokenPosition,
     text: string,
@@ -243,7 +247,7 @@ export interface TokenizationResult {
     errors: TokenizationError[];
 }
 
-const identifierRegex = /^[a-zA-Z0-9]$/;
+const identifierRegex = /^[a-zA-Z0-9_]$/;
 const whitespaceRegex = /^\s$/;
 const operatorChars = [..."~!@$%^&*-=+|/<>:."];
 
@@ -251,32 +255,34 @@ export function tokenize(source: Source): TokenizationResult {
     let currentSyntaxNodes: SyntaxNode[] = [];
     const errors: TokenizationError[] = [];
     const parseStack: TokenizerStackItem[] = [];
-    let mode: TokenizerMode = "regular";
 
     parseStack.push({ pos: source.getPosition(), char: "", indent: -1, val: currentSyntaxNodes, prec: 0 });
 
     while (source.peek()) {
         const start = source.getPosition();
-        const firstChar = source.take();
-        
+
         let currentToken: string;
+        const mode: TokenizerMode = setModes[(parseStack[parseStack.length - 1]?.tag ?? "") as BracketTag] ?? "regular";
         if(mode === "regular") {
+            const firstChar = source.take();
             if (firstChar.match(identifierRegex)) {
+                let count = 1;
                 while (source.peek().match(identifierRegex)) {
                     source.take();
+                    count++;
                 }
                 currentSyntaxNodes.push({
                     kind: "ident",
                     pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
                     str: source.text.substring(start.idx, source.currentIndex),
-                    identTag: "normal",
+                    identTag: firstChar.match(/^\d/) ? "number" : firstChar === "_" && count === 1 ? "discard" : "normal",
                     identTagRaw: "",
                 });
                 continue;
             }
             if (identtag[firstChar]) {
                 const beforeAttempt = source.getPosition();
-                
+
                 while (source.peek().match(identifierRegex)) {
                     source.take();
                 }
@@ -300,7 +306,9 @@ export function tokenize(source: Source): TokenizationResult {
                 while (source.peek().match(whitespaceRegex)) {
                     source.take();
                 }
-                currentToken = source.text.substring(start.idx, source.currentIndex).includes("\n") ? "\n" : " ";
+                const matched = source.text.substring(start.idx, source.currentIndex);
+                const nlCount = matched.split("\n").length - 1;
+                currentToken = nlCount > 1 ? "\n\n" : nlCount === 1 ? "\n" : " ";
             }else if ("()[]{},;\"'`".includes(firstChar)) {
                 currentToken = source.text.substring(start.idx, source.currentIndex);
             }else if(operatorChars.includes(firstChar)) {
@@ -315,27 +323,68 @@ export function tokenize(source: Source): TokenizationResult {
                 currentToken = firstChar;
             }
         }else if(mode === "in_string") {
-            if ((!"\"\\".includes(firstChar))) {
-                while (!"\"\\".includes(source.peek())) {
+            let request: TokenPosition | null = null;
+            while (true) {
+                const peek = source.peek();
+                if (peek === "\\") {
+                    const revert = source.getPosition();
+                    source.take();
+                    const escFirst = source.peek();
+                    if (escFirst === "\"" || escFirst === "\\") {
+                        source.take();
+                    } else if (escFirst === "(") {
+                        source.take();
+                        request = source.getPosition();
+                        currentToken = "\\(";
+                        source.revert(revert);
+                        break;
+                    }
+                } else if (peek === "\"") {
+                    const revert = source.getPosition();
+                    source.take();
+                    request = source.getPosition();
+                    currentToken = "<in_string>\"";
+                    source.revert(revert);
+                    break;
+                } else {
                     source.take();
                 }
-                currentSyntaxNodes.push({
-                    kind: "strSeg",
-                    pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
-                    str: source.text.substring(start.idx, source.currentIndex),
-                });
+            }
+            currentSyntaxNodes.push({
+                kind: "raw",
+                pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                raw: source.text.substring(start.idx, source.currentIndex),
+                tag: "string",
+            });
+            if (request) {
+                source.revert(request);
+            } else {
                 continue;
             }
-
-            if(firstChar === "\"") {
-                currentToken = "<in_string>\"";
-            }else if(firstChar === "\\") {
-                throw new Error("TODO impl in_string '\\' char");
-            }else currentToken = firstChar;
+        } else if (mode === "inline_comment") {
+            let request: TokenPosition;
+            while (true) {
+                const peek = source.peek();
+                if (peek === "\n") {
+                    const revert = source.getPosition();
+                    request = source.getPosition();
+                    currentToken = "<in_inline_comment>end";
+                    source.revert(revert);
+                    break;
+                } else {
+                    source.take();
+                }
+            }
+            currentSyntaxNodes.push({
+                kind: "raw",
+                pos: { fyl: source.filename, idx: start.idx, lyn: start.lyn, col: start.col },
+                raw: source.text.substring(start.idx, source.currentIndex),
+                tag: "comment",
+            });
+            source.revert(request);
         }else throw new Error("TODO mode: "+mode);
 
         const cfg = config[currentToken];
-        if(cfg?.setMode) mode = cfg.setMode;
         if (cfg?.style === "open") {
             const newBlockItems: SyntaxNode[] = [];
             currentSyntaxNodes.push({
@@ -353,6 +402,7 @@ export function tokenize(source: Source): TokenizationResult {
                 val: newBlockItems,
                 prec: cfg.prec,
                 autoClose: cfg.close == null,
+                tag: cfg.bracketTag,
             });
             currentSyntaxNodes = newBlockItems;
         } else if (cfg?.style === "close") {
@@ -500,6 +550,7 @@ export function tokenize(source: Source): TokenizationResult {
                 kind: "op",
                 pos: start,
                 op: currentToken,
+                opTag: targetCommaBlock.tag as OpTag,
             }, {
                 kind: "opSeg",
                 pos: start,
@@ -534,6 +585,104 @@ export function tokenize(source: Source): TokenizationResult {
 
     return { result: parseStack[0]!.val, errors };
 }
+function posAddCol(pos: TokenPosition, col: number): TokenPosition {
+    return {fyl: pos.fyl, lyn: pos.lyn, col: pos.col + col, idx: pos.col + col};
+}
+function parseHexCodepoint(env: Env, inner: string, segmentPos: TokenPosition): string {
+    const bad = inner.search(/[^A-Fa-f0-9]/);
+    if (bad !== -1) throwErr(env, posAddCol(segmentPos, bad), "bad character in curly");
+    const parsed = parseInt(inner, 16); // maybe ok after validating. otherwise it will ignore things
+    if (parsed > 0x10FFFF) throwErr(env, segmentPos, "number out of range");
+    return String.fromCodePoint(parsed);
+}
+export function unescapeString(env: Env, segment: string, segmentPos: TokenPosition): string {
+    if (!segment.includes("\\")) return segment;
+    // this could be updated to use appendErr rather than throwErr, and return an ErrorToken|string
+    {
+        const newlineIndex = segment.indexOf("\n");
+        if (newlineIndex !== -1) {
+            throwErr(env, posAddCol(segmentPos, newlineIndex), "newline is not allowed in escaped string", [], "unreachable");
+        }
+    }
+    let result = "";
+    let idx = 0;
+    while (true) {
+        let nextEscape = segment.indexOf("\\", idx);
+        if (nextEscape === -1) nextEscape = segment.length;
+        result += segment.slice(idx, nextEscape);
+        idx = nextEscape;
+        if (segment[idx] !== "\\") break;
+        idx += 1;
+        const def = unescapeDefs.get(segment[idx] ?? "");
+        if (def) {
+            idx += 1;
+            result += def;
+        } else if (segment[idx] === "x") {
+            idx += 1;
+            const inner = segment.slice(idx, idx + 2);
+            result += parseHexCodepoint(env, inner, posAddCol(segmentPos, idx));
+            idx += 2;
+        } else if (segment[idx] === "u") {
+            idx += 1;
+            const ustart = idx;
+            if (segment[idx] !== "{") throwErr(env, posAddCol(segmentPos, idx), `expected \\u{ABCD}`);
+            idx += 1;
+            const istart = idx;
+            let iend = segment.indexOf("}", istart);
+            if (iend === -1) throwErr(env, posAddCol(segmentPos, ustart), `missing close curly`, [
+                [posAddCol(segmentPos, segment.length), "string ended here"],
+            ]);
+            idx += 1;
+            const inner = segment.slice(istart, iend);
+            result += parseHexCodepoint(env, inner, posAddCol(segmentPos, istart));
+        } else {
+            throwErr(env, posAddCol(segmentPos, idx), `unexpected escape in string: ${JSON.stringify(segment[idx] ?? "<eof>")}`);
+        }
+    }
+    return result;
+}
+export function highlightString(config: RenderConfig, segment: string): string {
+    if (!segment.includes("\\")) return hl(config, segment, highlights.string);
+    let result = "";
+    let idx = 0;
+    while (true) {
+        let nextEscape = segment.indexOf("\\", idx);
+        if (nextEscape === -1) nextEscape = segment.length;
+        result += hl(config, segment.slice(idx, nextEscape), highlights.string);
+        idx = nextEscape;
+        if (segment[idx] !== "\\") break;
+        result += hl(config, segment[idx] ?? "", highlights.brackets);
+        idx += 1;
+        const def = unescapeDefs.get(segment[idx] ?? "");
+        if (def) {
+            result += hl(config, segment[idx] ?? "", def === segment[idx] ? highlights.string : highlights.number);
+            idx += 1;
+        } else if (segment[idx] === "x") {
+            result += hl(config, segment[idx] ?? "", highlights.keyword);
+            idx += 1;
+            result += hl(config, segment[idx] ?? "", highlights.number);
+            idx += 1;
+            result += hl(config, segment[idx] ?? "", highlights.number);
+        } else if (segment[idx] === "u") {
+            result += hl(config, segment[idx] ?? "", highlights.keyword);
+            idx += 1;
+            // TODO: highlight <brackets>\<keyword>u<brackets>{<number>0000<brackets>}<string>
+            // or <brackets>\<error>{ab!<reset>cdef
+            // - find the first char which is not A-Fa-f0-9 and mark error up to there unless it's close bracket
+        } else {
+            result += hl(config, segment[idx] ?? "", highlights.error);
+            idx += 1;
+        }
+    }
+    return result;
+}
+// TODO: impl highlightString()
+const unescapeDefs = new Map<string, string>(Object.entries({
+    "n": "\n",
+    "r": "\r",
+    "\"": "\"",
+    "'": "'",
+}));
 
 interface RenderConfigAdisp {
     indent: string;
@@ -541,8 +690,9 @@ interface RenderConfigAdisp {
 
 
 interface RenderConfig {
-    indent: string;
+    indent: string,
     reveal: boolean,
+    highlight: boolean,
 }
 function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], indent: number, depth: number, isTopLevel: boolean): string {
     let result = "";
@@ -570,8 +720,6 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], in
                 needsDeeperIndent = !isTopLevel && i < lastNewlineIndex;
                 didInsertNewline = true;
                 result += "\n" + config.indent.repeat(indent + (needsDeeperIndent ? 1 : 0));
-            } else {
-                result += " ";
             }
         } else {
             didInsertNewline = false;
@@ -581,25 +729,35 @@ function renderEntityPrettyList(config: RenderConfig, entities: SyntaxNode[], in
     if (config.reveal) result += revealColor + ">" + colors.reset;
     return result;
 }
+function hl(config: RenderConfig, str: string, hl: string) {
+    return config.highlight && str.trim() ? `${hl}${str}${colors.reset}` : str;
+}
+function renderEndPretty(end: string): string {
+    if (end === "<in_string>\"") return "\"";
+    if (end === "<in_inline_comment>end") return "";
+    return end;
+}
 function renderEntityPretty(config: RenderConfig, entity: SyntaxNode, indent: number, depth: number, isTopLevel: boolean): string {
     if (entity.kind === "block") {
-        return entity.start + renderEntityPrettyList(config, entity.items, indent, depth, false) + entity.end.replaceAll("<in_string>", "");
+        return hl(config, entity.start, bracketHighlights[entity.tag] ?? highlights.error) +
+            renderEntityPrettyList(config, entity.items, indent, depth, false) +
+            hl(config, renderEndPretty(entity.end), bracketHighlights[entity.tag] ?? highlights.error);
     } else if (entity.kind === "binary") {
         return renderEntityPrettyList(config, entity.items, indent, depth, isTopLevel);
     } else if (entity.kind === "ws") {
         if(entity.nl) return "";
         return " ";
     } else if (entity.kind === "ident") {
-        return entity.identTagRaw + entity.str;
+        return hl(config, entity.identTagRaw, identPrefixHighlights[entity.identTag] ?? highlights.error)
+            + hl(config, entity.str, identValueHighlights[entity.identTag] ?? highlights.error);
     } else if (entity.kind === "op") {
         if(entity.op === "\n") return "";
-        return entity.op;
+        return hl(config, entity.op, opHighlights[entity.opTag] ?? highlights.error);
     }else if (entity.kind === "opSeg") {
         throw new Error("Unreachable: opSeg should be handled by renderEntityList.");
-    }else if (entity.kind === "strSeg") {
-        return entity.str;
     }else if (entity.kind === "raw") {
-        return entity.raw;
+        if (entity.tag === "string" && config.highlight) return highlightString(config, entity.raw);
+        return hl(config, entity.raw, rawHighlights[entity.tag] ?? highlights.error);
     } else {
         return `%TODO<${(entity as {kind: string}).kind}>%`;
     }
@@ -634,15 +792,62 @@ export const colors = {
     hidden: "\x1b[8m",
     strikethrough: "\x1b[9m",
 };
-const styles = {
+export const highlights = {
     string: colors.green,
+    keyword: colors.blue,
+    brackets: colors.brblack,
+    operators: colors.brblack,
+    builtin: colors.cyan,
+    comment: colors.yellow,
+    number: colors.magenta,
+    error: colors.inverse + colors.red,
+    ident: "",
+};
+const rawHighlights: Partial<Record<RawTag, string>> = {
+    return: highlights.keyword,
+    discard: highlights.keyword,
+    string: highlights.string,
+    comment: highlights.comment,
+};
+const opHighlights: Partial<Record<OpTag, string>> = {
+    def: highlights.keyword,
+    pub: highlights.keyword,
+    assign: highlights.keyword,
+    sep: highlights.operators,
+    var: highlights.keyword,
+};
+const bracketHighlights: Partial<Record<BracketTag, string>> = {
+    string: highlights.brackets,
+    colon_call: highlights.operators,
+    map: highlights.brackets,
+    list: highlights.brackets,
+    code: highlights.brackets,
+    arrow_fn: highlights.keyword,
+    inline_comment: highlights.brackets,
+};
+const identPrefixHighlights: Partial<Record<IdentifierTag, string>> = {
+    access: highlights.operators,
+    builtin: highlights.builtin,
+};
+const identValueHighlights: Partial<Record<IdentifierTag, string>> = {
+    normal: highlights.ident,
+    access: highlights.ident,
+    builtin: highlights.builtin,
+    number: highlights.number,
 };
 const rainbow = [colors.red, colors.yellow, colors.green, colors.cyan, colors.blue, colors.magenta];
 
-export function prettyPrintErrors(source: Source, errors: TokenizationError[]): string {
+export function prettyPrintErrors(sources_in: Source[], errors: TokenizationError[]): string {
     if (errors.length === 0) return "";
 
-    const sourceLines = source.text.split('\n');
+    const sources = new Map<string, Source | null>();
+    for (const source of sources_in) {
+        if (sources.has(source.filename)) {
+            sources.set(source.filename, null); // oops defined twice
+            continue;
+        }
+        sources.set(source.filename, source);
+    }
     let output = "";
 
     for (const error of errors) {
@@ -650,12 +855,14 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 
         for (const entry of error.entries) {
             const { pos, style, message } = entry;
-            const color = style === 'error' ? colors.red : colors.blue;
-            const bold = style === 'error' ? colors.bold : "";
+            const color = style === 'error' ? colors.red : style === "note" ? colors.cyan : style === "todo" ? colors.blue : style === "warning" ? colors.yellow : colors.brblack;
+            const bold = style !== 'note' ? colors.bold : "";
 
             output += `${pos?.fyl ?? "??"}:${pos?.lyn ?? "??"}:${pos?.col ?? "??"}: ${color}${bold}${style}${colors.reset}: ${message}${colors.reset}\n`;
-            
-            const line = pos?.fyl === source.filename ? sourceLines[pos.lyn - 1] : "";
+
+            const source = entry.pos?.fyl ? sources.get(entry.pos?.fyl) : null;
+            const sourceLines = source?.text.split('\n');
+            const line = sourceLines && pos ? sourceLines[pos.lyn - 1] : "";
             if (line === undefined) continue;
 
             const lineNumberStr = `${pos?.lyn ?? "??"}`;
@@ -665,7 +872,7 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 
             output += `${lineGutter} ${line}\n`;
 
-            const pointer = ' '.repeat((pos?.col ?? 1) - 1) + '^';
+            const pointer = ' '.repeat(Math.max((pos?.col ?? 1) - 1, 0)) + '^';
             output += `${emptyGutter} ${color}${colors.bold}${pointer}${colors.reset}\n`;
         }
         if (error.trace.length > 0) {
@@ -679,11 +886,11 @@ export function prettyPrintErrors(source: Source, errors: TokenizationError[]): 
 }
 
 export function renderTokenizedOutput(tokenizationResult: TokenizationResult, source: Source): string {
-    const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false }, tokenizationResult.result, 0, 0, true);
-    const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true }, tokenizationResult.result, 0, 0, true);
+    const formattedCode = renderEntityPrettyList({ indent: "  ", reveal: false, highlight: true }, tokenizationResult.result, 0, 0, true);
+    const uglyCode = renderEntityPrettyList({ indent: "  ", reveal: true, highlight: false }, tokenizationResult.result, 0, 0, true);
     const adisp = printers.astNode.dumpList(tokenizationResult.result);
-    const prettyErrors = prettyPrintErrors(source, tokenizationResult.errors);
-    
+    const prettyErrors = prettyPrintErrors([source], tokenizationResult.errors);
+
     return (
         `// adisp:${adisp}\n\n` +
         `// ugly\n${uglyCode}\n\n` +

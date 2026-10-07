@@ -1,5 +1,109 @@
 const std = @import("std");
 
+pub const zpool = @import("zpool");
+pub const grid = @import("util/grid.zig");
+pub const vec = @import("util/vector.zig");
+pub const testing = @import("util/testing.zig");
+
+pub const math = struct {
+    pub const vec2i32 = @Vector(2, i32);
+    pub const vec2i64 = @Vector(2, i64);
+    pub const vec2f32 = @Vector(2, f32);
+    pub const vec2usize = vec.by(2, usize);
+    pub const vec3usize = vec.by(3, usize);
+
+    /// we could add angle if we want. we probably never want skew though, we can save that for a 3d transformation matrix
+    pub const Transform2D = struct {
+        offset: math.vec2f32,
+        scale: math.vec2f32,
+
+        /// generate the Transform2D that converts a rectangle from rect_a to rect_b
+        /// [Transform2d thatTransforms: rect_a to: rect_b]
+        pub fn from(rect_a: Rect(2, f32), rect_b: Rect(2, f32)) Transform2D {
+            const scale = rect_b.size / rect_a.size;
+            return .{ .scale = scale, .offset = rect_a.pos * scale + rect_b.pos };
+        }
+
+        pub fn transformPoint(self: *const Transform2D, point: math.vec2f32) math.vec2f32 {
+            return point * self.scale + self.offset;
+        }
+        pub fn transformVector(self: *const Transform2D, end_point: math.vec2f32) math.vec2f32 {
+            return end_point * self.scale; // aka transform(end) - transform(@splat(0))
+        }
+        pub fn inverse(self: *const Transform2D) Transform2D {
+            return .{ .scale = @as(math.vec2f32, @splat(1)) / self.scale, .offset = self.offset / self.scale };
+        }
+        pub fn multiply(self: *const Transform2D, other: *const Transform2D) Transform2D {
+            // b.transform(a.transform(p)) should be equivalent to a.multiply(b).transform(p)
+            // idk if this is correct. maybe.
+            return .{ .scale = self.scale * other.scale, .offset = self.offset * other.scale + other.offset };
+        }
+    };
+
+    pub fn Rect(comptime n: comptime_int, comptime T: type) type {
+        return struct {
+            const vecNT = vec.by(n, T);
+            pos: vecNT,
+            size: vecNT,
+            pub fn from(pos: vecNT, size: vecNT) @This() {
+                return .{ .pos = pos, .size = size };
+            }
+            pub fn fromMinMax(min: vecNT, max: vecNT) @This() {
+                return .from(min, max - min);
+            }
+        };
+    }
+    pub fn UV(comptime n: comptime_int, comptime T: type) type {
+        return struct {
+            const vecNT = vec.by(n, T);
+            pos: vecNT,
+            size: vecNT,
+            pub fn from(pos: vecNT, size: vecNT, img_size: vecNT) @This() {
+                return .{ .pos = pos / img_size, .size = size / img_size };
+            }
+            pub fn innerRect(a: @This(), b: @This()) @This() {
+                return .{
+                    .pos = a.pos + b.pos * a.size,
+                    .size = a.size * b.size,
+                };
+            }
+        };
+    }
+
+    pub const RollingAverage = struct {
+        buffer: []f64,
+        sum: f64,
+        index: usize,
+        filled: bool,
+        pub fn init(buffer: []f64) RollingAverage {
+            return .{
+                .buffer = buffer,
+                .sum = 0,
+                .index = 0,
+                .filled = false,
+            };
+        }
+        pub fn clear(self: *RollingAverage) void {
+            self.sum = 0;
+            self.index = 0;
+            self.filled = false;
+        }
+        pub fn postValue(self: *RollingAverage, value: f64) void {
+            if (!self.filled) self.sum -= self.buffer[self.index];
+            self.sum += value;
+            self.buffer[self.index] = value;
+            self.index += 1;
+            self.index %= self.buffer.len;
+        }
+        pub fn calculateAverage(self: *RollingAverage) f64 {
+            const len_usize = if (self.filled) self.buffer.len else self.index;
+            if (len_usize == 0) return 0;
+            const len_f64: f64 = @floatFromInt(len_usize);
+            return self.sum / len_f64;
+        }
+    };
+};
+
 pub const AnyPtr = struct {
     id: [*]const u8,
     val: *anyopaque,
@@ -13,58 +117,6 @@ pub const AnyPtr = struct {
     pub fn toConst(self: AnyPtr, comptime T: type) *const T {
         std.debug.assert(self.id == @typeName(T));
         return @ptrCast(@alignCast(self.val));
-    }
-};
-
-pub const testing = struct {
-    var mutex = std.Thread.Mutex{};
-    var _initialized: std.atomic.Value(bool) = .init(false);
-    var _should_update: bool = undefined;
-    pub fn snap(src: std.builtin.SourceLocation, expected: []const u8, actual: []const u8) !void {
-        if (!_initialized.load(.acquire)) {
-            mutex.lock();
-            defer mutex.unlock();
-
-            // inside mutex so it's ok to view .raw
-            if (_initialized.raw == false) blk: {
-                const env_val = std.process.getEnvVarOwned(std.testing.allocator, "ZIG_UPDATE_SNAPSHOT") catch {
-                    _should_update = false;
-                    break :blk;
-                };
-                defer std.testing.allocator.free(env_val);
-                _should_update = true;
-            }
-            _initialized.raw = true;
-        }
-        if (_should_update and !std.mem.eql(u8, expected, actual)) {
-            mutex.lock();
-            defer mutex.unlock();
-
-            // needs update!
-            std.log.err("needs update:\n  module: \"{f}\"\n  file: \"{f}\"\n  pos: {d}:{d}", .{ std.zig.fmtString(src.module), std.zig.fmtString(src.file), src.line, src.column });
-
-            return;
-        }
-        try std.testing.expectEqualStrings(expected, actual);
-
-        // TODO:
-        // - the env var will contain a file
-        // - we will append serialized update information to the file:
-        //   - what module, what file, what pos, what was the old value, what is the new value
-        // - an 'update snapshot' script will read this file and:
-        //   - for each file:
-        //     - convert all lyn:col to byte offset
-        //     - sort so the highest byte offsets are first
-        //     - deduplicate any values with the same byte offset
-        //       - if they are not identical, remove them entirely & error
-        //     - at the source location, validate that the expected string appears:
-        //       "@src(),\n", then count whitespace, then expect "\\\\"
-        //     - parse the existing string. if it is not equal to the old value, error
-        //     - replace it with the new string.
-        // - (alternatively) we can have the update happen in the snap mutex:
-        //   - will have to write every time anything changes
-        //   - we keep a cache of what the original was here, then for every update we generate out the new
-        //     and write it
     }
 };
 
@@ -381,73 +433,262 @@ pub const FixedTimestep = struct {
 };
 
 pub const SerializeDeserialize = struct {
-    pub const Mode = enum { count, serialize, deserialize };
+    pub const Mode = enum {
+        count,
+        serialize,
+        deserialize,
+        pub fn in(comptime self: Mode) bool {
+            comptime {
+                return self != .deserialize;
+            }
+        }
+        pub fn out(comptime self: Mode) bool {
+            comptime {
+                return self == .deserialize;
+            }
+        }
+        pub fn In(comptime self: Mode, comptime T: type) type {
+            if (self.in()) return T;
+            return void;
+        }
+        pub fn Out(comptime self: Mode, comptime T: type) type {
+            if (self.out()) return T;
+            return void;
+        }
+        pub fn Value(comptime self: Mode) type {
+            return SerializeDeserialize.Value(self);
+        }
+        pub fn Extra(comptime self: Mode, comptime ExtraValue: type) type {
+            return SerializeDeserialize.Extra(self, ExtraValue);
+        }
+    };
 
-    pub fn Value(comptime T: type, comptime mode: Mode) type {
+    pub fn Extra(comptime mode: Mode, comptime Child: type) type {
         return switch (mode) {
-            .count => struct {
-                src: *const T,
-                count: usize = 0,
-                pub inline fn int(self: *@This(), comptime Int: type, comptime endian: std.builtin.Endian, _: Int) error{}!void {
-                    _ = endian;
-                    self.count += @sizeOf(Int);
-                }
-                pub inline fn slice(self: *@This(), comptime Entry: type, value: []align(1) const Entry) error{}!void {
-                    self.count += value.len * @sizeOf(Entry);
-                }
-                pub const Ret = usize;
+            .count => Child.Count,
+            .serialize => Child.Serialize,
+            .deserialize => Child.Deserialize,
+        };
+    }
+    pub fn Value(comptime mode: Mode) type {
+        return struct {
+            const style: enum {
+                // instead of a seperate readable style, we could output binary
+                // and a second map file that tells you the names of things?
+                binary,
+                readable,
+            } = .readable;
+
+            // we can make multiple modes
+            // human-readable, binary, ...etc
+            internal: switch (mode) {
+                .count => struct {
+                    count: u64,
+                },
+                .serialize => struct {
+                    writer: *std.Io.Writer,
+                    // alternatively, we could enable serializing to a Writer and from a Reader
+                },
+                .deserialize => struct {
+                    reader: *std.Io.Reader,
+                    arena: *std.heap.ArenaAllocator,
+                },
             },
-            .serialize => struct {
-                src: *const T,
-                res: []u8,
-                fn _get(self: *@This(), n: usize) []u8 {
-                    if (self.res.len < n) unreachable;
-                    const res = self.res[0..n];
-                    self.res = self.res[n..];
-                    return res;
-                }
-                fn _getC(self: *@This(), comptime n: usize) *[n]u8 {
-                    if (self.res.len < n) unreachable;
-                    const res = self.res[0..n];
-                    self.res = self.res[n..];
-                    return res;
-                }
-                pub fn int(self: *@This(), comptime Int: type, comptime endian: std.builtin.Endian, value: Int) !Int {
-                    std.mem.writeInt(Int, self._getC(@sizeOf(Int)), value, endian);
-                    return value;
-                }
-                pub fn slice(self: *@This(), comptime Entry: type, value: []align(1) const Entry) ![]align(1) const Entry {
-                    comptime std.debug.assert(std.meta.hasUniqueRepresentation(Entry));
-                    const res = self._get(value.len * @sizeOf(Entry));
-                    @memcpy(res, std.mem.sliceAsBytes(value));
-                    return value;
-                }
-                pub const Ret = void;
+            readable: struct {
+                indent: u32,
+                any_contents: bool,
             },
-            .deserialize => struct {
-                src_txt: []const u8,
-                fn _get(self: *@This(), n: usize) ![]const u8 {
-                    if (self.src_txt.len < n) return error.DeserializeError;
-                    const res = self.src_txt[0..n];
-                    self.src_txt = self.src_txt[n..];
-                    return res;
+            diag: ?*?[]const u8,
+
+            pub fn initCounter() Value(.count) {
+                return .{ .internal = .{ .count = 0 }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
+            }
+            pub fn initSerializer(writer: *std.Io.Writer) Value(.serialize) {
+                return .{ .internal = .{ .writer = writer }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
+            }
+            pub fn initDeserializer(reader: *std.Io.Reader, arena: *std.heap.ArenaAllocator) Value(.deserialize) {
+                return .{ .internal = .{ .reader = reader, .arena = arena }, .readable = .{ .indent = 0, .any_contents = false }, .diag = null };
+            }
+
+            pub const ErrorSet = switch (mode) {
+                .count => error{},
+                .serialize => error{WriteFailed},
+                .deserialize => error{ ReadFailed, DeserializeError, OutOfMemory },
+            };
+
+            fn canDumpBytes(comptime Type: type) bool {
+                if (style != .binary) return false;
+                if (@typeInfo(Type) == .float) return true;
+                if (@typeInfo(Type) == .pointer) return false;
+                return std.meta.hasUniqueRepresentation(Type);
+                // yikes, this will return true for struct { a: *T }.
+                // problem 1: structs don't have a defined layout unless they're 'extern'
+                // problem 2: certainly can't serialize a pointer
+            }
+
+            pub fn deserializeError(self: *@This(), comptime msg: []const u8, fmt: anytype) ErrorSet {
+                if (self.diag) |diag| {
+                    const msg_alloc = try std.fmt.allocPrint(self.internal.arena.allocator(), msg, fmt);
+                    diag.* = msg_alloc;
                 }
-                fn _getC(self: *@This(), comptime n: usize) !*const [n]u8 {
-                    if (self.src_txt.len < n) return error.DeserializeError;
-                    const res = self.src_txt[0..n];
-                    self.src_txt = self.src_txt[n..];
-                    return res;
+                return error.DeserializeError;
+            }
+
+            fn rawString(self: *@This(), str: []const u8) ErrorSet!void {
+                switch (mode) {
+                    .count => self.internal.count += str.len,
+                    .serialize => try self.internal.writer.writeAll(str),
+                    .deserialize => {
+                        const val = self.internal.reader.readAlloc(self.internal.arena.child_allocator, str.len) catch |e| return switch (e) {
+                            error.EndOfStream => {
+                                return self.deserializeError("expected \"{f}\", got EndOfStream", .{std.zig.fmtString(str)});
+                            },
+                            else => |ee| return ee,
+                        };
+                        defer self.internal.arena.child_allocator.free(val);
+                        if (!std.mem.eql(u8, str, val)) {
+                            return self.deserializeError("expected \"{f}\", got \"{f}\"", .{ std.zig.fmtString(str), std.zig.fmtString(val) });
+                        }
+                    },
                 }
-                pub fn int(self: *@This(), comptime Int: type, comptime endian: std.builtin.Endian, _: void) !Int {
-                    return std.mem.readInt(Int, try self._getC(@sizeOf(Int)), endian);
+            }
+            pub fn begin(self: *@This(), name: []const u8) ErrorSet!void {
+                if (style == .binary) return;
+                try self.rawString("\n");
+                for (0..self.readable.indent) |_| try self.rawString("  ");
+                try self.rawString(name);
+                try self.rawString(":");
+                self.readable.indent += 1;
+                self.readable.any_contents = false;
+            }
+            pub fn end(self: *@This()) !void {
+                if (style == .binary) return;
+                if (!self.readable.any_contents) {
+                    try self.rawString("\n");
+                    for (0..self.readable.indent) |_| try self.rawString("  ");
+                    try self.rawString("(no items)");
                 }
-                pub fn slice(self: *@This(), comptime Entry: type, len: usize) ![]align(1) const Entry {
-                    comptime std.debug.assert(std.meta.hasUniqueRepresentation(Entry));
-                    const res = try self._get(len * @sizeOf(Entry));
-                    return std.mem.bytesAsSlice(Entry, res);
+                self.readable.indent -= 1;
+                self.readable.any_contents = true;
+            }
+
+            pub fn sliceAutoLen2(self: *@This(), name: []const u8, gpa: std.mem.Allocator, v: anytype) ErrorSet!void {
+                try self.begin(name);
+                try self.value2("len", &v.len);
+                try self.slice2("ptr", gpa, v.len, v);
+                try self.end();
+            }
+
+            pub fn value2(self: *@This(), name: []const u8, v: anytype) ErrorSet!void {
+                const Type = @typeInfo(@TypeOf(v)).pointer.child;
+                if (comptime (style == .binary and !canDumpBytes(Type))) {
+                    switch (@typeInfo(Type)) {
+                        .vector => |info| {
+                            try self.begin(name);
+
+                            if (comptime mode.out()) v.* = @splat(undefined);
+                            inline for (0..info.len) |i| {
+                                try self.value2(std.fmt.comptimePrint("{d}", .{i}), &v[i]);
+                            }
+
+                            try self.end();
+                            return;
+                        },
+                        .@"enum" => |info| {
+                            var result: info.tag_type = if (comptime mode.in()) @as(info.tag_type, @intFromEnum(info)) else undefined;
+                            try self.value2(name, &result);
+                            if (comptime mode.out()) v.* = std.meta.intToEnum(Type, result) catch return self.deserializeError("intToEnum bad int: int={d},enum={s}", .{ result, @typeName(Type) });
+                            return;
+                        },
+                        .int => |info| {
+                            const ParentInt = @Type(.{ .int = .{ .bits = std.math.ceilPowerOfTwo(u16, info.bits) } });
+                            var result: ParentInt = if (comptime mode.in()) v.* else undefined;
+                            try self.value2(name, &result);
+                            if (comptime mode.out()) v.* = std.math.cast(Type, result) catch return self.deserializeError("int out of range: int={d},into={d}", .{ result, @typeName(Type) });
+                            return;
+                        },
+                        else => {},
+                    }
+                    @compileError("!hasUniqueRepresentation: " ++ @typeName(Type) ++ " / because " ++ @tagName(@typeInfo(Type)));
                 }
-                pub const Ret = T;
-            },
+
+                if (style == .readable) {
+                    try self.begin(name);
+
+                    self.readable.any_contents = true;
+                    try self.rawString(" "); // seperate adjacent json values
+
+                    switch (mode) {
+                        .count => {
+                            var buf: [512]u8 = undefined;
+                            var w: std.Io.Writer.Discarding = .init(&buf);
+                            var jw: std.json.Stringify = .{ .writer = &w.writer, .options = .{ .whitespace = .minified } };
+                            jw.write(v) catch @panic("write error 1");
+                            self.internal.count += w.fullCount();
+                        },
+                        .serialize => {
+                            var jw: std.json.Stringify = .{ .writer = self.internal.writer, .options = .{ .whitespace = .minified } };
+                            jw.write(v) catch @panic("write error 2");
+                        },
+                        .deserialize => {
+                            var buf: [512]u8 = undefined;
+                            var alloc = std.heap.FixedBufferAllocator.init(&buf);
+                            var reader = std.json.Reader.init(self.internal.arena.child_allocator, self.internal.reader);
+                            defer reader.deinit();
+                            var diagnostics: std.json.Diagnostics = .{};
+                            if (self.diag != null) reader.enableDiagnostics(&diagnostics);
+                            v.* = std.json.innerParse(Type, alloc.allocator(), &reader, .{
+                                .max_value_len = std.json.default_max_value_len,
+                            }) catch |e| {
+                                reader.reader.seek -= reader.scanner.input.len - reader.scanner.cursor;
+                                if (self.diag != null) return self.deserializeError("json parse failure: {s} / {d}:{d}", .{ @errorName(e), diagnostics.getLine(), diagnostics.getColumn() });
+                                return self.deserializeError("json parse failure: {s}", .{@errorName(e)});
+                            };
+                            reader.reader.seek -= reader.scanner.input.len - reader.scanner.cursor; // return unused bytes to the reader
+                        },
+                    }
+
+                    try self.end();
+                    return;
+                }
+
+                try self.begin(name);
+                try self.raw(Type, @as(*[1]Type, v));
+                try self.end();
+            }
+            pub fn slice2(self: *@This(), name: []const u8, gpa: std.mem.Allocator, len: usize, v: anytype) ErrorSet!void {
+                const Slice = @typeInfo(@TypeOf(v)).pointer.child;
+                const Entry = @typeInfo(Slice).pointer.child;
+
+                if (comptime mode.out()) v.* = try gpa.alloc(Entry, len);
+                std.debug.assert(len == v.len);
+
+                // all-at-once
+                try self.begin(name);
+                try self.raw(Entry, v.*);
+                try self.end();
+            }
+            fn raw(self: *@This(), comptime Entry: type, v: []Entry) ErrorSet!void {
+                if (comptime !canDumpBytes(Entry)) {
+                    for (v, 0..) |*entry, index| {
+                        var buf: [32]u8 = undefined;
+                        const buflen: usize = if (style == .readable) std.fmt.printInt(&buf, index, 10, .lower, .{}) else 0;
+                        try self.value2(buf[0..buflen], entry);
+                    }
+
+                    return;
+                }
+
+                std.debug.assert(canDumpBytes(Entry));
+                switch (mode) {
+                    .count => self.internal.count += v.len * @sizeOf(Entry),
+                    .serialize => try self.internal.writer.writeAll(std.mem.sliceAsBytes(v)),
+                    .deserialize => self.internal.reader.readSliceAll(std.mem.sliceAsBytes(v)) catch |err| switch (err) {
+                        error.EndOfStream => return self.deserializeError("end of stream", .{}),
+                        else => |ee| return ee,
+                    },
+                }
+            }
         };
     }
 };

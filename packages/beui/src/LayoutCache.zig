@@ -10,6 +10,7 @@ const LayoutCache = @This();
 const RenderedLineKey = struct {
     text: []const u8,
     max_width_times_16: u64,
+    color: u32,
 };
 const RenderedLineContext = struct {
     pub fn hash(self: @This(), s: RenderedLineKey) u32 {
@@ -17,13 +18,14 @@ const RenderedLineContext = struct {
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(s.text);
         hasher.update(std.mem.asBytes(&s.max_width_times_16));
+        hasher.update(std.mem.asBytes(&s.color));
 
         return @as(u32, @truncate(hasher.final()));
     }
     pub fn eql(self: @This(), a: RenderedLineKey, b: RenderedLineKey, b_index: usize) bool {
         _ = self;
         _ = b_index;
-        return std.mem.eql(u8, a.text, b.text) and a.max_width_times_16 == b.max_width_times_16;
+        return std.mem.eql(u8, a.text, b.text) and a.max_width_times_16 == b.max_width_times_16 and a.color == b.color;
     }
 };
 
@@ -180,20 +182,26 @@ pub const TextLine = struct {
         alloc.free(self.cursor_positions);
     }
 };
-pub const Line = struct {
+pub const LineData = struct {
     text: []const u8,
+    color: Beui.Color = .fromHexRgb(0xFFFFFF),
+    // font size, ... etc
+};
+pub const Line = struct {
+    value: LineData,
     max_width: ?f32,
 };
 pub fn renderLine(self: *LayoutCache, b2: *Beui.beui_experiment.Beui2, line: Line) TextLine {
     const max_w_times_16: u64 = if (line.max_width) |m| std.math.lossyCast(u64, m * 16.0) else 0;
+    const color_u32 = line.value.color.toArgb();
     // first, try for an exact match
-    if (self.rendered_line_cache.getPtr(.{ .text = line.text, .max_width_times_16 = max_w_times_16 })) |xm| {
+    if (self.rendered_line_cache.getPtr(.{ .text = line.value.text, .max_width_times_16 = max_w_times_16, .color = color_u32 })) |xm| {
         xm.last_used = b2.persistent.beui1.frame.frame_cfg.?.now_ms;
         return xm.*;
     }
     // next, try for a match with max_width null and then check the resulting width. if it's less than max width, we can use it
     var exists_max_width_0 = false;
-    if (self.rendered_line_cache.getPtr(.{ .text = line.text, .max_width_times_16 = 0 })) |xm| {
+    if (self.rendered_line_cache.getPtr(.{ .text = line.value.text, .max_width_times_16 = 0, .color = color_u32 })) |xm| {
         exists_max_width_0 = true;
         if (!xm.multiline and (line.max_width == null or xm.single_line_width <= line.max_width.?)) {
             xm.last_used = b2.persistent.beui1.frame.frame_cfg.?.now_ms;
@@ -201,18 +209,19 @@ pub fn renderLine(self: *LayoutCache, b2: *Beui.beui_experiment.Beui2, line: Lin
         }
     }
     // couldn't find in cache, have to rerender
-    const layout = self.layoutLine(b2, line.text);
+    const layout = self.layoutLine(b2, line.value.text);
     var render_result = renderLine_nocache(self, b2, layout, line);
     render_result.last_used = b2.persistent.beui1.frame.frame_cfg.?.now_ms;
     if (exists_max_width_0 and !render_result.multiline) {
         // oops! we aren't wrapping yet.
         render_result.deinit(self.gpa);
-        return self.rendered_line_cache.getPtr(.{ .text = line.text, .max_width_times_16 = 0 }).?.*;
+        return self.rendered_line_cache.getPtr(.{ .text = line.value.text, .max_width_times_16 = 0, .color = color_u32 }).?.*;
     }
-    const text_dupe = self.gpa.dupe(u8, line.text) catch @panic("oom");
+    const text_dupe = self.gpa.dupe(u8, line.value.text) catch @panic("oom");
     self.rendered_line_cache.putNoClobber(.{
         .text = text_dupe,
         .max_width_times_16 = if (render_result.multiline) max_w_times_16 else 0,
+        .color = color_u32,
     }, render_result) catch @panic("oom");
     return render_result;
 }
@@ -228,7 +237,7 @@ fn renderLine_nocache(self: *LayoutCache, b2: *Beui.beui_experiment.Beui2, layou
     var indices: std.array_list.Managed(rl.RenderListIndex) = .init(self.gpa);
     defer indices.deinit();
 
-    const line_state = self.gpa.alloc(LineCharState, line.text.len) catch @panic("oom");
+    const line_state = self.gpa.alloc(LineCharState, line.value.text.len) catch @panic("oom");
     for (line_state) |*ls| ls.* = .{ .char_up_left_offset = LineCharState.null_offset, .line_height = 0, .char_byte_in_string = 0 };
 
     var cursor_pos: @Vector(2, f32) = .{ 0, 0 };
@@ -264,7 +273,7 @@ fn renderLine_nocache(self: *LayoutCache, b2: *Beui.beui_experiment.Beui2, layou
             const uv_bl: @Vector(2, f32) = .{ uv.pos[0], uv.pos[1] + uv.size[1] };
             const uv_br: @Vector(2, f32) = .{ uv.pos[0] + uv.size[0], uv.pos[1] + uv.size[1] };
 
-            const tint: Beui.Color = .fromHexRgb(0xFFFFFF);
+            const tint: Beui.Color = line.value.color;
 
             const vstart = vertices.items.len;
             vertices.appendSlice(&.{
